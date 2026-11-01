@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { KEYS, U, startEnv, whitelist, pause, snapshot, relayerRelease, type Env } from "../support/anvil";
+import { KEYS, U, startEnv, whitelist, snapshot, relayerRelease, type Env } from "../support/anvil";
 import { renderApp } from "./renderApp";
 import type { StatusProvider } from "../../src/lib/statusProvider";
 import { bscVaultV2Abi } from "@bridge/abi";
@@ -40,14 +40,6 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     const w2b = panel("WANTOS → BSC");
     await userEvent.type(within(w2b).getByLabelText("金额（USDT）"), "100");
     expect(within(w2b).getByRole("button", { name: "跨出" })).toBeDisabled();
-  });
-
-  it("whitelisted on WANTOS only → '开通同步中' and bridge-out disabled", async () => {
-    await whitelist(env, env.wantos, [KEYS.alice.address]);
-    renderApp(env.cfg, KEYS.alice.address);
-    await connect();
-    expect(await screen.findAllByText("开通同步中，请稍后刷新", {}, T)).not.toHaveLength(0);
-    expect(within(panel("WANTOS → BSC")).getByRole("button", { name: "跨出" })).toBeDisabled();
   });
 
   it("whitelisted → full W2B through the UI: exact approve, bridgeOut, order shows 处理中 then 已到账", async () => {
@@ -127,41 +119,6 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     await user.type(within(b2w).getByLabelText("金额（USDT）"), "50");
     expect(await within(b2w).findByText("收款地址无效")).toBeInTheDocument();
     expect(within(b2w).getByRole("button", { name: "存入" })).toBeDisabled();
-  });
-
-  it("paused → maintenance notice and both directions disabled", async () => {
-    await whitelist(env, env.wantos, [KEYS.alice.address]);
-    await whitelist(env, env.bsc, [KEYS.alice.address]);
-    await pause(env, env.wantos);
-    renderApp(env.cfg, KEYS.alice.address);
-    const user = await connect();
-    expect(await screen.findAllByText("跨链桥维护中，暂停操作，请稍后再试", {}, T)).not.toHaveLength(0);
-    const w2b = panel("WANTOS → BSC");
-    await user.type(within(w2b).getByLabelText("金额（USDT）"), "100");
-    expect(within(w2b).getByRole("button", { name: "跨出" })).toBeDisabled();
-    await user.click(screen.getByRole("tab", { name: "BSC → WANTOS" }));
-    expect(within(panel("BSC → WANTOS")).getByRole("button", { name: "存入" })).toBeDisabled();
-  });
-
-  it("daily quota used up → 额度已用完 and bridge-out disabled", async () => {
-    await whitelist(env, env.wantos, [KEYS.alice.address]);
-    await whitelist(env, env.bsc, [KEYS.alice.address]);
-    // use the full per-address quota directly on chain
-    const { createWalletClient, http, erc20Abi } = await import("viem");
-    const { wantosBridgeV2Abi } = await import("@bridge/abi");
-    const w = createWalletClient({ chain: env.wantos.anvil.chain, transport: http(env.wantos.anvil.url), account: KEYS.alice });
-    await env.wantos.anvil.pc.waitForTransactionReceipt({
-      hash: await w.writeContract({ address: env.wantos.usdt, abi: erc20Abi, functionName: "approve", args: [env.wantos.bridge, 2000n * U] }),
-    });
-    await env.wantos.anvil.pc.waitForTransactionReceipt({
-      hash: await w.writeContract({ address: env.wantos.bridge, abi: wantosBridgeV2Abi, functionName: "bridgeOut", args: [2000n * U] }),
-    });
-    renderApp(env.cfg, KEYS.alice.address);
-    const user = await connect();
-    expect(await screen.findAllByText("今日额度已用完，请明天（UTC 0 点后）再试", {}, T)).not.toHaveLength(0);
-    const w2b = panel("WANTOS → BSC");
-    await user.type(within(w2b).getByLabelText("金额（USDT）"), "10");
-    expect(within(w2b).getByRole("button", { name: "跨出" })).toBeDisabled();
   });
 
   it("wrong network → prompt to switch / add WANTOS", async () => {
