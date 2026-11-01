@@ -24,6 +24,7 @@ contract BridgeTimelockTest is Test {
         bridge = new MockBridge();
         tl = new BridgeTimelock(admin, address(bridge));
         bridge.setWhitelistManager(wl);
+        bridge.setTimelock(address(tl));
         PROPOSER = tl.PROPOSER_ROLE();
         CANCELLER = tl.CANCELLER_ROLE();
         EXECUTOR = tl.EXECUTOR_ROLE();

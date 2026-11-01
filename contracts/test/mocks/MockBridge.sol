@@ -6,6 +6,7 @@ import {IBridgeForTimelock} from "../../src/interfaces/IBridgeV2.sol";
 /// @dev Minimal stand-in bridge for isolated BridgeTimelock tests.
 contract MockBridge is IBridgeForTimelock {
     address public whitelistManager;
+    address public timelock;
     bool public paused;
     bool public whitelistRecoveryActive;
     mapping(address => bool) public keyHolder;
@@ -13,6 +14,10 @@ contract MockBridge is IBridgeForTimelock {
 
     function setWhitelistManager(address a) external {
         whitelistManager = a;
+    }
+
+    function setTimelock(address t) external {
+        timelock = t;
     }
 
     function setPaused(bool p) external {

@@ -3,6 +3,8 @@ pragma solidity 0.8.28;
 
 /// @notice What BridgeTimelock reads from the bridge it governs (DESIGN.md §4.2).
 interface IBridgeForTimelock {
+    /// @dev must equal the governing timelock; checked after every execution to catch a lost storage namespace.
+    function timelock() external view returns (address);
     function whitelistManager() external view returns (address);
     function paused() external view returns (bool);
     function whitelistRecoveryActive() external view returns (bool);

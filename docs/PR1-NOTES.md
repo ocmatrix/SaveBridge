@@ -114,8 +114,16 @@
 | EVM 版本 | 反汇编三份运行时字节码的可执行区（第一个 `0xFE` 之前）：**无** `BLOBBASEFEE`/`PREVRANDAO`/`SELFDESTRUCT`/`CALLCODE`/`TLOAD`/`TSTORE`；唯一 `DELEGATECALL` 来自 UUPS 升级。`0xFE` 之后是数据区，反汇编出的零星"操作码"不可执行 |
 | 时间戳 | 13 处 `block.timestamp` 比较均为小时/天量级的等待期，验证者可操纵的秒级偏差无实质影响 |
 
+### 4.1 升级检查清单（每次升级桥合约前逐条确认）
+
+1. **新实现必须保留 `IBridgeForTimelock` 的五个视图且语义不变**：`timelock()`、`whitelistManager()`、`paused()`、`whitelistRecoveryActive()`、`isKeyHolder(address)`。
+   时间锁在每次 `execute/executeBatch`（含升级本身）之后做自检 `_checkBridgeSane()`：`paused()` 可调用；任一恢复都不在进行中；`whitelistManager() != 0` 且 `isKeyHolder(whitelistManager())`；`timelock() == 时间锁地址`。任一项回滚或不成立 → `BridgeCheckFailed()`，整笔执行（含升级）回滚，治理不会被坏升级锁死（A1，测试 `TimelockSelfCheckTest`）。
+2. 存储只能在各命名空间 struct **末尾追加**字段；不得改动、删除、重排已有字段；不得改命名空间字符串。对比 `contracts/test/layout/*.json` 快照（B5）。
+3. 新实现先开源验证，codehash 与可复现构建一致（`Verify.s.sol`）。
+4. 先在测试网走一次"时间锁升级 → 再升级回旧实现"的演练。
+
 **自查发现但未修的风险**（见 §8 报告）：
-1. **治理活性依赖桥的视图函数**：时间锁的 `execute` 读 `bridge.whitelistRecoveryActive()`，`cancel` 读 `bridge.whitelistManager()`，`transferAdmin` 读 `bridge.paused()`。若将来把桥升级成一个让这些视图回滚（或永远返回"恢复中"）的实现，时间锁会无法执行任何操作，**也就无法再升级修复**。这是"运行时读取"规格的固有代价。缓解：升级清单必须包含"新实现保留 `IBridgeForTimelock` 四个视图且语义不变"，并在测试网先跑一次带时间锁的升级+回滚演练。
+1. ~~治理活性依赖桥的视图函数~~ → **已修（A1）**：执行后自检让坏升级整笔回滚。剩余风险：新实现视图"语义上错误但看起来合理"（例如 `isKeyHolder` 永远返回 true）不在自检能识别的范围内，靠上面的升级检查清单与审计。
 2. **BscVaultV2 运行时字节码 23,659 B，余量仅 917 B**（上限 24,576）。审计修复若增加代码可能超限；备选：把白名单批次逻辑移入外部 library（会改变部署笔数和 nonce 表，需同步改 §5.1）、或降低 optimizer runs。
 3. 付款钥匙可提前把任意 nonce 的放款排进队列（受白名单与额度约束），这是规格接受的风险（§5.2 最后一条），由监控兜底。
 

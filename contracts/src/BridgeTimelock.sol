@@ -54,6 +54,7 @@ contract BridgeTimelock is TimelockController, ITimelockForBridge {
     error RecoveryCooldown(uint256 until);
     error NoRecovery();
     error RecoveryNotReady(uint256 readyAt);
+    error BridgeCheckFailed();
 
     // ------------------------------------------------------------------ events
     event AdminTransferStarted(address indexed currentAdmin, address indexed newAdmin, uint256 expiresAt);
@@ -153,6 +154,7 @@ contract BridgeTimelock is TimelockController, ITimelockForBridge {
     {
         _checkExecutable(hashOperation(target, value, payload, predecessor, salt));
         super.execute(target, value, payload, predecessor, salt);
+        _checkBridgeSane();
     }
 
     function executeBatch(
@@ -164,6 +166,20 @@ contract BridgeTimelock is TimelockController, ITimelockForBridge {
     ) public payable override {
         _checkExecutable(hashOperationBatch(targets, values, payloads, predecessor, salt));
         super.executeBatch(targets, values, payloads, predecessor, salt);
+        _checkBridgeSane();
+    }
+
+    /// @dev Post-execution self-check (incl. upgrades): the bridge must still expose the views this timelock
+    ///      depends on, with sane values. Nothing a timelock operation can do legitimately starts a recovery,
+    ///      so a recovery flag after execution means a broken implementation. Any revert here reverts the
+    ///      whole execution, so a bad upgrade can never leave governance bricked.
+    function _checkBridgeSane() private view {
+        IBridgeForTimelock b = IBridgeForTimelock(bridge);
+        b.paused(); // must be callable
+        address wlm = b.whitelistManager();
+        if (_anyRecoveryActive() || wlm == address(0) || !b.isKeyHolder(wlm) || b.timelock() != address(this)) {
+            revert BridgeCheckFailed();
+        }
     }
 
     function _checkExecutable(bytes32 id) private view {
