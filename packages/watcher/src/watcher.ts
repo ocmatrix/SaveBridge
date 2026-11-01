@@ -416,23 +416,28 @@ export class Watcher {
     // (a 1-vs-1 tie is NOT confirmed). Logs whose block hash is not the agreed one (stale fork) are dropped.
     const logs: Array<Entry & { confirmed: boolean }> = [];
     const suspicious: Array<Record<string, unknown>> = [...dupes];
+    const unconfirmed: Array<Record<string, unknown>> = [];
     for (const [k, u] of union) {
-      const variants = [...u.variants.values()];
+      // B-1: drop variants on a non-agreed block hash (stale fork) FIRST, then count confirmations
+      const variants = [...u.variants.values()].filter((v) => {
+        if (v.entry.log.blockHash === blocks.get(v.entry.log.blockNumber!)!.hash) return true;
+        suspicious.push({ log: k, staleBlockHash: v.entry.log.blockHash, reportedBy: [...v.labels] });
+        return false;
+      });
+      if (variants.length === 0) continue;
       const confirmed = variants.length === 1 && variants[0]!.labels.size >= rpc.minAgree;
       if (!confirmed || u.labels.size < res.ok.length) suspicious.push({ log: k, reportedBy: [...u.labels], variants: variants.length });
       for (const v of variants) {
-        const b = blocks.get(v.entry.log.blockNumber!)!;
-        if (v.entry.log.blockHash !== b.hash) {
-          suspicious.push({ log: k, staleBlockHash: v.entry.log.blockHash });
-          continue;
-        }
+        if (!confirmed)
+          unconfirmed.push({ log: k, block: String(v.entry.log.blockNumber), address: v.entry.log.address, topic0: v.entry.log.topics[0], data: v.entry.log.data, reportedBy: [...v.labels] });
         logs.push({ ...v.entry, confirmed });
       }
     }
     if (suspicious.length > 0)
       await this.raise("RPC_DISAGREE", `${c} 区块 ${from}-${to}：各 RPC 返回的事件不一致（${suspicious.length} 处）；未确认的事件只建核对项 / 告警，不改状态`, {
         chain: c,
-        detail: { range: `${from}-${to}`, answered: res.ok.map((x) => x.label), items: suspicious.slice(0, 50) },
+        // R12: the unconfirmed logs (not counted in sums) are listed for manual reconciliation
+        detail: { range: `${from}-${to}`, answered: res.ok.map((x) => x.label), items: suspicious.slice(0, 50), unconfirmed: unconfirmed.slice(0, 50) },
         key: `logdiff:${c}:${from}-${to}`,
       });
     logs.sort((a, b) => (a.log.blockNumber! === b.log.blockNumber! ? a.log.logIndex! - b.log.logIndex! : a.log.blockNumber! < b.log.blockNumber! ? -1 : 1));

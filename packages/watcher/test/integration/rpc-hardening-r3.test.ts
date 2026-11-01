@@ -47,4 +47,34 @@ describe("round-3 hardening", () => {
       expect(t.codes()).toContain("RPC_DISAGREE"); // the duplicate itself is reported
     });
   });
+
+  describe("B-1: stale-fork variants are removed BEFORE counting confirmations", () => {
+    for (const staleFirst of [false, true]) {
+      it(`POC-J${staleFirst ? " (stale RPC listed first, MA03)" : ""}: a stale-fork RPC returning the honest log with another blockHash does not un-confirm it`, async () => {
+        let X: bigint | null = null;
+        const stale = logRewriter(H.bsc, () => X, (l) => ({ ...l, blockHash: `0x${"99".repeat(32)}` }));
+        const eps = staleFirst ? [{ label: "stale", client: stale }, { label: "a", client: H.bsc.pub }, { label: "b", client: honest(H.bsc) }] : three(stale, "stale");
+        const t = await makeWatcher(H, { endpoints: { bsc: eps } });
+        const f = await H.bsc.write(ACCOUNTS.admin, "fund", [E(1)]);
+        X = f.block;
+        await H.settle();
+        await t.w.tick();
+        expect(t.codes()).toContain("RPC_DISAGREE");
+        expect(t.w.state.derived.bsc.sums["funded"]).toBe(E(1).toString());
+      });
+    }
+
+    it("MA02 / MA04: any dissenting content at a position blocks confirmation (no plain majority, data is part of the identity)", async () => {
+      let X: bigint | null = null;
+      const tamper = logRewriter(H.bsc, () => X, (l) => ({ ...l, data: `0x${(10n ** 30n).toString(16).padStart(64, "0")}` }));
+      const t = await makeWatcher(H, { endpoints: { bsc: [{ label: "tamper", client: tamper }, { label: "a", client: H.bsc.pub }, { label: "b", client: honest(H.bsc) }] } });
+      const f = await H.bsc.write(ACCOUNTS.admin, "fund", [E(1)]);
+      X = f.block;
+      await H.settle();
+      await t.w.tick();
+      expect(t.w.state.derived.bsc.sums["funded"]).toBeUndefined(); // neither the tampered nor the majority value
+      const d = t.sink.alerts.find((a) => a.code === "RPC_DISAGREE")!;
+      expect(JSON.stringify(d.detail)).toContain("unconfirmed");
+    });
+  });
 });
