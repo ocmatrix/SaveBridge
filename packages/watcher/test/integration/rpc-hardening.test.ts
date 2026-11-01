@@ -55,4 +55,41 @@ describe("RPC hardening", () => {
       expect(t.codes()).toContain("BSC_NO_FINALIZED");
     });
   });
+
+  describe("A2 — a pause counts only when ≥2 RPCs confirm paused()", () => {
+    const pausedCall = "0x5c975abb";
+    it("POC3: primary lies paused()==true → the watcher still sends pause() and the chain is really paused", async () => {
+      const liar = tamperedClient(H.bsc, (m, p) => {
+        const d = p[0] as { data?: string; input?: string } | undefined;
+        const data = d?.data ?? d?.input;
+        return m === "eth_call" && typeof data === "string" && data.startsWith(pausedCall) ? { handled: true, result: `0x${"0".repeat(63)}1` } : { handled: false };
+      });
+      const t = await makeWatcher(H, { endpoints: { bsc: [{ label: "liar", client: liar }, { label: "honest", client: H.bsc.pub }] } });
+      const r = await forge(24n);
+      await H.settle();
+      t.clock.now = r.timestamp + 400;
+      await t.w.tick();
+      expect(await H.isPaused("bsc")).toBe(true);
+      expect(t.codes()).toContain("AUTO_PAUSE");
+    });
+
+    it("a forged EnforcedPause on the send path (bridge not paused) is NOT success → PAUSE_FAILED level 1, no AUTO_PAUSE", async () => {
+      const t = await makeWatcher(H, {
+        wrapSender: (inner) => ({
+          address: inner.address,
+          send: async () => {
+            throw new Error("execution reverted: custom error 0xd93c0665");
+          },
+        }),
+      });
+      const r = await forge(25n);
+      await H.settle();
+      t.clock.now = r.timestamp + 400;
+      await t.w.tick();
+      expect(await H.isPaused("bsc")).toBe(false);
+      expect(t.codes()).not.toContain("AUTO_PAUSE");
+      expect(t.sink.alerts.find((a) => a.code === "PAUSE_FAILED")!.level).toBe(1);
+      expect(t.w.state.derived.pending).toHaveLength(1);
+    });
+  });
 });

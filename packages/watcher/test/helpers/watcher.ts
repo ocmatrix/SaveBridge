@@ -2,7 +2,7 @@ import { createPublicClient, custom, http, type EIP1193RequestFn, type PublicCli
 import { MemoryAlertSink } from "../../src/alerts.js";
 import type { WatcherConfig, ControlledEntry } from "../../src/config.js";
 import { MemoryHeartbeat, type RelayerProbe } from "../../src/heartbeat.js";
-import { PauseExecutor, PauseOnlySigner } from "../../src/pauser.js";
+import { PauseExecutor, PauseOnlySigner, type RawTxSender } from "../../src/pauser.js";
 import { MultiRpc, type RpcEndpoint } from "../../src/rpc.js";
 import { MemoryStateStore, type StateStore } from "../../src/state.js";
 import type { ChainName } from "../../src/types.js";
@@ -33,6 +33,8 @@ export interface WOpts {
   config?: (c: WatcherConfig) => void;
   controlled?: ControlledEntry[];
   relayerProbe?: RelayerProbe;
+  /** Wrap the PAUSER transport (e.g. simulate a lying RPC on the send path). */
+  wrapSender?: (inner: RawTxSender) => RawTxSender;
 }
 
 export interface TW {
@@ -95,7 +97,10 @@ export async function makeWatcher(H: Harness, o: WOpts = {}): Promise<TW> {
   const sink = new MemoryAlertSink();
   const hb = new MemoryHeartbeat();
   const clock = { now: Math.max((await H.bsc.latest()).timestamp, (await H.wantos.latest()).timestamp) };
-  const signer = (h: ChainH) => new PauseOnlySigner(viemRawTxSender(h.wallet(ACCOUNTS.pauser), ACCOUNTS.pauser), [h.bridge]);
+  const signer = (h: ChainH) => {
+    const raw = viemRawTxSender(h.wallet(ACCOUNTS.pauser), ACCOUNTS.pauser);
+    return new PauseOnlySigner(o.wrapSender ? o.wrapSender(raw) : raw, [h.bridge]);
+  };
   const pauser = new PauseExecutor(
     { bsc: signer(H.bsc), wantos: signer(H.wantos) },
     { bsc: multiRpcPauseReader(rpc.bsc, H.bsc.bridge), wantos: multiRpcPauseReader(rpc.wantos, H.wantos.bridge) },

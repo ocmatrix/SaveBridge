@@ -16,10 +16,13 @@ export function buildRpc(cfg: WatcherConfig): Record<ChainName, MultiRpc> {
   return { bsc: mk("bsc"), wantos: mk("wantos") };
 }
 
-/** Reads `paused()` and waits for receipts through the chain's RPC set. */
+/** `paused()` by multi-RPC consensus (null when not agreed); receipts via the first answering RPC. */
 export function multiRpcPauseReader(rpc: MultiRpc, bridge: Address): PauseChainReader {
   return {
-    paused: () => rpc.primary((c) => c.readContract({ address: bridge, abi: bridgeAbiOf(rpc.chain), functionName: "paused" }) as Promise<boolean>),
+    paused: async () => {
+      const r = await rpc.consensus((c) => c.readContract({ address: bridge, abi: bridgeAbiOf(rpc.chain), functionName: "paused" }) as Promise<boolean>);
+      return r.ok ? r.value : null;
+    },
     waitReceipt: async (hash: Hex) => (await rpc.primary((c) => c.waitForTransactionReceipt({ hash, pollingInterval: 250, timeout: 120_000 }))).status,
   };
 }

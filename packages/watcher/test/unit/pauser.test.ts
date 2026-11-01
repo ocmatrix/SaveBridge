@@ -30,7 +30,7 @@ class FakeSender implements RawTxSender {
 
 class FakeReader implements PauseChainReader {
   constructor(public isPaused = false, public receipt: "success" | "reverted" = "success") {}
-  async paused(): Promise<boolean> {
+  async paused(): Promise<boolean | null> {
     return this.isPaused;
   }
   async waitReceipt(): Promise<"success" | "reverted"> {
@@ -108,11 +108,32 @@ describe("PauseExecutor", () => {
     expect(sender.sent).toEqual([{ to: BRIDGE, data: PAUSE_SELECTOR }]);
   });
 
-  it("treats an EnforcedPause revert (race: someone paused first) as success", async () => {
+  it("treats an EnforcedPause revert as success only once ≥2 RPCs confirm paused() (race: someone paused first)", async () => {
     const sender = new FakeSender();
     sender.failures.push(new Error("execution reverted: custom error 0xd93c0665"));
-    const { ex } = mk(new FakeReader(false), sender);
+    const reader = new FakeReader(false);
+    let reads = 0;
+    reader.paused = async () => reads++ > 0; // unpaused at first read, paused when re-checked
+    const { ex } = mk(reader, sender);
     expect(await ex.pause("bsc")).toMatchObject({ ok: true, status: "already-paused" });
+  });
+
+  it("an EnforcedPause claim that the RPCs do not confirm is a failure (A2)", async () => {
+    const sender = new FakeSender();
+    for (let i = 0; i < 3; i++) sender.failures.push(new Error("execution reverted: custom error 0xd93c0665"));
+    const { ex } = mk(new FakeReader(false), sender);
+    const r = await ex.pause("bsc");
+    expect(r).toMatchObject({ ok: false, status: "failed", attempts: 3 });
+    expect(r.error).toMatch(/not confirmed/);
+  });
+
+  it("an unconfirmed paused() reading (RPCs disagree → null) is not 'already paused': pause() is sent", async () => {
+    const reader = new FakeReader(false);
+    let n = 0;
+    reader.paused = async () => (n++ === 0 ? null : true);
+    const { ex, sender } = mk(reader);
+    expect(await ex.pause("bsc")).toMatchObject({ ok: true, status: "paused" });
+    expect(sender.sent).toHaveLength(1);
   });
 
   it("treats a reverted receipt as success when the bridge is paused afterwards", async () => {
