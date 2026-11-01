@@ -22,6 +22,17 @@ describe("state store", () => {
     expect(JSON.parse(readFileSync(path, "utf8")).version).toBe(1);
   });
 
+  it("file store persists bigints nested in alert details as decimal strings (regression)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "watcher-state-"));
+    const path = join(dir, "state.json");
+    const st = new FileStateStore(path);
+    const s = await st.load();
+    s.meta.openLevel1["k"] = { alert: { level: 1, code: "KEY_CHANGE", title: "t", detail: { args: { amount: 5n } }, at: 1 }, lastSentAt: 1 };
+    await st.save(s);
+    const back = await new FileStateStore(path).load();
+    expect(back.meta.openLevel1["k"]!.alert.detail).toEqual({ args: { amount: "5" } });
+  });
+
   it("file store refuses a state file of an unknown version", async () => {
     const dir = mkdtempSync(join(tmpdir(), "watcher-state-"));
     const path = join(dir, "state.json");

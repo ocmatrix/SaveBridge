@@ -34,7 +34,10 @@ export const initialState = (): State => ({
   },
 });
 
-export const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+/** State is plain JSON: bigints (e.g. decoded event args kept for alert details) are stored as decimal strings. */
+const replacer = (_k: string, x: unknown): unknown => (typeof x === "bigint" ? x.toString() : x);
+export const toJson = (v: unknown): string => JSON.stringify(v, replacer);
+export const clone = <T>(v: T): T => JSON.parse(toJson(v)) as T;
 
 export interface StateStore {
   load(): Promise<State>;
@@ -70,7 +73,7 @@ export class FileStateStore implements StateStore {
   async save(state: State): Promise<void> {
     mkdirSync(dirname(this.path), { recursive: true });
     const tmp = `${this.path}.tmp`;
-    writeFileSync(tmp, JSON.stringify(state));
+    writeFileSync(tmp, toJson(state));
     renameSync(tmp, this.path);
   }
 }

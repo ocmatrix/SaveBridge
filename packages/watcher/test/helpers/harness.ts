@@ -165,6 +165,12 @@ async function deployRaw(h: ChainH, a: Account, bytecode: Hex, ctorArgs: Hex = "
   return r.contractAddress;
 }
 
+/** Deploys a fresh implementation of the chain's bridge (for a timelocked upgrade in tests). */
+export async function deployImpl(h: ChainH): Promise<Address> {
+  const n = h.name === "bsc" ? "BscVaultV2" : "WantosBridgeV2";
+  return deployRaw(h, ACCOUNTS.tokenDeployer, artifact(n, n).bytecode);
+}
+
 export const BSC_PARAMS = { dailyCap: E(5000), perAddrDailyCap: E(2000), largeThreshold: E(1000), releaseDelay: 12n * 3600n, minDeposit: E(10), maxDepositPerTx: E(2000) };
 export const WANTOS_PARAMS = { w2bMinAmount: E(10), w2bPerAddrDailyCap: E(2000), b2wDailyCap: E(3000), b2wDelay: 15n * 60n };
 
