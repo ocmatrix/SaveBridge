@@ -76,6 +76,7 @@ describe("§9.1-2/3/4", () => {
         expect(a.chain).toBe("wantos");
         expect(String(a.detail["advice"])).toContain("先吊销被怀疑的付款钥匙");
         expect(String(a.detail["advice"])).toContain("取消可疑排队项");
+        if (label === "number") expect(String(a.detail["reason"])).toMatch(/no finalized BSC Deposited/);
       });
     }
 

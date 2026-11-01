@@ -101,6 +101,39 @@ describe("pause semantics, rollback, replay", () => {
     expect(t.codes()).toContain("AUTO_PAUSE");
   });
 
+  describe("look-ahead for Unpaused while the cursor is still catching up (one block per tick)", () => {
+    const lagging = { config: (c: { chains: { bsc: { maxBlockRange: number } }; maxRangesPerTick: number }) => void ((c.chains.bsc.maxBlockRange = 1), (c.maxRangesPerTick = 1)) };
+    const setup = async () => {
+      const t = await makeWatcher(H, lagging as never);
+      const r = await forge(15n);
+      await H.settle();
+      t.clock.now = r.timestamp + 10;
+      await t.w.tick(); // cursor reaches exactly the forged payout's block
+      expect(t.w.state.derived.pending).toHaveLength(1);
+      await H.bsc.increaseTime(400); // the owner acts after the grace period
+      await H.bsc.write(ACCOUNTS.admin, "pause", []);
+      await H.bsc.write(ACCOUNTS.wl, "unpause", []);
+      return { t, r };
+    };
+
+    it("a finalized Unpaused beyond the cursor (after the grace period) is found and acknowledges the old event", async () => {
+      const { t, r } = await setup();
+      await H.settle();
+      t.clock.now = r.timestamp + 401;
+      await t.w.tick();
+      expect(await H.isPaused("bsc")).toBe(false);
+      expect(t.codes()).toContain("MISMATCH_ACKNOWLEDGED");
+    });
+
+    it("an Unpaused above the safe head is not looked at → pause", async () => {
+      const { t, r } = await setup(); // not settled: pause/unpause are above BSC finalized
+      t.clock.now = r.timestamp + 401;
+      await t.w.tick();
+      expect(await H.isPaused("bsc")).toBe(true);
+      expect(t.codes()).not.toContain("MISMATCH_ACKNOWLEDGED");
+    });
+  });
+
   it("WANTOS block-hash change → level-1 alert and both chains paused; state rewound and re-ingested", async () => {
     const t = await makeWatcher(H);
     await H.wantos.write(ACCOUNTS.user1, "approve", [H.wantos.bridge, E(100)], H.wantos.token);
