@@ -65,4 +65,60 @@ describe("refund hardening", () => {
       expect(await H.isPaused("bsc")).toBe(true);
     });
   });
+
+  describe("A5 — only Voided passes a refund check", () => {
+    const refundAt = async (t: Awaited<ReturnType<typeof makeWatcher>>, rrTs: number) => {
+      t.clock.now = rrTs + 86_400 - 7199;
+      await t.w.tick();
+    };
+
+    it("WANTOS refund for an order already Released on BSC → pause WANTOS", async () => {
+      const t = await makeWatcher(H);
+      await bridgeOut(E(100));
+      await H.bsc.write(ACCOUNTS.relayer, "release", [1n, ACCOUNTS.user1.address, E(100)]);
+      await H.settle();
+      const rr = await H.wantos.write(ACCOUNTS.admin, "requestRefund", [1n]);
+      await H.settle();
+      await refundAt(t, rr.timestamp);
+      expect(await H.isPaused("wantos")).toBe(true);
+      expect(t.sink.alerts.find((a) => a.code === "AUTO_PAUSE")!.detail["observed"]).toMatchObject({ status: 2 });
+    });
+
+    it("WANTOS refund for an order Queued on BSC → pause WANTOS", async () => {
+      const t = await makeWatcher(H);
+      await bridgeOut(E(1500));
+      await H.bsc.write(ACCOUNTS.relayer, "queueRelease", [1n, ACCOUNTS.user1.address, E(1500)]);
+      await H.settle();
+      const rr = await H.wantos.write(ACCOUNTS.admin, "requestRefund", [1n]);
+      await H.settle();
+      await refundAt(t, rr.timestamp);
+      expect(await H.isPaused("wantos")).toBe(true);
+      expect(t.sink.alerts.find((a) => a.code === "AUTO_PAUSE")!.detail["observed"]).toMatchObject({ status: 1 });
+    });
+
+    it("BSC deposit refund whose WANTOS credit is Queued → pause BSC", async () => {
+      const t = await makeWatcher(H);
+      await deposit(E(50));
+      await H.wantos.write(ACCOUNTS.relayer, "queueRelease", [1n, ACCOUNTS.user2.address, E(50)]);
+      await H.settle();
+      const rr = await H.bsc.write(ACCOUNTS.admin, "requestDepositRefund", [1n]);
+      await H.settle();
+      await refundAt(t, rr.timestamp);
+      expect(await H.isPaused("bsc")).toBe(true);
+    });
+
+    it("BSC deposit refund whose WANTOS credit was Released → pause BSC", async () => {
+      const t = await makeWatcher(H);
+      await deposit(E(50));
+      await H.wantos.write(ACCOUNTS.relayer, "queueRelease", [1n, ACCOUNTS.user2.address, E(50)]);
+      await H.wantos.increaseTime(15 * 60 + 1);
+      await H.wantos.write(ACCOUNTS.relayer, "executeRelease", [1n]);
+      await H.settle();
+      const rr = await H.bsc.write(ACCOUNTS.admin, "requestDepositRefund", [1n]);
+      await H.settle();
+      await refundAt(t, rr.timestamp);
+      expect(await H.isPaused("bsc")).toBe(true);
+      expect(t.sink.alerts.find((a) => a.code === "AUTO_PAUSE" && a.chain === "bsc")!.detail["observed"]).toMatchObject({ status: 2 });
+    });
+  });
 });
