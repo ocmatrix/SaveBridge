@@ -116,3 +116,42 @@ contract BscVaultV2Appended is BscVaultV2 {
         _vn().appendedField = v;
     }
 }
+
+/// @dev A-1: plausible implementation with EXACTLY ONE broken IBridgeForTimelock view (selected by `mode`).
+///      mode 1: timelock() wrong; 2: whitelistManager() == 0; 3: isKeyHolder(wlm) false; 4: paused() reverts.
+contract OneBrokenViewImpl is UUPSUpgradeable {
+    address immutable tl;
+    address immutable wlm;
+    uint256 immutable mode;
+
+    error PausedProbeBroken();
+
+    constructor(address timelock_, address wl_, uint256 mode_) {
+        tl = timelock_;
+        wlm = wl_;
+        mode = mode_;
+    }
+
+    function _authorizeUpgrade(address) internal override {}
+
+    function timelock() external view returns (address) {
+        return mode == 1 ? address(0xBEEF) : tl;
+    }
+
+    function whitelistManager() public view returns (address) {
+        return mode == 2 ? address(0) : wlm;
+    }
+
+    function paused() external view returns (bool) {
+        if (mode == 4) revert PausedProbeBroken();
+        return false;
+    }
+
+    function whitelistRecoveryActive() external pure returns (bool) {
+        return false;
+    }
+
+    function isKeyHolder(address a) external view returns (bool) {
+        return mode == 3 ? false : a == whitelistManager();
+    }
+}

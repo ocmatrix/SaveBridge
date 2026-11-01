@@ -3,7 +3,13 @@ pragma solidity 0.8.28;
 
 import {BscFixture} from "./utils/Fixtures.sol";
 import {BridgeTimelock} from "../src/BridgeTimelock.sol";
-import {BscVaultV2Next, DroppedViewsImpl, StuckRecoveryImpl, LostNamespaceImpl} from "./mocks/UpgradeMocks.sol";
+import {
+    BscVaultV2Next,
+    DroppedViewsImpl,
+    StuckRecoveryImpl,
+    LostNamespaceImpl,
+    OneBrokenViewImpl
+} from "./mocks/UpgradeMocks.sol";
 
 /// A1: a bad upgrade must not be able to brick the timelock. The timelock re-checks the bridge after every
 /// execution; an upgrade that breaks the views it depends on reverts as a whole.
@@ -62,6 +68,34 @@ contract TimelockSelfCheckTest is BscFixture {
         vm.expectRevert();
         tl.executeBatch(t, v, p, bytes32(0), "b");
         assertEq(_impl(), address(impl));
+    }
+
+    function _upgradeWithOneBroken(uint256 mode, bytes memory expectedRevert) internal {
+        OneBrokenViewImpl bad = new OneBrokenViewImpl(address(tl), wl, mode);
+        bytes memory data = abi.encodeCall(vault.upgradeToAndCall, (address(bad), ""));
+        bytes32 salt = _propose(address(vault), data);
+        vm.warp(block.timestamp + 48 hours);
+        vm.expectRevert(expectedRevert);
+        _execute(address(vault), data, salt);
+        assertEq(_impl(), address(impl));
+    }
+
+    /// A-1, real vault, exactly one view broken per case.
+    function test_upgradeOneBroken_timelockView() public {
+        _upgradeWithOneBroken(1, abi.encodeWithSelector(BridgeTimelock.BridgeCheckFailed.selector));
+    }
+
+    function test_upgradeOneBroken_zeroWhitelistManager() public {
+        _upgradeWithOneBroken(2, abi.encodeWithSelector(BridgeTimelock.BridgeCheckFailed.selector));
+    }
+
+    function test_upgradeOneBroken_whitelistManagerNotKeyHolder() public {
+        _upgradeWithOneBroken(3, abi.encodeWithSelector(BridgeTimelock.BridgeCheckFailed.selector));
+    }
+
+    function test_upgradeOneBroken_pausedReverts() public {
+        // raw revert data of the view bubbles up
+        _upgradeWithOneBroken(4, abi.encodeWithSelector(OneBrokenViewImpl.PausedProbeBroken.selector));
     }
 
     function test_goodUpgradeStillPasses() public {

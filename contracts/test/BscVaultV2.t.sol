@@ -353,6 +353,24 @@ contract BscVaultV2Test is BscFixture {
         assertTrue(vault.whitelisted(bob));
     }
 
+    /// B2: emergencyRemove emits one WhitelistUpdated per address (indexed addr + listHash) and then
+    /// WhitelistEmergencyRemoval(by, listHash, count).
+    function test_wl_emergencyRemoveEvents() public {
+        _applyBatch(vault, _two(alice, bob), true);
+        address[] memory r = _two(alice, carol); // carol was never listed: still reported
+        bytes32 listHash = keccak256(abi.encode(r));
+        vm.expectEmit(true, true, true, true, address(vault));
+        emit BridgeBase.WhitelistUpdated(alice, false, listHash);
+        vm.expectEmit(true, true, true, true, address(vault));
+        emit BridgeBase.WhitelistUpdated(carol, false, listHash);
+        vm.expectEmit(true, true, true, true, address(vault));
+        emit BridgeBase.WhitelistEmergencyRemoval(admin, listHash, 2);
+        vm.prank(admin);
+        vault.emergencyRemove(r);
+        assertFalse(vault.whitelisted(alice));
+        assertTrue(vault.whitelisted(bob));
+    }
+
     // =========================================================== keys (invariant 5)
     function test_keys_grantViaTimelockWithConflictChecks() public {
         address r2 = makeAddr("r2");

@@ -150,6 +150,17 @@ contract BscLayoutTest is BscFixture {
         bytes32 dslot = keccak256(abi.encode(n, vbase + ds));
         assertEq(uint256(vm.load(address(vault), dslot)), uint160(carol));
         assertEq(uint128(uint256(vm.load(address(vault), bytes32(uint256(dslot) + 1)))), 100 * U);
+        // Deposit packing (B1): slot+1 = amount (16 B @0) | refundRequestedAt (8 B @16) | refundStatus (1 B @24)
+        vm.prank(admin);
+        vault.requestDepositRefund(n);
+        uint256 dw1 = uint256(vm.load(address(vault), bytes32(uint256(dslot) + 1)));
+        assertEq(uint128(dw1), 100 * U, "Deposit.amount @ slot+1 offset 0");
+        assertEq(uint64(dw1 >> 128), block.timestamp, "Deposit.refundRequestedAt @ slot+1 offset 16");
+        assertEq(uint8(dw1 >> 192), 1, "Deposit.refundStatus (Refunding) @ slot+1 offset 24");
+        assertEq(dw1 >> 200, 0, "nothing above offset 25");
+        (,, uint64 rq, uint8 rs) = vault.deposits(n);
+        assertEq(rq, block.timestamp);
+        assertEq(rs, 1);
         (uint256 ls,,) = _field(vaultJson, "legacyPaid");
         assertEq(uint256(vm.load(address(vault), keccak256(abi.encode(bytes32("old"), vbase + ls)))), 1);
     }

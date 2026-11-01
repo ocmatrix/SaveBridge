@@ -357,6 +357,52 @@ contract BridgeTimelockTest is Test {
         assertEq(bridge.counter(), 2);
     }
 
+    // ---------- A-1: post-execution self-check, exactly one condition broken at a time ----------
+    function _scheduleBumpAndWait(bytes32 salt) internal {
+        _bumpOp(salt);
+        vm.warp(block.timestamp + 48 hours);
+    }
+
+    function test_selfCheck_timelockViewMismatch() public {
+        _scheduleBumpAndWait("a");
+        bridge.setTimelock(makeAddr("otherTimelock"));
+        vm.expectRevert(BridgeTimelock.BridgeCheckFailed.selector);
+        _execBump("a");
+        assertEq(bridge.counter(), 0);
+    }
+
+    function test_selfCheck_zeroWhitelistManager() public {
+        _scheduleBumpAndWait("b");
+        bridge.setWhitelistManager(address(0)); // mock still reports isKeyHolder(0) == true: only this condition fails
+        assertTrue(bridge.isKeyHolder(address(0)));
+        vm.expectRevert(BridgeTimelock.BridgeCheckFailed.selector);
+        _execBump("b");
+        assertEq(bridge.counter(), 0);
+    }
+
+    function test_selfCheck_whitelistManagerNotKeyHolder() public {
+        _scheduleBumpAndWait("c");
+        bridge.setWlNotKeyHolder(true);
+        vm.expectRevert(BridgeTimelock.BridgeCheckFailed.selector);
+        _execBump("c");
+        assertEq(bridge.counter(), 0);
+    }
+
+    function test_selfCheck_pausedProbeReverts() public {
+        _scheduleBumpAndWait("d");
+        bridge.setPausedReverts(true);
+        // the view's own revert data bubbles up (not BridgeCheckFailed)
+        vm.expectRevert(MockBridge.PausedProbeBroken.selector);
+        _execBump("d");
+        assertEq(bridge.counter(), 0);
+    }
+
+    function test_selfCheck_allHealthyPasses() public {
+        _scheduleBumpAndWait("e");
+        _execBump("e");
+        assertEq(bridge.counter(), 1);
+    }
+
     // ---------- recovery blocks execution ----------
     function test_executeBlockedDuringBridgeWhitelistRecovery() public {
         _bumpOp("w");
