@@ -81,6 +81,8 @@ describe("§9.1-2/3/4", () => {
 
     it("deposit not yet finalized on BSC → deferred, not paused", async () => {
       const t = await makeWatcher(H);
+      await H.settle();
+      await t.w.tick(); // BSC cursor exists but will be older than the queue item
       await H.wantos.increaseTime(20);
       const q = await H.wantos.write(ACCOUNTS.relayer, "queueRelease", [1n, ACCOUNTS.user2.address, E(100)]);
       await H.wantos.mine(7);

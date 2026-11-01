@@ -90,11 +90,16 @@ describe("§9.1-1 BSC payout ↔ WANTOS BridgeOut", () => {
 
   it("does not pause while the watcher's WANTOS view is behind the payout (condition ①)", async () => {
     const t = await makeWatcher(H);
+    await H.settle();
+    await t.w.tick(); // the watcher has a WANTOS cursor...
+    const wantosCursor = t.w.state.derived.wantos.cursor!;
     await H.bsc.increaseTime(30);
     const r = await H.bsc.write(ACCOUNTS.relayer, "release", [3n, ACCOUNTS.user2.address, E(50)]);
-    await H.bsc.mine(3); // WANTOS gets no newer blocks
+    await H.bsc.mine(3); // ...but WANTOS gets no newer blocks, so that cursor is older than the payout
+    expect(wantosCursor.timestamp).toBeLessThan(r.timestamp);
     t.clock.now = r.timestamp + 1000;
     await t.w.tick();
+    expect(t.w.state.derived.wantos.cursor).toEqual(wantosCursor);
     expect(await H.isPaused("bsc")).toBe(false);
     expect(t.codes()).toContain("CHECK_DEFERRED");
     expect(t.w.state.derived.pending).toHaveLength(1);
