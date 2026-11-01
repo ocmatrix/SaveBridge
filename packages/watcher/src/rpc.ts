@@ -43,6 +43,19 @@ export class MultiRpc {
     throw new Error(`${this.chain}: all ${this.endpoints.length} RPCs failed: ${errors.join("; ")}`);
   }
 
+  /** Run on every endpoint; returns successes (with labels) and failures. */
+  async all<T>(fn: (c: PublicClient, label: string) => Promise<T>): Promise<{ ok: Array<{ label: string; value: T }>; failed: Array<{ label: string; error: string }> }> {
+    const settled = await Promise.allSettled(this.endpoints.map((e) => fn(e.client, e.label)));
+    const ok: Array<{ label: string; value: T }> = [];
+    const failed: Array<{ label: string; error: string }> = [];
+    settled.forEach((s, i) => {
+      const label = this.endpoints[i]!.label;
+      if (s.status === "fulfilled") ok.push({ label, value: s.value });
+      else failed.push({ label, error: s.reason instanceof Error ? s.reason.message.split("\n")[0]! : String(s.reason) });
+    });
+    return { ok, failed };
+  }
+
   async consensus<T>(fn: (c: PublicClient, label: string) => Promise<T>): Promise<Consensus<T>> {
     const settled = await Promise.allSettled(this.endpoints.map((e) => fn(e.client, e.label)));
     const groups = new Map<string, { value: T; n: number }>();

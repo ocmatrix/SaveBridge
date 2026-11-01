@@ -5,7 +5,7 @@ import type { ControlledEntry, WatcherConfig } from "./config.js";
 import { PAUSER_ROLE, bridgeAbiOf, computeEventKey, decodeLog, describeCall, erc20Abi, type DecodedLog } from "./events.js";
 import type { Heartbeat, RelayerProbe } from "./heartbeat.js";
 import type { PauseExecutor } from "./pauser.js";
-import type { MultiRpc } from "./rpc.js";
+import { stableStringify, type MultiRpc } from "./rpc.js";
 import { clone, initialDerived, type StateStore } from "./state.js";
 import {
   CHAINS,
@@ -166,27 +166,30 @@ export class Watcher {
   }
 
   // ------------------------------------------------------------------ heads & ingestion
+  /**
+   * Safe head = MIN over the RPCs that answered (BSC `finalized`, WANTOS latest − confirmations);
+   * at least `minRpcAgreement` RPCs must answer, otherwise wait and alert.
+   */
   private async safeHead(c: ChainName): Promise<bigint | null> {
     const cfg = this.cfg.chains[c];
     const rpc = this.d.rpc[c];
+    const min = (xs: bigint[]): bigint => xs.reduce((a, b) => (b < a ? b : a));
     if (cfg.head.kind === "finalized") {
-      try {
-        const b = await rpc.primary((cl) => cl.getBlock({ blockTag: "finalized" }));
-        this.alerts.clearKey(`nofinal:${c}`);
-        return b.number;
-      } catch (e) {
-        await this.raise("BSC_NO_FINALIZED", `${c} 取不到 finalized 区块，等待`, { chain: c, detail: { error: errMsg(e) }, key: `nofinal:${c}` });
+      const r = await rpc.all(async (cl) => (await cl.getBlock({ blockTag: "finalized" })).number);
+      if (r.ok.length < rpc.minAgree) {
+        await this.raise("BSC_NO_FINALIZED", `${c} 取不到 finalized 区块（仅 ${r.ok.length} 个 RPC 返回），等待`, { chain: c, detail: { failed: r.failed }, key: `nofinal:${c}` });
         return null;
       }
+      this.alerts.clearKey(`nofinal:${c}`);
+      return min(r.ok.map((x) => x.value));
     }
-    let latest: bigint;
-    try {
-      latest = await rpc.primary((cl) => cl.getBlockNumber({ cacheTime: 0 }));
-      this.alerts.clearKey(`unreach:${c}`);
-    } catch (e) {
-      await this.raise("RPC_UNREACHABLE", `${c} 全部 RPC 不可达`, { chain: c, detail: { error: errMsg(e) }, key: `unreach:${c}` });
+    const r = await rpc.all((cl) => cl.getBlockNumber({ cacheTime: 0 }));
+    if (r.ok.length < rpc.minAgree) {
+      await this.raise("RPC_UNREACHABLE", `${c} 可用 RPC 不足（${r.ok.length}/${rpc.endpoints.length}）`, { chain: c, detail: { failed: r.failed }, key: `unreach:${c}` });
       return null;
     }
+    this.alerts.clearKey(`unreach:${c}`);
+    const latest = min(r.ok.map((x) => x.value));
     const m = this.state.meta;
     const now = this.now();
     if (!m.wantosHead || BigInt(m.wantosHead.number) !== latest) {
@@ -255,18 +258,55 @@ export class Watcher {
     return out;
   }
 
+  /**
+   * DESIGN §9 "至少两个 RPC 订阅": every range is fetched from EVERY RPC and the union is processed
+   * (dedup by txHash:logIndex). A log missing from some RPC is reported; a fabricated log is filtered
+   * later by the Verifier's existence consensus. ≥ minRpcAgreement RPCs must answer and agree on the
+   * range-end block hash, otherwise the cursor does not move.
+   */
   private async ingestRange(c: ChainName, from: bigint, to: bigint): Promise<void> {
     const rpc = this.d.rpc[c];
-    const { logs, end, times } = await rpc.primary(async (cl) => {
-      const logs = await this.fetchLogs(cl, c, from, to);
-      const end = await cl.getBlock({ blockNumber: to });
-      const times = new Map<bigint, number>([[end.number, Number(end.timestamp)]]);
-      for (const { log } of logs) {
-        const n = log.blockNumber!;
-        if (!times.has(n)) times.set(n, Number((await cl.getBlock({ blockNumber: n })).timestamp));
+    const res = await rpc.all((cl) => this.fetchLogs(cl, c, from, to));
+    if (res.ok.length < rpc.minAgree) throw new Error(`only ${res.ok.length} RPC(s) answered getLogs ${from}-${to}: ${res.failed.map((f) => `${f.label}: ${f.error}`).join("; ")}`);
+    type Entry = { source: DecodedLog["source"]; log: Log };
+    const union = new Map<string, { variants: Map<string, { entry: Entry; n: number }>; labels: Set<string> }>();
+    for (const { label, value } of res.ok) {
+      for (const entry of value) {
+        const k = `${entry.log.transactionHash}:${entry.log.logIndex}`;
+        const sig = stableStringify({ a: lc(entry.log.address), t: entry.log.topics, d: entry.log.data, h: entry.log.blockHash, s: entry.source });
+        const u = union.get(k) ?? { variants: new Map(), labels: new Set<string>() };
+        const v = u.variants.get(sig) ?? { entry, n: 0 };
+        v.n++;
+        u.variants.set(sig, v);
+        u.labels.add(label);
+        union.set(k, u);
       }
-      return { logs, end, times };
+    }
+    for (const [k, u] of union) {
+      if (u.labels.size < res.ok.length || u.variants.size > 1)
+        await this.raise("RPC_DISAGREE", `${c} 各 RPC 返回的事件不一致（${k}），已按并集处理，假事件由逐笔共识复核过滤`, {
+          chain: c,
+          detail: { log: k, reportedBy: [...u.labels], answered: res.ok.map((x) => x.label), variants: u.variants.size },
+          key: `logdiff:${c}:${k}`,
+        });
+    }
+    // same position, different content → keep the variant reported by most RPCs (also alerted above)
+    const logs = [...union.values()].map((u) => [...u.variants.values()].reduce((a, b) => (b.n > a.n ? b : a)).entry);
+    logs.sort((a, b) => (a.log.blockNumber! === b.log.blockNumber! ? a.log.logIndex! - b.log.logIndex! : a.log.blockNumber! < b.log.blockNumber! ? -1 : 1));
+    const endC = await rpc.consensus(async (cl) => {
+      const b = await cl.getBlock({ blockNumber: to });
+      return { hash: b.hash, timestamp: Number(b.timestamp) };
     });
+    if (!endC.ok) throw new Error(`block ${to} not confirmed by ≥${rpc.minAgree} RPCs (${endC.reason})`);
+    const end = endC.value;
+    const times = new Map<bigint, number>([[to, end.timestamp]]);
+    for (const { log } of logs) {
+      const n = log.blockNumber!;
+      if (times.has(n)) continue;
+      const t = await rpc.consensus(async (cl) => Number((await cl.getBlock({ blockNumber: n })).timestamp));
+      if (!t.ok) throw new Error(`timestamp of block ${n} not confirmed (${t.reason})`);
+      times.set(n, t.value);
+    }
     const abiFor = (s: DecodedLog["source"]): Abi => (s === "bridge" ? bridgeAbiOf(c) : s === "timelock" ? (bridgeTimelockAbi as Abi) : (erc20Abi as Abi));
     for (const { source, log } of logs) {
       const meta = { address: log.address, block: log.blockNumber!, blockHash: log.blockHash!, txHash: log.transactionHash!, logIndex: log.logIndex!, timestamp: times.get(log.blockNumber!)! };
@@ -281,7 +321,7 @@ export class Watcher {
       else if (source === "timelock") await this.onTimelock(c, l);
       else await this.onTransfer(c, l);
     }
-    const cursor: Cursor = { number: to.toString(), hash: end.hash, timestamp: Number(end.timestamp) };
+    const cursor: Cursor = { number: to.toString(), hash: end.hash, timestamp: end.timestamp };
     this.state.derived[c].cursor = cursor;
     for (const id of this.newOps.splice(0)) {
       const op = this.state.derived.timelockOps[id];
