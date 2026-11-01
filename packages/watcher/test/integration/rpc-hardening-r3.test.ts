@@ -289,4 +289,76 @@ describe("round-3 hardening", () => {
     expect(rw.level).toBe(2);
     expect(rw.detail["restoredTo"]).toBeNull();
   });
+
+  describe("mutation gaps (pure tests)", () => {
+    it("MA06 / MA20: an undecidable (RPC-disputed) check after its grace period gets blindAt and CHECK_OVERDUE; a later unrelated unpause cannot acknowledge it", async () => {
+      let forged: Hex = "0x";
+      let lie = true;
+      const liar = tamperedClient(H.bsc, (m, p) => (lie && m === "eth_getTransactionReceipt" && p[0] === forged ? { handled: true, result: null } : { handled: false }));
+      const t = await makeWatcher(H, { endpoints: { bsc: [{ label: "a", client: H.bsc.pub }, { label: "liar", client: liar }] } });
+      const r = await forge(91n);
+      forged = r.hash;
+      await H.settle();
+      t.clock.now = r.timestamp + 400;
+      await t.w.tick();
+      expect(t.w.state.derived.pending[0]!.blindAt).toBeDefined();
+      expect(t.sink.alerts.find((a) => a.code === "CHECK_OVERDUE")?.level).toBe(1);
+      await H.bsc.increaseTime(400);
+      await H.bsc.write(ACCOUNTS.admin, "pause", []);
+      await H.bsc.write(ACCOUNTS.wl, "unpause", []);
+      await H.settle();
+      t.clock.now += 400;
+      await t.w.tick();
+      lie = false;
+      t.clock.now += 10;
+      await t.w.tick();
+      expect(await H.isPaused("bsc")).toBe(true);
+      expect(t.codes()).not.toContain("MISMATCH_ACKNOWLEDGED");
+    });
+
+    it("MA30: a WANTOS cursor-hash disagreement stops WANTOS progress (no advance on unverified ground)", async () => {
+      let at: bigint | null = null;
+      const liar = tamperedClient(H.wantos, (m, p) =>
+        at !== null && m === "eth_getBlockByNumber" && p[0] === `0x${at.toString(16)}`
+          ? { handled: true, result: (async () => ({ ...((await (await fetch(H.wantos.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: m, params: p }) })).json()) as { result: Record<string, unknown> }).result, hash: `0x${"66".repeat(32)}` }))() }
+          : { handled: false },
+      );
+      const t = await makeWatcher(H, { endpoints: { wantos: [{ label: "a", client: H.wantos.pub }, { label: "liar", client: liar }] } });
+      await H.settle();
+      await t.w.tick();
+      const c1 = t.w.state.derived.wantos.cursor!.number;
+      at = BigInt(c1);
+      await H.settle();
+      await t.w.tick();
+      expect(t.w.state.derived.wantos.cursor!.number).toBe(c1);
+      expect(t.codes()).toContain("RPC_DISAGREE");
+      expect(t.codes()).not.toContain("WANTOS_REORG");
+    });
+
+    it("MA33: a forged B2W queue item that got EXECUTED while its check was deferred is still checked → WANTOS paused", async () => {
+      const t = await makeWatcher(H);
+      await H.settle();
+      await t.w.tick();
+      await H.wantos.increaseTime(20);
+      await H.wantos.write(ACCOUNTS.relayer, "queueRelease", [99n, ACCOUNTS.user2.address, E(100)]);
+      await H.wantos.mine(7); // BSC view behind → deferred
+      await H.wantos.increaseTime(15 * 60 + 1);
+      await H.wantos.write(ACCOUNTS.relayer, "executeRelease", [99n]);
+      await H.settle();
+      t.clock.now = (await H.wantos.latest()).timestamp;
+      await t.w.tick();
+      expect(await H.isPaused("wantos")).toBe(true);
+    });
+
+    it("MA09: a mint reported by one RPC only does not raise the persisted gross mint total (alert folded into RPC_DISAGREE)", async () => {
+      const mk = () => fakeLog([{ type: "event", name: "Transfer", inputs: [{ name: "from", type: "address", indexed: true }, { name: "to", type: "address", indexed: true }, { name: "value", type: "uint256", indexed: false }] }] as Abi, "Transfer", (i) => (i.name === "from" ? "0x0000000000000000000000000000000000000000" : i.name === "to" ? ACCOUNTS.attacker.address : E(50_000)));
+      const liar = injectorAt(H.wantos, () => H.wantos.token, mk, () => true, { withTopics: true, fixedTx: `0x${"ef".repeat(32)}` });
+      const t = await makeWatcher(H, { endpoints: { wantos: [{ label: "a", client: H.wantos.pub }, { label: "b", client: honest(H.wantos) }, { label: "liar", client: liar }] } });
+      await H.settle();
+      await t.w.tick();
+      expect(t.w.state.derived.mintTotal).toBe("0");
+      expect(t.sink.alerts.filter((a) => a.code === "MINT_EXCESS")).toHaveLength(0);
+      expect(JSON.stringify(t.sink.alerts.filter((a) => a.code === "RPC_DISAGREE").map((a) => a.detail))).toContain('"code":"MINT"');
+    });
+  });
 });

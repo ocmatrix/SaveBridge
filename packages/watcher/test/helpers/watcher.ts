@@ -72,13 +72,14 @@ export function fakeLog(abi: Abi, name: string, vals: (i: { name?: string; type:
 }
 
 /** (aligner r3) Appends one fabricated log (fresh txHash each call, `times` copies) at the range end of every unfiltered getLogs covering `address`. */
-export function injectorAt(h: ChainH, address: () => Address, mk: () => { topics: Hex[]; data: Hex }, on: () => boolean, opts: { times?: number; fixedTx?: Hex } = {}): PublicClient {
+export function injectorAt(h: ChainH, address: () => Address, mk: () => { topics: Hex[]; data: Hex }, on: () => boolean, opts: { times?: number; fixedTx?: Hex; withTopics?: boolean } = {}): PublicClient {
   let n = 0;
   return tamperedClient(h, (m, p) => {
     if (m !== "eth_getLogs" || !on()) return { handled: false };
     const f = p[0] as { address?: string | string[]; fromBlock: string; toBlock: string; topics?: unknown[] };
     const addrs = Array.isArray(f.address) ? f.address : [f.address];
-    if (!addrs.some((a) => a?.toLowerCase() === address().toLowerCase()) || (f.topics && f.topics.length > 0)) return { handled: false };
+    const hasTopics = !!(f.topics && f.topics.length > 0);
+    if (!addrs.some((a) => a?.toLowerCase() === address().toLowerCase()) || hasTopics !== !!opts.withTopics) return { handled: false };
     return {
       handled: true,
       result: (async () => {
