@@ -8,7 +8,7 @@ import { MemoryAlertSink } from "../src/alerts";
 import { SafetyState } from "../src/safety";
 import { LocalTestSigner } from "../src/signer";
 import { TxSender } from "../src/chain/sender";
-import { TimelockExecutor } from "../src/timelockExecutor";
+import { TimelockExecutor, runTimelockTicks } from "../src/timelockExecutor";
 import type { Db } from "../src/db/types";
 import type { Hex } from "../src/types";
 
@@ -145,5 +145,52 @@ describe("submission service: timelock auto-execute + 24h/6h reminders (ยง6.4, ย
     expect(alerts.byKind("TIMELOCK_EXEC_BLOCKED")).toHaveLength(1);
     const n = await db.query<{ n: number }>("select count(*)::int as n from tx_attempts");
     expect(n.rows[0]!.n).toBe(0);
+  });
+
+  it("B4: scans with a persisted cursor in bounded ranges (RPC getLogs range limit), and keeps working", async () => {
+    const ranges: [bigint, bigint][] = [];
+    const LIMIT = 5n;
+    const client = new Proxy(world.bsc.publicClient as any, {
+      get(t, p) {
+        if (p === "getLogs") {
+          return async (args: { fromBlock: bigint; toBlock: bigint | string }) => {
+            const to = typeof args.toBlock === "bigint" ? args.toBlock : await t.getBlockNumber();
+            if (typeof args.toBlock !== "bigint" || to - args.fromBlock + 1n > LIMIT) throw new Error("block range too large");
+            ranges.push([args.fromBlock, to]);
+            return t.getLogs(args);
+          };
+        }
+        return t[p];
+      },
+    });
+    const ex = new TimelockExecutor({ chainId: world.bsc.chain.id, timelock: world.b.timelock, client, sender, db, alerts, fromBlock: 0n, maxBlockRange: Number(LIMIT) });
+    await schedule(params(6000n * U), pad(toHex(7), { size: 32 }));
+    await ex.tick();
+    const head = await world.bsc.publicClient.getBlockNumber();
+    expect(ranges.every(([f, t]) => t - f + 1n <= LIMIT)).toBe(true);
+    expect(ranges[ranges.length - 1]![1]).toBe(head);
+    ranges.length = 0;
+    await warp(24n * H + 1n);
+    const ex2 = new TimelockExecutor({ chainId: world.bsc.chain.id, timelock: world.b.timelock, client, sender, db, alerts, fromBlock: 0n, maxBlockRange: Number(LIMIT) });
+    await ex2.tick(); // restart: resumes from the cursor, does not rescan from fromBlock
+    expect(ranges[0]![0]).toBe(head + 1n);
+    expect(alerts.byKind("TIMELOCK_REMINDER")).toHaveLength(1);
+  });
+
+  it("B4: executor failures are alerted, never swallowed", async () => {
+    const broken = new TimelockExecutor({
+      chainId: world.bsc.chain.id,
+      timelock: world.b.timelock,
+      client: new Proxy(world.bsc.publicClient as any, { get: (t, p) => (p === "getLogs" ? async () => { throw new Error("upstream https://rpc.example.com/v2/KEY failed"); } : t[p]) }),
+      sender,
+      db,
+      alerts,
+      fromBlock: 0n,
+    });
+    await expect(broken.tick()).rejects.toThrow();
+    await runTimelockTicks([broken], alerts);
+    const a = alerts.byKind("TIMELOCK_EXECUTOR_ERROR");
+    expect(a).toHaveLength(1);
+    expect(a[0]!.message).not.toContain("KEY");
   });
 });

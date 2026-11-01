@@ -1,11 +1,12 @@
-import { decodeEventLog, encodeFunctionData, type Abi, type PublicClient } from "viem";
+import { decodeEventLog, encodeFunctionData, getAddress, type Abi, type PublicClient } from "viem";
 import { redact } from "./redact";
 import { bridgeTimelockAbi } from "@bridge/abi";
 import type { AlertSink } from "./alerts";
 import type { Db } from "./db/types";
 import type { TxSender } from "./chain/sender";
 import type { Address, Hex } from "./types";
-import { toBytes } from "./bytes";
+import { fromBytes, toBytes } from "./bytes";
+import { errText } from "./redact";
 
 const ABI = bridgeTimelockAbi as Abi;
 const ZERO32 = ("0x" + "00".repeat(32)) as Hex;
@@ -34,6 +35,8 @@ export class TimelockExecutor {
       db: Db;
       alerts: AlertSink;
       fromBlock: bigint;
+      /** Max getLogs range per request (default 2000). */
+      maxBlockRange?: number;
     },
   ) {}
 
@@ -41,32 +44,68 @@ export class TimelockExecutor {
     return this.o.client.readContract({ address: this.o.timelock, abi: ABI, functionName, args }) as Promise<T>;
   }
 
-  /** All proposals ever scheduled (timelock events are rare; full rescan keeps this stateless). */
+  /**
+   * Incremental scan (Gate2 B4): from the persisted cursor to the latest block in ranges of at most
+   * `maxBlockRange` (public RPCs reject large getLogs ranges). Each range is stored together with the
+   * cursor, so a restart resumes where it stopped. Errors propagate to the caller (never swallowed).
+   */
+  async scan(): Promise<void> {
+    const tl = toBytes(this.o.timelock);
+    const cur = await this.o.db.query<{ last_block: string }>(
+      "select last_block::text as last_block from timelock_cursor where chain_id = $1 and timelock = $2",
+      [this.o.chainId, tl],
+    );
+    let from = cur.rows[0] ? BigInt(cur.rows[0].last_block) + 1n : this.o.fromBlock;
+    const head = await this.o.client.getBlockNumber({ cacheTime: 0 });
+    const range = BigInt(this.o.maxBlockRange ?? 2000);
+    while (from <= head) {
+      const to = from + range - 1n > head ? head : from + range - 1n;
+      const logs = await this.o.client.getLogs({ address: this.o.timelock, fromBlock: from, toBlock: to });
+      await this.o.db.tx(async (t) => {
+        for (const l of logs) {
+          let ev;
+          try {
+            ev = decodeEventLog({ abi: ABI, data: l.data, topics: l.topics });
+          } catch {
+            continue;
+          }
+          const a = ev.args as unknown as Record<string, unknown>;
+          if (ev.eventName === "CallScheduled") {
+            await t.query(
+              `insert into timelock_calls (chain_id, op_id, idx, target, value, data, predecessor) values ($1,$2,$3,$4,$5,$6,$7)
+               on conflict do nothing`,
+              [this.o.chainId, toBytes(a.id as Hex), (a.index as bigint).toString(), toBytes(a.target as Hex), (a.value as bigint).toString(), toBytes(a.data as Hex), toBytes(a.predecessor as Hex)],
+            );
+          } else if (ev.eventName === "CallSalt") {
+            await t.query("insert into timelock_salts (chain_id, op_id, salt) values ($1,$2,$3) on conflict do nothing", [this.o.chainId, toBytes(a.id as Hex), toBytes(a.salt as Hex)]);
+          }
+        }
+        await t.query(
+          `insert into timelock_cursor (chain_id, timelock, last_block) values ($1,$2,$3)
+           on conflict (chain_id, timelock) do update set last_block = excluded.last_block`,
+          [this.o.chainId, tl, to.toString()],
+        );
+      });
+      from = to + 1n;
+    }
+  }
+
+  /** All proposals discovered so far (from the DB). */
   async proposals(): Promise<Op[]> {
-    const logs = await this.o.client.getLogs({ address: this.o.timelock, fromBlock: this.o.fromBlock, toBlock: "latest" });
+    const r = await this.o.db.query<{ op_id: Uint8Array; idx: string; target: Uint8Array; value: string; data: Uint8Array; predecessor: Uint8Array; salt: Uint8Array | null }>(
+      `select c.op_id, c.idx::text as idx, c.target, c.value::text as value, c.data, c.predecessor, s.salt
+         from timelock_calls c left join timelock_salts s on s.chain_id = c.chain_id and s.op_id = c.op_id
+        where c.chain_id = $1 order by c.op_id, c.idx`,
+      [this.o.chainId],
+    );
     const ops = new Map<string, Op>();
-    const salts = new Map<string, Hex>();
-    for (const l of logs) {
-      let ev;
-      try {
-        ev = decodeEventLog({ abi: ABI, data: l.data, topics: l.topics });
-      } catch {
-        continue;
-      }
-      const a = ev.args as unknown as Record<string, unknown>;
-      if (ev.eventName === "CallScheduled") {
-        const id = (a.id as Hex).toLowerCase() as Hex;
-        const op = ops.get(id) ?? { id, calls: [], predecessor: a.predecessor as Hex, salt: ZERO32 };
-        op.calls.push({ index: a.index as bigint, target: a.target as Address, value: a.value as bigint, data: a.data as Hex });
-        ops.set(id, op);
-      } else if (ev.eventName === "CallSalt") {
-        salts.set((a.id as Hex).toLowerCase(), a.salt as Hex);
-      }
+    for (const row of r.rows) {
+      const id = fromBytes(row.op_id)!;
+      const op = ops.get(id) ?? { id, calls: [], predecessor: fromBytes(row.predecessor)!, salt: fromBytes(row.salt) ?? ZERO32 };
+      op.calls.push({ index: BigInt(row.idx), target: getAddress(fromBytes(row.target)!), value: BigInt(row.value), data: fromBytes(row.data)! });
+      ops.set(id, op);
     }
-    for (const op of ops.values()) {
-      op.salt = salts.get(op.id) ?? ZERO32;
-      op.calls.sort((x, y) => (x.index < y.index ? -1 : 1));
-    }
+    for (const op of ops.values()) op.calls.sort((x, y) => (x.index < y.index ? -1 : 1));
     return [...ops.values()];
   }
 
@@ -95,6 +134,7 @@ export class TimelockExecutor {
   }
 
   async tick(): Promise<void> {
+    await this.scan();
     const now = (await this.o.client.getBlock({ blockTag: "latest" })).timestamp;
     for (const op of await this.proposals()) {
       const state = Number(await this.read<number>("getOperationState", [op.id])); // 0 Unset(cancelled) 1 Waiting 2 Ready 3 Done
@@ -136,5 +176,16 @@ export class TimelockExecutor {
       message: `chain ${this.o.chainId}: timelock proposal ${op.id} becomes executable in <= ${window} (readyAt ${readyAt}); cancel it if it is not yours`,
       data: { window, id: op.id, readyAt: readyAt.toString(), calls: op.calls.map((c) => ({ target: c.target, data: c.data })) },
     });
+  }
+}
+
+/** Runs each executor once; a failure is alerted (redacted) and never swallowed silently (Gate2 B4). */
+export async function runTimelockTicks(executors: TimelockExecutor[], alerts: AlertSink): Promise<void> {
+  for (const ex of executors) {
+    try {
+      await ex.tick();
+    } catch (e) {
+      await alerts.emit({ kind: "TIMELOCK_EXECUTOR_ERROR", key: "timelock", message: `timelock executor failed: ${errText(e)}` });
+    }
   }
 }

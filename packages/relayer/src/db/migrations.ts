@@ -78,6 +78,19 @@ alter table orders add column if not exists approved_level text;
 alter table orders add column if not exists approved_reason text;
 `,
   },
+  {
+    version: 7,
+    name: "timelock_scan_state",
+    sql: `
+create table if not exists timelock_cursor (chain_id int not null, timelock bytea not null, last_block bigint not null,
+  primary key (chain_id, timelock));
+create table if not exists timelock_calls (chain_id int not null, op_id bytea not null, idx numeric not null,
+  target bytea not null, value numeric not null, data bytea not null, predecessor bytea not null,
+  primary key (chain_id, op_id, idx));
+create table if not exists timelock_salts (chain_id int not null, op_id bytea not null, salt bytea not null,
+  primary key (chain_id, op_id));
+`,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {

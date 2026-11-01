@@ -18,7 +18,7 @@ import { ViemChainReader } from "./chain/reader";
 import { Relayer } from "./relayer";
 import { createApi, ChainQuotaReader, DenyAllAdminSessions } from "./api";
 import { TxSender } from "./chain/sender";
-import { TimelockExecutor } from "./timelockExecutor";
+import { TimelockExecutor, runTimelockTicks } from "./timelockExecutor";
 
 const client = (url: string): PublicClient => createPublicClient({ transport: http(url, { retryCount: 2 }) }) as PublicClient;
 
@@ -79,10 +79,10 @@ async function main(): Promise<void> {
       functionName: "timelock",
     })) as `0x${string}`;
     const sender = new TxSender({ chainId, client: c, signer: submitter, db, alerts, safety, cfg: cfg.tx });
-    return new TimelockExecutor({ chainId, timelock, client: c, sender, db, alerts, fromBlock: BigInt(chainId === cfg.wantos.chainId ? cfg.wantos.startBlock : cfg.bsc.startBlock) });
+    return new TimelockExecutor({ chainId, timelock, client: c, sender, db, alerts, maxBlockRange: cfg.poll.maxBlockRange, fromBlock: BigInt(chainId === cfg.wantos.chainId ? cfg.wantos.startBlock : cfg.bsc.startBlock) });
   });
   const tl = await Promise.all(executors);
-  setInterval(() => void Promise.all(tl.map((t) => t.tick().catch(() => undefined))), 60_000);
+  setInterval(() => void runTimelockTicks(tl, alerts), 60_000);
 
   const api = createApi({ orders: relayer.orders, quota: new ChainQuotaReader(relayer.wantosView, relayer.bscView), admin: DenyAllAdminSessions, corsOrigins: cfg.api.corsOrigins ?? [] });
   await api.listen(cfg.api.port, cfg.api.host);
