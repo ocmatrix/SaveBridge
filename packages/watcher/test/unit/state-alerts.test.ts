@@ -1,0 +1,129 @@
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { AlertManager, ALERT_LEVELS, LogAlertSink, MemoryAlertSink, TelegramDraftAdapter } from "../../src/alerts.js";
+import { FileStateStore, MemoryStateStore, initialState } from "../../src/state.js";
+
+describe("state store", () => {
+  it("file store round-trips and survives restart (atomic write)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "watcher-state-"));
+    const path = join(dir, "state.json");
+    const a = new FileStateStore(path);
+    const s = await a.load();
+    expect(s).toEqual(initialState());
+    s.derived.mintTotal = "123";
+    s.meta.decided["x"] = 1;
+    await a.save(s);
+    const b = new FileStateStore(path);
+    const t = await b.load();
+    expect(t.derived.mintTotal).toBe("123");
+    expect(t.meta.decided["x"]).toBe(1);
+    expect(JSON.parse(readFileSync(path, "utf8")).version).toBe(1);
+  });
+
+  it("file store refuses a state file of an unknown version", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "watcher-state-"));
+    const path = join(dir, "state.json");
+    writeFileSync(path, JSON.stringify({ version: 99 }));
+    await expect(new FileStateStore(path).load()).rejects.toThrow(/version/);
+  });
+
+  it("memory store returns deep copies", async () => {
+    const m = new MemoryStateStore();
+    const s = await m.load();
+    s.derived.mintTotal = "5";
+    expect((await m.load()).derived.mintTotal).toBe("0");
+    await m.save(s);
+    expect((await m.load()).derived.mintTotal).toBe("5");
+  });
+});
+
+describe("alerts", () => {
+  const mk = () => {
+    const state = initialState();
+    const sink = new MemoryAlertSink();
+    let now = 1_000_000;
+    const am = new AlertManager(sink, () => state.meta, () => now);
+    return { state, sink, am, setNow: (t: number) => (now = t) };
+  };
+
+  it("levels follow DESIGN §9.3", () => {
+    expect(ALERT_LEVELS.AUTO_PAUSE).toBe(1);
+    expect(ALERT_LEVELS.TIMELOCK_PROPOSED).toBe(1);
+    expect(ALERT_LEVELS.KEY_CHANGE).toBe(1);
+    expect(ALERT_LEVELS.RESERVE_CRITICAL).toBe(1);
+    expect(ALERT_LEVELS.RELAYER_UNREACHABLE).toBe(1);
+    expect(ALERT_LEVELS.WANTOS_REORG).toBe(1);
+    expect(ALERT_LEVELS.MINT_EXCESS).toBe(1);
+    expect(ALERT_LEVELS.PAUSED).toBe(2);
+    expect(ALERT_LEVELS.UNPAUSED).toBe(2);
+    expect(ALERT_LEVELS.PAUSER_REVOKED).toBe(2);
+    expect(ALERT_LEVELS.UPGRADE_EXECUTED).toBe(2);
+    expect(ALERT_LEVELS.MINT).toBe(2);
+    expect(ALERT_LEVELS.GAS_LOW).toBe(2);
+    expect(ALERT_LEVELS.LEGACY_ACTIVITY).toBe(2);
+    expect(ALERT_LEVELS.DAILY_REPORT).toBe(3);
+  });
+
+  it("dedupes by key and repeats level-1 alerts after 24h until acked", async () => {
+    const { sink, am, setNow } = mk();
+    expect(await am.raise("AUTO_PAUSE", { title: "x", key: "k1", chain: "bsc" })).toBe(true);
+    expect(await am.raise("AUTO_PAUSE", { title: "x", key: "k1", chain: "bsc" })).toBe(false);
+    expect(sink.alerts).toHaveLength(1);
+    expect(sink.alerts[0]!.level).toBe(1);
+    setNow(1_000_000 + 86_399);
+    await am.repeatDue();
+    expect(sink.alerts).toHaveLength(1);
+    setNow(1_000_000 + 86_400);
+    await am.repeatDue();
+    expect(sink.alerts).toHaveLength(2);
+    expect(sink.alerts[1]!.repeat).toBe(true);
+    am.ack("k1");
+    setNow(1_000_000 + 3 * 86_400);
+    await am.repeatDue();
+    expect(sink.alerts).toHaveLength(2);
+  });
+
+  it("level-2 alerts are not repeated; keyless alerts always send", async () => {
+    const { sink, am, setNow } = mk();
+    await am.raise("PAUSED", { title: "p" });
+    await am.raise("PAUSED", { title: "p" });
+    setNow(1_000_000 + 90_000);
+    await am.repeatDue();
+    expect(sink.alerts.map((a) => a.code)).toEqual(["PAUSED", "PAUSED"]);
+  });
+
+  it("collects level-3 entries once per id and flushes a daily report at the UTC day change", async () => {
+    const { sink, am, setNow, state } = mk();
+    const day0 = Math.floor(1_000_000 / 86_400);
+    am.daily({ kind: "WHITELIST_BATCH", chain: "bsc", id: "a", data: { count: 3 } });
+    am.daily({ kind: "WHITELIST_BATCH", chain: "bsc", id: "a", data: { count: 3 } });
+    am.daily({ kind: "SOURCE_VOIDED", chain: "wantos", id: "b", data: {} });
+    expect(state.meta.daily.entries).toHaveLength(2);
+    await am.flushDaily();
+    expect(sink.alerts).toHaveLength(0);
+    setNow((day0 + 1) * 86_400 + 5);
+    await am.flushDaily();
+    expect(sink.alerts).toHaveLength(1);
+    const r = sink.alerts[0]!;
+    expect(r.level).toBe(3);
+    expect(r.code).toBe("DAILY_REPORT");
+    expect(r.detail["counts"]).toEqual({ WHITELIST_BATCH: 1, SOURCE_VOIDED: 1 });
+    expect(state.meta.daily.entries).toHaveLength(0);
+    expect(state.meta.daily.day).toBe(day0 + 1);
+  });
+
+  it("log sink writes JSON lines; Telegram draft adapter only builds a request and never sends", async () => {
+    const lines: string[] = [];
+    const log = new LogAlertSink((l) => lines.push(l));
+    await log.send({ level: 2, code: "PAUSED", title: "t", detail: { n: 1n }, at: 1 });
+    expect(JSON.parse(lines[0]!)).toMatchObject({ level: 2, code: "PAUSED", detail: { n: "1" } });
+    const tg = new TelegramDraftAdapter({ botTokenRef: "env:TG_TOKEN", chatId: "<owner-chat-id>" });
+    const req = tg.buildRequest({ level: 1, code: "AUTO_PAUSE", title: "暂停 BSC", detail: {}, at: 1 });
+    expect(req.method).toBe("POST");
+    expect(req.url).toContain("<bot-token>");
+    expect(JSON.parse(req.body)).toMatchObject({ chat_id: "<owner-chat-id>" });
+    await expect(tg.send({ level: 1, code: "AUTO_PAUSE", title: "x", detail: {}, at: 1 })).rejects.toThrow(/draft/);
+  });
+});
