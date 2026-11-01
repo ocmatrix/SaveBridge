@@ -17,6 +17,7 @@ export const ALERT_LEVELS = {
   CHECK_OVERDUE: 1,
   CURSOR_STUCK: 1,
   RPC_MISCONFIGURED: 1,
+  RPC_DISSENTING: 1,
   // level 2
   PAUSED: 2,
   UNPAUSED: 2,

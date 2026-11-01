@@ -121,4 +121,31 @@ describe("round-3 hardening", () => {
       expect(t.sink.alerts.find((a) => a.code === "CURSOR_STUCK" && a.chain === "bsc")?.level).toBe(1);
     });
   });
+
+  describe("consensus compromise: no automatic eviction, but a persistently dissenting RPC is named (level 1) and the alert self-closes", () => {
+    it("RPC_DISSENTING after ≥5 consecutive dissents, naming the RPC; closed (acked) once it agrees again", async () => {
+      let lie = true;
+      const liar = tamperedClient(H.bsc, (m, p) => {
+        if (!lie || m !== "eth_getBlockByNumber" || typeof p[0] !== "string" || !/^0x[0-9a-f]+$/.test(p[0] as string)) return { handled: false };
+        return { handled: true, result: (async () => ({ ...((await (await fetch(H.bsc.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: m, params: p }) })).json()) as { result: Record<string, unknown> }).result, hash: `0x${"77".repeat(32)}` }))() };
+      });
+      const t = await makeWatcher(H, { endpoints: { bsc: three(liar, "bsc-liar") } });
+      for (let i = 0; i < 6; i++) {
+        await H.bsc.mine(1);
+        await H.settle();
+        t.clock.now += 5;
+        await t.w.tick();
+      }
+      const a = t.sink.alerts.find((x) => x.code === "RPC_DISSENTING")!;
+      expect(a.level).toBe(1);
+      expect(JSON.stringify(a.detail)).toContain("bsc-liar");
+      expect(t.w.state.meta.openLevel1[a.key!]).toBeDefined();
+      lie = false;
+      await H.settle();
+      t.clock.now += 5;
+      await t.w.tick();
+      expect(t.w.state.meta.openLevel1[a.key!]).toBeUndefined(); // condition cleared → closed, no 24h repeats
+      expect(t.w.state.meta.alertKeys[a.key!]).toBeUndefined();
+    });
+  });
 });

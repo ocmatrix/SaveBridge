@@ -49,6 +49,8 @@ export interface WatcherConfig {
   maxClockSkewSeconds: number;
   /** B1: cursor not moving (and not caught up) for longer than this → level 1 CURSOR_STUCK. */
   cursorStallSeconds: number;
+  /** r3: consecutive disagreements with the majority before an RPC is named (RPC_DISSENTING, level 1). */
+  rpcDissentThreshold: number;
   pauseRetry: { attempts: number; backoffMs: number };
   timelockRemindersSeconds: number[];
   dailyCapReportRatioBps: number;
@@ -134,6 +136,7 @@ export function parseConfig(raw: unknown): WatcherConfig {
     wantosStallSeconds: num(r["wantosStallSeconds"], "wantosStallSeconds", 1),
     maxClockSkewSeconds: num(r["maxClockSkewSeconds"] ?? 60, "maxClockSkewSeconds", 1),
     cursorStallSeconds: num(r["cursorStallSeconds"] ?? 600, "cursorStallSeconds", 1),
+    rpcDissentThreshold: num(r["rpcDissentThreshold"] ?? 5, "rpcDissentThreshold", 1),
     pauseRetry: { attempts: num(pr["attempts"], "pauseRetry.attempts", 1), backoffMs: num(pr["backoffMs"], "pauseRetry.backoffMs") },
     timelockRemindersSeconds: arr(r["timelockRemindersSeconds"], "timelockRemindersSeconds").map((x, i) => num(x, `timelockRemindersSeconds[${i}]`, 1)),
     dailyCapReportRatioBps: num(r["dailyCapReportRatioBps"] ?? 7000, "dailyCapReportRatioBps", 1),

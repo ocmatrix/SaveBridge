@@ -32,6 +32,24 @@ export class MultiRpc {
     readonly minAgree: number,
   ) {}
 
+  /**
+   * r3 compromise: consecutive-dissent counter per RPC (no automatic eviction). A label whose answer
+   * differs from the largest group bumps its count; an answer agreeing with the outcome resets it.
+   */
+  readonly dissent = new Map<string, { count: number; last: string }>();
+
+  noteDissent(label: string, what: string): void {
+    const d = this.dissent.get(label) ?? { count: 0, last: "" };
+    d.count++;
+    d.last = what;
+    this.dissent.set(label, d);
+  }
+
+  noteAgree(label: string): void {
+    const d = this.dissent.get(label);
+    if (d) d.count = 0;
+  }
+
   /** B5: remove a misconfigured endpoint (wrong chain / disagreeing static data). */
   drop(label: string): void {
     const i = this.endpoints.findIndex((e) => e.label === label);
@@ -63,7 +81,7 @@ export class MultiRpc {
     return { ok, failed };
   }
 
-  async consensus<T>(fn: (c: PublicClient, label: string) => Promise<T>): Promise<Consensus<T>> {
+  async consensus<T>(fn: (c: PublicClient, label: string) => Promise<T>, what = "consensus read"): Promise<Consensus<T>> {
     const settled = await Promise.allSettled(this.endpoints.map((e) => fn(e.client, e.label)));
     const groups = new Map<string, { value: T; n: number }>();
     const answers: Array<{ label: string; value?: string; error?: string }> = [];
@@ -79,7 +97,14 @@ export class MultiRpc {
         answers.push({ label, error: errText(s.reason) });
       }
     });
-    if (groups.size > 1) return { ok: false, reason: "disagree", answers };
+    if (groups.size > 1) {
+      const top = Math.max(...[...groups.values()].map((g) => g.n));
+      const winners = [...groups.entries()].filter(([, g]) => g.n === top);
+      const majority = winners.length === 1 ? winners[0]![0] : null; // a tie has no majority: everyone dissents
+      for (const a of answers) if (a.value !== undefined) (a.value === majority ? this.noteAgree(a.label) : this.noteDissent(a.label, what));
+      return { ok: false, reason: "disagree", answers };
+    }
+    for (const a of answers) if (a.value !== undefined) this.noteAgree(a.label);
     const only = [...groups.values()][0];
     if (only && only.n >= this.minAgree) return { ok: true, value: only.value, agree: only.n };
     return { ok: false, reason: "insufficient", answers };

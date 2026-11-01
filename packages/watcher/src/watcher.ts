@@ -5,7 +5,7 @@ import type { ControlledEntry, WatcherConfig } from "./config.js";
 import { PAUSER_ROLE, bridgeAbiOf, computeEventKey, decodeLog, describeCall, erc20Abi, type DecodedLog } from "./events.js";
 import type { Heartbeat, RelayerProbe } from "./heartbeat.js";
 import type { PauseExecutor } from "./pauser.js";
-import { errText } from "./redact.js";
+import { errText, redact } from "./redact.js";
 import { stableStringify, type MultiRpc } from "./rpc.js";
 import { clone, initialDerived, type StateStore } from "./state.js";
 import {
@@ -159,6 +159,7 @@ export class Watcher {
     await this.evaluateChecks(report);
     await this.timelockReminders();
     await this.periodic();
+    await this.reportDissent();
     await this.alerts.repeatDue();
     this.snapshot();
     await this.d.store.save(this.state);
@@ -174,6 +175,29 @@ export class Watcher {
         await this.raise("CLOCK_SKEW", `系统时钟与 BSC 最新块时间相差 ${skew}s`, { detail: { skew, block: b.number.toString() }, key: `skew:${Math.floor(this.now() / 3600)}` });
     } catch {
       /* unreachable RPCs are reported elsewhere */
+    }
+  }
+
+  /** Close a state-type alert whose condition cleared: re-arm its key and stop 24h repeats (S-3). */
+  private resolve(key: string): void {
+    this.alerts.clearKey(key);
+    this.alerts.ack(key);
+  }
+
+  /** r3 compromise: name an RPC that dissented ≥ rpcDissentThreshold times in a row (level 1); auto-close. */
+  private async reportDissent(): Promise<void> {
+    for (const c of CHAINS) {
+      for (const e of this.d.rpc[c].endpoints) {
+        const d = this.d.rpc[c].dissent.get(e.label);
+        const key = `dissent:${c}:${e.label}`;
+        if (d && d.count >= this.cfg.rpcDissentThreshold)
+          await this.raise("RPC_DISSENTING", `${c} RPC「${e.label}」已连续 ${d.count} 次与多数不一致，请人工确认后从配置中剔除`, {
+            chain: c,
+            detail: { rpc: e.label, consecutive: d.count, lastDisagreement: redact(d.last) },
+            key,
+          });
+        else if (this.state.meta.alertKeys[key] !== undefined) this.resolve(key);
+      }
     }
   }
 
@@ -426,7 +450,7 @@ export class Watcher {
         const b = await rpc.consensus(async (cl) => {
           const x = await cl.getBlock({ blockNumber: n });
           return { hash: x.hash, timestamp: Number(x.timestamp) };
-        });
+        }, `getBlock ${n}`);
         if (!b.ok) throw new Error(`block ${n} not confirmed by ≥${rpc.minAgree} RPCs (${b.reason})`);
         blocks.set(n, b.value);
       }),
@@ -452,6 +476,15 @@ export class Watcher {
           unconfirmed.push({ log: k, block: String(v.entry.log.blockNumber), address: v.entry.log.address, topic0: v.entry.log.topics[0], data: v.entry.log.data, reportedBy: [...v.labels] });
         logs.push({ ...v.entry, confirmed });
       }
+    }
+    // r3: per-RPC dissent on logs — missing a confirmed log or reporting an unconfirmed/stale variant
+    const confirmedKeys = new Set(logs.filter((l) => l.confirmed).map((l) => `${l.log.transactionHash}:${l.log.logIndex}`));
+    for (const { label, value } of res.ok) {
+      const mine = new Set(value.map((e) => `${e.log.transactionHash}:${e.log.logIndex}`));
+      const missed = [...confirmedKeys].some((k) => !mine.has(k));
+      const odd = [...union.entries()].some(([k, u]) => u.labels.has(label) && !confirmedKeys.has(k)) || dupes.some((d) => d["duplicatedBy"] === label);
+      if (missed || odd) rpc.noteDissent(label, `getLogs ${from}-${to}`);
+      else rpc.noteAgree(label);
     }
     if (suspicious.length > 0)
       await this.raise("RPC_DISAGREE", `${c} 区块 ${from}-${to}：各 RPC 返回的事件不一致（${suspicious.length} 处）；未确认的事件只建核对项 / 告警，不改状态`, {
