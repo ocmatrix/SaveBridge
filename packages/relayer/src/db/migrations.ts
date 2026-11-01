@@ -46,6 +46,14 @@ create index if not exists orders_to_idx on orders (to_addr);
 create index if not exists orders_direction_nonce_idx on orders (direction, src_event_nonce);
 `,
   },
+  {
+    version: 3,
+    name: "review_approval",
+    sql: `
+alter table orders add column if not exists approved_at timestamptz;
+alter table orders add column if not exists approved_by bytea;
+`,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {

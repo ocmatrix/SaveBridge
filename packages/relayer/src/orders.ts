@@ -21,6 +21,7 @@ export interface Order {
   lastTxHash: Hex | null;
   lastError: string | null;
   timeoutAlertedFor: string | null;
+  approvedAt: Date | null;
   createdAt: Date;
 }
 
@@ -66,6 +67,7 @@ function rowToOrder(r: Row): Order {
     lastTxHash: fromBytes(r.last_tx_hash as Uint8Array | null),
     lastError: (r.last_error as string | null) ?? null,
     timeoutAlertedFor: (r.timeout_alerted_for as string | null) ?? null,
+    approvedAt: r.approved_at ? new Date(r.approved_at as string | Date) : null,
     createdAt: new Date(r.created_at as string | Date),
   };
 }

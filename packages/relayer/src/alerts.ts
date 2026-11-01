@@ -24,6 +24,7 @@ export const ALERT_LEVEL = {
   TIMELOCK_REMINDER: 2,
   TIMELOCK_EXECUTED: 3,
   REVIEW_SIGNATURE_INVALID: 2,
+  LOOP_ERROR: 2,
 } as const;
 export type AlertKind = keyof typeof ALERT_LEVEL;
 export type AlertLevel = 1 | 2 | 3;

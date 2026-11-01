@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import {
   encodeAbiParameters,
   encodeFunctionData,
+  getAddress,
   getContractAddress,
   keccak256,
   parseEther,
@@ -55,7 +56,7 @@ async function deployRaw(a: Anvil, from: PrivateKeyAccount, abi: Abi, bytecode: 
   const hash = await a.walletClient.deployContract({ abi, bytecode, args, account: from, chain: a.chain });
   const r = await a.publicClient.waitForTransactionReceipt({ hash });
   if (r.status !== "success" || !r.contractAddress) throw new Error("deploy failed");
-  return r.contractAddress;
+  return getAddress(r.contractAddress);
 }
 
 export async function deployToken(a: Anvil, from: PrivateKeyAccount): Promise<Address> {
