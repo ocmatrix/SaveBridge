@@ -599,7 +599,7 @@ export class Watcher {
     }
     const advice =
       p.kind === "b2w" ? "处置：先吊销被怀疑的付款钥匙 → 取消可疑排队项（cancelRelease / voidSource）→ 再解除暂停" : "处置：先吊销被怀疑的付款钥匙 → 取消可疑排队项 → 再解除暂停";
-    const ok = await this.autoPause(c, report, `autopause:${p.id}`, { ...detail, advice });
+    const ok = await this.autoPause(c, report, `autopause:${p.id}`, { ...detail, advice }, (p.firstPauseFailAt ??= this.now()));
     if (ok) this.decide(p);
     else p.pauseFailures = (p.pauseFailures ?? 0) + 1;
   }
@@ -628,7 +628,7 @@ export class Watcher {
     if (r.ok && r.value) this.noteUnpause(der, r.value.block, r.value.timestamp);
   }
 
-  private async autoPause(c: ChainName, report: TickReport, key: string, detail: Record<string, unknown>): Promise<boolean> {
+  private async autoPause(c: ChainName, report: TickReport, key: string, detail: Record<string, unknown>, failSince = 0): Promise<boolean> {
     const out = await this.d.pauser.pause(c);
     if (out.ok) {
       if (!report.paused.includes(c)) report.paused.push(c);
@@ -639,7 +639,7 @@ export class Watcher {
       });
       return true;
     }
-    await this.raise("PAUSE_FAILED", `自动暂停 ${c} 失败（已重试 ${out.attempts} 次），请手动暂停`, { chain: c, detail: { ...detail, outcome: out }, key: `${key}:failed:${this.now()}` });
+    await this.raise("PAUSE_FAILED", `自动暂停 ${c} 失败（已重试 ${out.attempts} 次），请手动暂停`, { chain: c, detail: { ...detail, outcome: out }, key: `${key}:failed:${Math.floor((this.now() - failSince) / 3600)}` }); // B1: at most one per hour
     return false;
   }
 

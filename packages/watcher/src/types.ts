@@ -68,6 +68,8 @@ export interface PendingCheck {
   /** Earliest moment a mismatch may be acted upon (end of the grace period). */
   decideAt: number;
   pauseFailures?: number;
+  /** First failed auto-pause attempt (PAUSE_FAILED is repeated at most hourly from here, B1). */
+  firstPauseFailAt?: number;
 }
 
 export interface TimelockOp {

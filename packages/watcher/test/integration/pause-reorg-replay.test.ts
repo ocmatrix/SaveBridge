@@ -201,6 +201,15 @@ describe("pause semantics, rollback, replay", () => {
       expect(f.level).toBe(1);
       expect(t.codes()).toContain("PAUSER_REVOKED");
       expect(t.w.state.derived.pending).toHaveLength(1);
+      // B1: retries every tick, but at most one level-1 PAUSE_FAILED per check per hour
+      for (let i = 0; i < 3; i++) {
+        t.clock.now += 5;
+        await t.w.tick();
+      }
+      expect(t.sink.alerts.filter((a) => a.code === "PAUSE_FAILED")).toHaveLength(1);
+      t.clock.now += 3600;
+      await t.w.tick();
+      expect(t.sink.alerts.filter((a) => a.code === "PAUSE_FAILED")).toHaveLength(2);
     });
   });
 });
