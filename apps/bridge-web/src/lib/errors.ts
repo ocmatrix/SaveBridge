@@ -149,6 +149,10 @@ export function translateError(err: unknown, ctx: ErrorContext): Translated {
   const chain = causes(err);
   for (const e of chain) {
     if (e.name === "TargetNotAllowedError") return { key: "err.targetNotAllowed" };
+    if (e.name === "PreflightError" && typeof e.errorName === "string") {
+      const r = fromCustomError(e.errorName, e.args as readonly unknown[] | undefined, ctx);
+      if (r) return r;
+    }
     if (e.code === 4001 || e.name === "UserRejectedRequestError") return { key: "err.userRejected" };
     if (e.name === "ChainMismatchError" || e.name === "ChainNotConfiguredError" || e.name === "WrongNetworkError") {
       return { key: "err.wrongNetwork" };
