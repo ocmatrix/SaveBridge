@@ -12,7 +12,7 @@ export function buildCsp(cfg: AppConfig): string {
     origin(cfg.wantos.rpcUrl),
     origin(cfg.bsc.rpcUrl),
     ...(cfg.relayerApi ? [origin(cfg.relayerApi)] : []),
-    ...WALLETCONNECT_ORIGINS,
+    ...(cfg.walletConnectProjectId ? WALLETCONNECT_ORIGINS : []),
   ];
   return [
     "default-src 'none'",

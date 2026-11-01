@@ -44,7 +44,7 @@
 | 安全 | 目标与函数白名单（发送前断言）；精确授权；页脚固定显示两条链的桥地址（来自配置，带浏览器链接）；严格 CSP；无 eval、无内联脚本 |
 | 不含管理功能 | 无白名单、暂停、时间锁、参数、退款发起等任何管理操作；不显示受控集合 / 风险标记 |
 
-用户可见订单状态只有 5 个：处理中 / 已到账 / 退款中 / 已退款 / BSC 已存入等待 WANTOS 到账。
+用户可见订单状态只有 5 个（全部由链上读出，relayer API 不提供状态）：处理中 / 已到账 / 退款中 / 已退款 / BSC 已存入等待 WANTOS 到账。
 
 | 方向 | 链上依据 | 显示 |
 |---|---|---|
@@ -58,19 +58,17 @@
 1. 订单号来源：①用户自己的事件（`BridgeOut(user)` / `Deposited(from)`，从 `FROM_BLOCK` 和"最新块 − LOOKBACK"两者较晚处开始，每段 5000 块）；②本浏览器记住的订单号（localStorage，每地址最多 50 个，仅为方便）；③可选 relayer API（最多取 50 个）。
 2. **每个订单号都回链上重读**，并核对属于该用户；状态只由链上决定。API 只提供订单号和目标链交易哈希（仅在链上已到账时显示链接）。API 失败、超时（8 秒）、格式不符时静默忽略，退回只读链。
 
-**向 PR-3 提的需求（未自行发明，前端按此形状解析，PR-3 可改，改了同步改 `parseRelayerOrders`）：**
+**向 PR-3 提的需求（前端按此形状解析；PR-3 若调整，需同步修改 `parseRelayerOrders`）：**
 
 ```
-GET /v1/orders?address=0x…   （只读、无鉴权、CORS 允许 bridge.wanto.pro）
+GET /v1/orders?address=0x…   （只读，无鉴权，CORS 允许 bridge.wanto.pro）
 200 { "orders": [ { "direction": "W2B" | "B2W",
                     "srcEventNonce": "<十进制字符串：W2B 为 orderId，B2W 为存款 nonce>",
-                    "status": "<§6.3 状态名>",
                     "dstTxHash": "0x…64 位" | null } ] }
 ```
-- R1：**对外接口不要返回 REVIEW / 冻结级别 / 命中规则 / 风险标记**，最好在服务端就把内部状态折叠为 `PROCESSING / RELEASED / REFUNDING / REFUNDED`（前端已经把未知状态都当"处理中"，这是第二道保险）。
+- R1：对外接口**只返回订单号和目标链交易哈希**，不返回任何状态字段，也不返回审核 / 冻结级别、命中规则或风险标记。状态全部由页面回链上读取，从源头杜绝风控状态外泄。即使返回了多余字段，前端也会忽略。
 - R2：按 `address` 同时匹配 W2B 的 `user` 和 B2W 的 `from`（存款人），返回最近 N 笔（建议 50）。
-- R3（可选）：B2W 已检测但还没 `queueRelease` 的金额合计，用于更准确地显示"WANTOS 今日剩余入账额度"。
-- R4：限流与缓存由 PR-3 / Cloudflare 决定；前端每 20 秒轮询一次（只在页面打开时）。
+- R4：限流与缓存由 PR-3 / Cloudflare 决定。前端只在页面打开时每 20 秒轮询一次。
 
 ## 5. 错误翻译
 
@@ -87,11 +85,11 @@ GET /v1/orders?address=0x…   （只读、无鉴权、CORS 允许 bridge.wanto.
 
 1. **跨出要求两条链都已开通**：规格只要求"WANTOS 侧未开通时禁用"；BSC 未开通时放款会卡在 WAITING（白名单原因），所以"开通同步中"时也禁用跨出，避免资金卡住。
 2. **任一侧暂停时禁用存入**：BSC 暂停，存入会回滚；WANTOS 暂停，入账无法处理。两种情况都禁用，并在存入前预检中重新读取。
-3. **存入金额超过 WANTOS 今日剩余入账额度时禁用**（§5.3"B2W 超过当日额度直接走入账退款"）。这个值不含已存入但还没排队的金额，所以只是近似值，界面写明"以到账时为准"。见 R3。
+3. **存入金额超过 WANTOS 今日剩余入账额度时禁用**（§5.3"B2W 超过当日额度直接走入账退款"）。这个值不含已存入但还没排队的金额，所以只是近似值，界面写明"以到账时为准"。
 4. **未开通地址允许存入**（合约与 §5.3 都不查 B2W 白名单），但提示"跨回 BSC 需先开通"。
 5. **已有授权 ≥ 金额时不再授权**：沿用剩余的精确授权，不会产生无限授权。
 6. **WalletConnect 不用托管弹窗**：自己画二维码，CSP 不必放开 WalletConnect 的 API、图片和字体域名。WalletConnect Verify 的 iframe 被 `frame-src 'none'` 拦截，钱包端会显示"无法验证域名"，不影响连接（未用真实 WalletConnect 会话验证，见 §9）。
-7. **relayer API 源加入 connect-src**（仅在配置时）：§8.1 只列了 RPC 和 WalletConnect，但订单 API 是规格要求的只读接口。
+7. **relayer API 源加入 connect-src**（仅在配置时）：§8.1 只列了 RPC 和 WalletConnect，但订单 API 是规格要求的只读接口。WalletConnect relay 也只在配置了 `VITE_WC_PROJECT_ID` 时才加入。
 8. 若两条链 USDT 的 `decimals` 不同，`readBridgeState` 直接报错，页面停用（金额按最小单位 1:1 跨链）。
 
 ## 8. 对共享文件的改动（叠在 ts-workspace 上，需总控合并时注意）
