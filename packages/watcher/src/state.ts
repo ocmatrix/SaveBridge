@@ -29,6 +29,7 @@ export const initialState = (): State => ({
     wantosHead: null,
     watchedNonces: {},
     controlledSetHash: null,
+    controlledSet: [],
     snapshots: [],
   },
 });

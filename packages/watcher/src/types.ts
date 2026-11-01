@@ -111,6 +111,7 @@ export interface MetaState {
   wantosHead: { number: string; seenAt: number } | null;
   watchedNonces: Record<string, string>;
   controlledSetHash: string | null;
+  controlledSet: string[];
   snapshots: Array<{ wantosCursor: Cursor | null; derived: DerivedState }>;
 }
 

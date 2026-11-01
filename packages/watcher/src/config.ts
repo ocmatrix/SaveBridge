@@ -41,6 +41,8 @@ export interface WatcherConfig {
   mintAlertThreshold: bigint;
   reconcile: { intervalSeconds: number; toleranceWei: Record<ChainName, bigint>; wantosLowBalanceWei: bigint | null };
   heartbeatIntervalSeconds: number;
+  /** Upper bound of getLogs ranges processed per chain per tick (keeps a tick short while catching up). */
+  maxRangesPerTick: number;
   gasCheckIntervalSeconds: number;
   wantosStallSeconds: number;
   pauseRetry: { attempts: number; backoffMs: number };
@@ -123,6 +125,7 @@ export function parseConfig(raw: unknown): WatcherConfig {
       wantosLowBalanceWei: rec["wantosLowBalanceWei"] === null || rec["wantosLowBalanceWei"] === undefined ? null : big(rec["wantosLowBalanceWei"], "reconcile.wantosLowBalanceWei"),
     },
     heartbeatIntervalSeconds: num(r["heartbeatIntervalSeconds"], "heartbeatIntervalSeconds", 1),
+    maxRangesPerTick: num(r["maxRangesPerTick"] ?? 20, "maxRangesPerTick", 1),
     gasCheckIntervalSeconds: num(r["gasCheckIntervalSeconds"] ?? 300, "gasCheckIntervalSeconds", 1),
     wantosStallSeconds: num(r["wantosStallSeconds"], "wantosStallSeconds", 1),
     pauseRetry: { attempts: num(pr["attempts"], "pauseRetry.attempts", 1), backoffMs: num(pr["backoffMs"], "pauseRetry.backoffMs") },
