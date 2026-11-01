@@ -86,8 +86,33 @@ export class Watcher {
   }
 
   async init(): Promise<void> {
+    await this.assertWiring();
     this.state = await this.d.store.load();
     await this.refreshControlledSet(false);
+  }
+
+  /**
+   * B6: refuse to start if any RPC serves another chain, if fewer than minRpcAgreement RPCs per chain
+   * can be verified, or if the two USDT tokens differ in decimals (amounts are compared in raw units).
+   */
+  private async assertWiring(): Promise<void> {
+    for (const c of CHAINS) {
+      const rpc = this.d.rpc[c];
+      const want = this.cfg.chains[c].chainId;
+      const r = await rpc.all((cl) => cl.getChainId());
+      const wrong = r.ok.filter((x) => x.value !== want);
+      if (wrong.length > 0) throw new Error(`watcher: ${c} RPC(s) ${wrong.map((w) => `${w.label}→${w.value}`).join(", ")} do not serve chainId ${want}`);
+      if (r.ok.length < rpc.minAgree) throw new Error(`watcher: only ${r.ok.length} ${c} RPC(s) verified chainId ${want}; need ${rpc.minAgree}`);
+    }
+    const dec = async (c: ChainName): Promise<number> => {
+      const cfg = this.cfg.chains[c];
+      const r = await this.d.rpc[c].consensus(async (cl) => Number(await cl.readContract({ address: cfg.token, abi: erc20Abi, functionName: "decimals" })));
+      if (!r.ok) throw new Error(`watcher: ${c} token decimals not agreed by RPCs (${r.reason})`);
+      return r.value;
+    };
+    const [b, w] = [await dec("bsc"), await dec("wantos")];
+    if (b !== w) throw new Error(`watcher: token decimals differ (bsc ${b}, wantos ${w}); raw-amount comparison would be wrong`);
+    this.decimals = { bsc: b, wantos: w };
   }
 
   private now(): number {
