@@ -39,6 +39,34 @@
 
 **运维要求（新增）**：每条链至少配 **3 个**独立 RPC（`minRpcAgreement = 2`）。共识读要求「≥2 一致且无任何不同答案」，所以只配 2 个时坏 1 个就会失明（`CURSOR_STUCK` 一级），配 3 个时坏 1 个仍会因「有不同答案」而暂缓——见 R11。
 
+## 0c. GATE2 第 3 轮修复（最终）摘要 —— 负责人拍板「共识规则折中」
+
+**共识规则（折中）**：
+- **暂停决定严格**：Verifier 三步读、块 hash / 时间戳读仍要求「≥ `minRpcAgreement` 一致且无任何不同答案」。
+- **活性读**（安全头、停滞检测）取「第 `minRpcAgreement` 大」：至少 minAgree 个 RPC 担保；单个落后 RPC 钉不住、单个超前 RPC 拉不动，2 个合谋才行（与共识读的信任假设一致）。
+- **不自动剔除 RPC**（启动时的错链 / decimals 不符除外，见 B5）：每个 RPC 有连续异议计数，连续 ≥ `rpcDissentThreshold`（默认 5）次与多数不同 → 一级 `RPC_DISSENTING`，点名该 RPC 标签与最近一次分歧（已脱敏），条件消除后自动结案。
+
+| 项 | 修复 | 回归测试（`test/integration/rpc-hardening-r3.test.ts`） |
+|---|---|---|
+| A-1 | 日志确认按**不同 RPC 数**（每个版本记 RPC 标签集合），单个 RPC 响应内的重复条目不计数并告警 | POC-M1、POC-M2 |
+| A-2 | 安全头取第 minAgree 大；安全头本身超过 `cursorStallSeconds` 不前进也算 `CURSOR_STUCK`；各 RPC 高度差 > `maxLagBlocks` → 二级 `RPC_LAGGING` | POC-E（断言调整见 §7 偏差 P13）、`a head that does not move…`、MA19 |
+| B-1 | 先剔除块 hash 与共识不符的版本，再计算确认 | POC-J（两种 RPC 顺序，含 MA03）、MA02/MA04 |
+| 折中规则 | 连续异议计数 + `RPC_DISSENTING`（一级，自动结案）；`RPC_DISAGREE` 详情列出未确认日志（R12，便于手工对账） | `consensus compromise …` |
+| S-2 | 向前补查 Unpaused：≥ minAgree 个 RPC 报告同一条即采用（看不到不算异议，仍受 blindAt 约束）；否则发 `RPC_DISAGREE` | POC-L |
+| S-3 | 处理未确认日志时产生的告警一律并入该区段的二级 `RPC_DISAGREE`（`foldedAlerts`），不再一级轰炸；状态类一级告警（`CURSOR_STUCK`、`CHECK_OVERDUE`、`RPC_MISCONFIGURED` 法定数、`RELAYER_UNREACHABLE`、`RPC_DISSENTING`）条件消除时自动结案 | POC-G、`CURSOR_STUCK closes…`、`CHECK_OVERDUE closes…` |
+| S-4 | 未确认的 `CallScheduled` 不建时间锁操作、不发一级 | POC-F、MA07/MA08 |
+| S-5 | `rewind()` 用共识判断快照是否仍在主链，判不了当非主链（向全量重放收敛）；二级 `STATE_REWOUND` 报告恢复点 | `S-5 / MA23` |
+| S-6 | 删掉无读者的 `maxOrderId` / `maxDepositNonce` | — |
+| 补测试 | MA06/MA20（无法判定路径写 blindAt、发 CHECK_OVERDUE）、MA30、MA33、MA09 | `mutation gaps …` |
+
+**运维规程（新增 / 强调）**
+1. 每条链**至少 3 个**独立 RPC，`minRpcAgreement = 2`。
+2. 收到一级 `RPC_DISSENTING`：人工确认该 RPC 是否故障 / 被篡改，确认后从配置中剔除并重启监控；监控不会自动剔除。
+3. 一级告警的确认入口（ack）**必须由 PR-10 提供**（例如管理后台按钮或命令）；PR-7 中只有状态类一级告警会在条件消除时自动结案，事件类一级告警（自动暂停、时间锁提议、角色变化、回滚…）在 ack 前每 24h 重复。
+4. **「删除状态文件全量重放」会清空已判定集合（decided）**：重放时旧的不符事件会被重新核对；若补扫期间某项先被判为暂缓 / 无法判定（写入 blindAt），之前的解除暂停就不再能确认它，监控会**再次暂停**。恢复时须按「先吊销可疑付款钥匙 → 取消可疑排队项 → 再解除暂停」处理，必要时等补扫追平后再解除。
+
+**Backlog（本 PR 不做）**：Verifier 存在性检查对落后节点改为「弃权」而非「不存在」（建议 6，见 POC-E2：一个只在回执上落后的 RPC 会让核对暂缓，由 `CHECK_OVERDUE` / `RPC_DISSENTING` 一级兜底）；`checkFutureVoid` / `checkLegacyNonces` / `checkGas` / `checkParams` / `checkClockSkew` 仍走单 RPC（只影响二级，噪声级，建议 8）。
+
 下文各节已按 v2 更新。
 
 ## 1. 文件
@@ -60,7 +88,7 @@
 | `config/watcher.example.json` | 配置示例：RPC 全是 `*.example.invalid` 占位；桥 / 时间锁 / 钱包地址为占位；只出现 DESIGN 中的主网地址（USDT、旧金库、旧付款程序） |
 | `config/controlled-set.example.json` | 附录 A 受控集合（22 条），可加载 |
 | `test/helpers/harness.ts` | 两条本地 anvil（BSC 本地 chainId 5600、`--slots-in-an-epoch 1` 使 `finalized = latest − 2`；WANTOS 本地 13500）+ 用 `out/*.json` 字节码按 §5.1 nonce 0/1/2 部署两链（地址相同）+ EIP-712 白名单批次 |
-| `test/unit/*`、`test/integration/*` | 140 个测试，见 §0、§0b、§8 |
+| `test/unit/*`、`test/integration/*` | 161 个测试，见 §0、§0b、§8 |
 
 依赖：只依赖 `@bridge/abi` 与 `viem`；**不依赖 `@bridge/relayer`，不读付款程序数据库**。
 
@@ -199,6 +227,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 | P9 | `RoleAdminChanged`、时间锁 `MinDelayChange` 也推送（一级 / 二级） | §9.3 | 角色与治理参数变化宁可多报 |
 | P10 | WANTOS 侧 `Released`（B2W 执行）不单独核对（排队时已核对） | §9.1 只列 `ReleaseQueued` | 按规格；见风险 R3 |
 | P11 | 回滚处理：暂停两链后，自动回退到最近一个游标仍在主链上的状态快照并重新摄取（快照 16 个；都不在主链则从 `startBlock` 重放）；告警去重不回退；`meta.decided` 不回退，**但恢复点之后判定的 W2B / 存款退款项会重新打开**（其源在 WANTOS，可能已成孤块，B5） | §6.2 | 孤块事件不计入；源事件被回滚掉的付款会被重新核对 |
+| P13 | POC-E 回归测试的断言由「暂停 或 CURSOR_STUCK / INDEX_LAG」改为「游标越过冻结高度 + `RPC_LAGGING` + 暂停或一级（CURSOR_STUCK / CHECK_OVERDUE / RPC_DISSENTING）」：冻结节点对回执返回 null，按严格规则 Verifier 暂缓，不会自动暂停（建议 6 在 backlog） | §9.1 条件 ② | 暂停决定保持严格 |
 | P12 | 受控地址资金动作只监控 WANTOS-USDT 的 `Transfer`；旧地址额外监控 nonce（EOA 发交易）和合约日志；原生币转账未监控 | §9.3 | 避免全块扫描；见风险 R5 |
 
 ### 7.2 待决
@@ -210,7 +239,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 | Q3 | 两链 USDT 小数位是否都为 18 | 原始值相等比较 |
 | Q4 | 付款程序存活探测的方式（HTTP 健康端点？） | `RelayerProbe` 接口，未接 |
 | Q5 | WANTOS `confirmations` 是否沿用付款程序的 6 | 默认 6，可配 |
-| Q6 | 共识规则：「≥2 一致且无不同答案」（当前，最保守，单个坏 RPC 可致失明）vs「多数一致」（单个坏 RPC 不致失明，但 3 个中 2 个合谋即可） | 当前保持最保守，由负责人决定 |
+| ~~Q6~~ | 已拍板折中（§0c）：暂停决定严格，活性读取第 minAgree 大，连续异议点名不自动剔除 | — |
 
 ### 7.3 与 PR1-NOTES 事件名的对照
 
@@ -238,7 +267,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 
 ## 8. 测试（DH L2）
 
-`pnpm -r typecheck` 通过；`pnpm -r test`：**15 个文件 / 140 个测试全部通过**（约 4 秒，两条本地 anvil）。变异重跑结果见 GATE2 第 2、3 次报告。
+`pnpm -r typecheck` 通过；`pnpm -r test`：**16 个文件 / 161 个测试全部通过**（约 4 秒，两条本地 anvil）。变异重跑结果见 GATE2 第 2、3 次与最终报告。
 
 覆盖率（`vitest run --coverage`，`src/main.ts`、`src/index.ts` 除外）：语句 94.98%、分支 85.6%、函数 99.41%、行 96.55%。核心逻辑：`watcher.ts` 行 95.1% / 语句 94.3%，`verifier.ts` 行 98.6% / 语句 92.4%，`pauser.ts` 行 100% / 语句 93.9%，`rpc.ts` 100%，`alerts.ts` 100%。
 
@@ -310,7 +339,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 | R7 | `main.ts` 未接签名器与通道：没有 `--dry-run` 时拒绝启动；dry-run 下暂停一定失败（一级 `PAUSE_FAILED`） | 有意为之（本 PR 禁止接真实服务）；PR-10 接入前不得作为生产监控 |
 | R9 | 并集摄取：单个 RPC 伪造的事件会进入累计值（对账表现为短缺告警）并建核对项（由逐笔存在性共识过滤，不会误暂停）；单个 RPC 漏报会触发 `RPC_DISAGREE` | 宁可多报；累计值偏差会在对账中暴露 |
 | R10 | 时钟偏差只告警（`CLOCK_SKEW`），不自动校正 | 部署启用 NTP |
-| R11 | 共识读取「全体回答者一致」：任何一个 RPC 持续给出不同的块 hash / 时间戳 / 状态，都会让对应区段或核对项暂缓（失明），由 `CURSOR_STUCK` / `CHECK_OVERDUE` 一级告警兜底，需人工剔除该 RPC | 待决 Q6：是否改为「多数一致」 |
+| R11 | 暂停相关的共识读仍要求全体回答者一致：一个持续异议的 RPC 会让对应区段或核对项暂缓，由 `CURSOR_STUCK` / `CHECK_OVERDUE` / `RPC_DISSENTING` 一级告警兜底，人工剔除 | 折中规则已定（§0c） |
 | R12 | 未确认的日志不进累计值：某个 RPC 长期漏报时，真实事件只被核对、不被计入，对账会出现「多出」或「短缺」告警（同时有 `RPC_DISAGREE`） | 按 A-1 要求；修复 RPC 后可删状态文件全量重放 |
 | R13 | 变异 R14（区段回滚不恢复 newOps）、R29（B5 不看恢复时间点）为等价变异：前者的残留 id 在下一次处理时因对应提议已回滚而被跳过，重试时会重新登记；后者被多删的已判定项，其日志都在恢复点游标之前，不会再被摄取 | 不加测试 |
 | R8 | 对账在游标区块读状态，要求 RPC 保留近期状态（非归档节点一般 128 块以内够用）；BSC 公共节点对 `eth_getLogs` 区间有限制 | `maxBlockRange` 可调小；`startBlock` 远早于当前高度的首次同步需要支持历史日志的节点 |
