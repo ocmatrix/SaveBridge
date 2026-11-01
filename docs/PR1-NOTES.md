@@ -16,7 +16,7 @@
 | `contracts/script/PredictAddresses.s.sol` | §5.1 nonce 表 n/n+1/n+2 的 CREATE 地址预测（纯计算） |
 | `contracts/script/Deploy.s.sol` | §5.1 部署脚本，**只写好、未运行广播**；测试里在内存中演练两条链 |
 | `contracts/script/Verify.s.sol` | §5.1 部署后验收（角色、时间锁成员与延迟、实现 codehash、参数、白名单为空、地址一致） |
-| `contracts/test/*` | 203 个测试（含 2 个 fuzz，各 512 轮），见 §7 |
+| `contracts/test/*` | 230 个测试（含 2 个 fuzz，各 512 轮），见 §7；布局快照在 `contracts/test/layout/` |
 
 ## 2. 实现说明（按规格条目）
 
@@ -398,16 +398,17 @@ Refunded(uint256 indexed orderId, address indexed user, uint256 amount)
 
 | 合约 | 运行时 | 余量 | initcode keccak256（与地址无关） |
 |---|---|---|---|
-| BridgeTimelock | 11,581 B | 12,995 B | `0x498a425cf63b31a127c7fd6676bfb57d89193cc6d6ae445eaa85c4b616fd677e` |
+| BridgeTimelock | 11,635 B | 12,941 B | `0xb9a09dfa8f32fe52d755f5cb13a9a113cbbffaaf64860e1acd964e75c21181e6` |
 | BscVaultV2 | 22,483 B | 2,093 B | `0x5a452ec9e84081f509586c655f5bac7b615d2647bf4a144d0b5b669603fc19ed` |
 | WantosBridgeV2 | 21,661 B | 2,915 B | `0x69d0b764fcc310e0972b9293a00e6bc15405ffd72f5e30b0a15327355fb62adc` |
 
 - **CI 门槛**：任何核心合约运行时余量必须 ≥ 1,500 B；由 `SizeGateTest.test_runtimeSizeMargins` 强制（`forge test` 不过即红）。
 - **codehash 说明**：实现合约含 UUPS 的 `__self` immutable（= 实现自身地址），时间锁含 `bridge`/`MIN_DELAY` immutable，所以**运行时 codehash 取决于部署地址与构造参数**，不能离线写死。验收脚本 `Verify.s.sol` 的 `IMPLEMENTATION_CODEHASH` 取法：用同一提交、同一 `foundry.toml`（runs = 1）在本地以 `PredictAddresses` 预测出的实现地址重放部署（或 fork 演练），读取 `extcodehash`；构建可复现性用上表 initcode 哈希核对。任何编译设置变化（含 optimizer_runs）都会改变这些哈希。
-- `forge test`：203 通过 / 0 失败（9 个测试套件；fuzz 512 轮）。
+- `forge test`：**230 通过 / 0 失败**（13 个测试套件；fuzz 512 轮）。
 - `forge coverage --report summary --no-match-coverage "(test|script)/"`：四个核心合约行、语句、分支、函数**均 100%**。
 - `forge fmt --check`：通过。
-- `forge lint`：13 × block-timestamp、10 × unsafe-typecast（见 §4，均为预期）。
+- `forge lint`：block-timestamp、unsafe-typecast 两类警告（见 §4，均为预期）。
+- slither 0.11.6：**High 0 / Medium 0** / Low 13 / Informational 6（见 §4.0）。
 
 ## 7. §5.6 十四条不变量 ↔ 测试
 
