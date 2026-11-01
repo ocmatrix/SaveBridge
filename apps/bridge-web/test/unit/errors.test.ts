@@ -32,7 +32,7 @@ const ALL_ABI_ERRORS = [...new Set([...abiErrorNames(bscVaultV2Abi as Abi), ...a
 function revertOf(abi: Abi, errorName: string, args: readonly unknown[]): BaseError {
   const data = encodeErrorResult({ abi, errorName, args } as never);
   const cause = new ContractFunctionRevertedError({ abi, data, functionName: "bridgeOut" });
-  return new ContractFunctionExecutionError(cause, { abi, functionName: "bridgeOut" });
+  return new ContractFunctionExecutionError(cause, { abi: wantosBridgeV2Abi as Abi, functionName: "bridgeOut", args: [1n] });
 }
 
 describe("error translation coverage", () => {
