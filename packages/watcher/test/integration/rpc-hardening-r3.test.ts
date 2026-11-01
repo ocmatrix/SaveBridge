@@ -169,4 +169,47 @@ describe("round-3 hardening", () => {
     expect(t.codes()).toContain("MISMATCH_ACKNOWLEDGED");
     expect(await H.isPaused("bsc")).toBe(false);
   });
+
+  describe("S-4: timelock events from a single RPC change nothing", () => {
+    const w3 = (liar: ReturnType<typeof honest>) => [{ label: "a", client: H.wantos.pub }, { label: "b", client: honest(H.wantos) }, { label: "liar", client: liar }];
+
+    it("POC-F: a fabricated CallScheduled → no level-1 TIMELOCK_PROPOSED, no timelockOps entry, listed as unconfirmed", async () => {
+      let on = true;
+      const mk = () =>
+        fakeLog(bridgeTimelockAbi as Abi, "CallScheduled", (i) =>
+          i.name === "id" || i.name === "predecessor" ? (`0x${"42".repeat(32)}` as Hex) : i.name === "target" ? H.wantos.bridge : i.name === "data" ? "0x8456cb59" : i.name === "delay" ? 172_800n : 0n,
+        );
+      const liar = injectorAt(H.wantos, () => H.wantos.timelock, mk, () => on);
+      const t = await makeWatcher(H, { endpoints: { wantos: w3(liar) } });
+      await H.settle();
+      await t.w.tick();
+      on = false;
+      await H.settle();
+      await t.w.tick();
+      expect(t.sink.alerts.filter((a) => a.code === "TIMELOCK_PROPOSED")).toHaveLength(0);
+      expect(Object.keys(t.w.state.derived.timelockOps)).toHaveLength(0);
+      expect(JSON.stringify(t.sink.alerts.filter((a) => a.code === "RPC_DISAGREE").map((a) => a.detail))).toContain("unconfirmed");
+    });
+
+    for (const ev of ["CallExecuted", "Cancelled"]) {
+      it(`MA07/MA08: a fabricated ${ev} does not delete a real pending proposal`, async () => {
+        const ZERO32 = `0x${"00".repeat(32)}` as Hex;
+        const data = "0x8456cb59" as Hex;
+        await H.wantos.write(ACCOUNTS.admin, "schedule", [H.wantos.bridge, 0n, data, ZERO32, ZERO32, 48n * 3600n], H.wantos.timelock);
+        const id = (await H.wantos.pub.readContract({ address: H.wantos.timelock, abi: bridgeTimelockAbi, functionName: "hashOperation", args: [H.wantos.bridge, 0n, data, ZERO32, ZERO32] })) as Hex;
+        let on = false;
+        const mk = () => fakeLog(bridgeTimelockAbi as Abi, ev, (i) => (i.name === "id" ? id : i.name === "target" ? H.wantos.bridge : i.name === "data" ? data : 0n));
+        const liar = injectorAt(H.wantos, () => H.wantos.timelock, mk, () => on);
+        const t = await makeWatcher(H, { endpoints: { wantos: w3(liar) }, startBlock: { bsc: (await H.bsc.latest()).number + 1n, wantos: 0n } });
+        await H.settle();
+        await t.w.tick();
+        expect(Object.keys(t.w.state.derived.timelockOps)).toHaveLength(1);
+        on = true;
+        await H.wantos.mine(1);
+        await H.settle();
+        await t.w.tick();
+        expect(Object.keys(t.w.state.derived.timelockOps)).toHaveLength(1);
+      });
+    }
+  });
 });

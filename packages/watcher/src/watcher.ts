@@ -649,6 +649,9 @@ export class Watcher {
     const ops = this.state.derived.timelockOps;
     switch (l.name) {
       case "CallScheduled": {
+        // S-4: an unconfirmed proposal creates no op (it would linger forever) and no level-1 push;
+        // it is listed in the range's RPC_DISAGREE (unconfirmed logs)
+        if (!l.confirmed) return;
         const cfg = this.cfg.chains[c];
         const op = (ops[id] ??= { chain: c, id: a["id"] as Hex, readyAt: l.timestamp + Number(a["delay"]), calls: [], remindersSent: [] });
         const call = describeCall(a["target"] as Address, a["data"] as Hex, cfg.bridge, cfg.timelock, c);
