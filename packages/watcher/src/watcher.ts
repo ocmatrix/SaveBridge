@@ -375,14 +375,23 @@ export class Watcher {
     const res = await rpc.all((cl) => this.fetchLogs(cl, c, from, to));
     if (res.ok.length < rpc.minAgree) throw new Error(`only ${res.ok.length} RPC(s) answered getLogs ${from}-${to}: ${res.failed.map((f) => `${f.label}: ${f.error}`).join("; ")}`);
     type Entry = { source: DecodedLog["source"]; log: Log };
-    const union = new Map<string, { variants: Map<string, { entry: Entry; n: number }>; labels: Set<string> }>();
+    // A-1 (r3): count DISTINCT RPCs per variant; a duplicate entry inside one RPC's answer is ignored
+    // for counting and reported.
+    const union = new Map<string, { variants: Map<string, { entry: Entry; labels: Set<string> }>; labels: Set<string> }>();
+    const dupes: Array<Record<string, unknown>> = [];
     for (const { label, value } of res.ok) {
+      const seen = new Set<string>();
       for (const entry of value) {
         const k = `${entry.log.transactionHash}:${entry.log.logIndex}`;
+        if (seen.has(k)) {
+          dupes.push({ log: k, duplicatedBy: label });
+          continue;
+        }
+        seen.add(k);
         const sig = stableStringify({ a: lc(entry.log.address), t: entry.log.topics, d: entry.log.data, h: entry.log.blockHash, b: String(entry.log.blockNumber), s: entry.source });
         const u = union.get(k) ?? { variants: new Map(), labels: new Set<string>() };
-        const v = u.variants.get(sig) ?? { entry, n: 0 };
-        v.n++;
+        const v = u.variants.get(sig) ?? { entry, labels: new Set<string>() };
+        v.labels.add(label);
         u.variants.set(sig, v);
         u.labels.add(label);
         union.set(k, u);
@@ -406,10 +415,10 @@ export class Watcher {
     // A log is confirmed iff exactly one variant exists at its position and ≥ minAgree RPCs reported it
     // (a 1-vs-1 tie is NOT confirmed). Logs whose block hash is not the agreed one (stale fork) are dropped.
     const logs: Array<Entry & { confirmed: boolean }> = [];
-    const suspicious: Array<Record<string, unknown>> = [];
+    const suspicious: Array<Record<string, unknown>> = [...dupes];
     for (const [k, u] of union) {
       const variants = [...u.variants.values()];
-      const confirmed = variants.length === 1 && variants[0]!.n >= rpc.minAgree;
+      const confirmed = variants.length === 1 && variants[0]!.labels.size >= rpc.minAgree;
       if (!confirmed || u.labels.size < res.ok.length) suspicious.push({ log: k, reportedBy: [...u.labels], variants: variants.length });
       for (const v of variants) {
         const b = blocks.get(v.entry.log.blockNumber!)!;

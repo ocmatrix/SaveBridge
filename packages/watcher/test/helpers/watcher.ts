@@ -1,4 +1,4 @@
-import { createPublicClient, custom, http, type EIP1193RequestFn, type Hex, type PublicClient } from "viem";
+import { createPublicClient, custom, encodeAbiParameters, encodeEventTopics, getAbiItem, http, type Abi, type AbiEvent, type Address, type EIP1193RequestFn, type Hex, type PublicClient } from "viem";
 import { MemoryAlertSink, type AlertSink } from "../../src/alerts.js";
 import type { WatcherConfig, ControlledEntry } from "../../src/config.js";
 import { MemoryHeartbeat, type RelayerProbe } from "../../src/heartbeat.js";
@@ -54,6 +54,87 @@ export function injector(h: ChainH, atBlock: () => bigint | null, mk: (blockHash
         const blk = await rawRpc<{ hash: Hex }>(h, "eth_getBlockByNumber", [hexN(X), false]);
         const { topics, data } = mk(blk.hash);
         return [...real, { address: h.bridge, topics, data, blockNumber: hexN(X), blockHash: blk.hash, transactionHash: `0x${"ab".repeat(32)}`, transactionIndex: "0x0", logIndex: "0x63", removed: false }];
+      })(),
+    };
+  });
+}
+
+export const honest = (h: ChainH): PublicClient => tamperedClient(h, () => ({ handled: false }));
+
+export function fakeLog(abi: Abi, name: string, vals: (i: { name?: string; type: string }) => unknown): { topics: Hex[]; data: Hex } {
+  const ev = getAbiItem({ abi, name }) as AbiEvent;
+  const all = Object.fromEntries(ev.inputs.map((i) => [i.name!, vals(i)]));
+  const nonIdx = ev.inputs.filter((i) => !i.indexed);
+  return {
+    topics: encodeEventTopics({ abi: [ev], eventName: name, args: Object.fromEntries(ev.inputs.filter((i) => i.indexed).map((i) => [i.name!, all[i.name!]])) as never }) as Hex[],
+    data: encodeAbiParameters(nonIdx as never, nonIdx.map((i) => all[i.name!]) as never),
+  };
+}
+
+/** (aligner r3) Appends one fabricated log (fresh txHash each call, `times` copies) at the range end of every unfiltered getLogs covering `address`. */
+export function injectorAt(h: ChainH, address: () => Address, mk: () => { topics: Hex[]; data: Hex }, on: () => boolean, opts: { times?: number; fixedTx?: Hex } = {}): PublicClient {
+  let n = 0;
+  return tamperedClient(h, (m, p) => {
+    if (m !== "eth_getLogs" || !on()) return { handled: false };
+    const f = p[0] as { address?: string | string[]; fromBlock: string; toBlock: string; topics?: unknown[] };
+    const addrs = Array.isArray(f.address) ? f.address : [f.address];
+    if (!addrs.some((a) => a?.toLowerCase() === address().toLowerCase()) || (f.topics && f.topics.length > 0)) return { handled: false };
+    return {
+      handled: true,
+      result: (async () => {
+        const real = await rawRpc<unknown[]>(h, m, p);
+        const X = BigInt(f.toBlock);
+        const blk = await rawRpc<{ hash: Hex }>(h, "eth_getBlockByNumber", [hexN(X), false]);
+        const { topics, data } = mk();
+        n++;
+        const fake = { address: address(), topics, data, blockNumber: hexN(X), blockHash: blk.hash, transactionHash: opts.fixedTx ?? `0x${n.toString(16).padStart(64, "f")}`, transactionIndex: "0x0", logIndex: "0x63", removed: false };
+        return [...real, ...Array.from({ length: opts.times ?? 1 }, () => ({ ...fake }))];
+      })(),
+    };
+  });
+}
+
+/** (aligner r3) A node that stopped syncing at block `frozen()`. */
+export function stalledNode(h: ChainH, frozen: () => bigint | null, opts: { receiptsOnly?: boolean } = {}): PublicClient {
+  return tamperedClient(h, (m, p) => {
+    const F = frozen();
+    if (F === null) return { handled: false };
+    if (m === "eth_getTransactionReceipt") {
+      return {
+        handled: true,
+        result: (async () => {
+          const r = await rawRpc<{ blockNumber: string } | null>(h, m, p);
+          return r && BigInt(r.blockNumber) > F ? null : r;
+        })(),
+      };
+    }
+    if (opts.receiptsOnly) return { handled: false };
+    if (m === "eth_blockNumber") return { handled: true, result: hexN(F) };
+    if (m === "eth_getBlockByNumber") {
+      const tag = p[0] as string;
+      if (tag === "finalized" || tag === "latest" || tag === "safe") return { handled: true, result: rawRpc(h, m, [hexN(F), p[1]]) };
+      if (/^0x[0-9a-f]+$/.test(tag) && BigInt(tag) > F) return { handled: true, result: null };
+      return { handled: false };
+    }
+    if (m === "eth_getLogs") {
+      const f = { ...(p[0] as { fromBlock: string; toBlock: string }) };
+      if (BigInt(f.fromBlock) > F) return { handled: true, result: [] };
+      if (f.toBlock !== "latest" && BigInt(f.toBlock) > F) f.toBlock = hexN(F);
+      return { handled: true, result: rawRpc(h, m, [f]) };
+    }
+    return { handled: false };
+  });
+}
+
+/** Rewrites real getLogs answers (e.g. other blockHash / data) for logs at block X. */
+export function logRewriter(h: ChainH, at: () => bigint | null, edit: (l: Record<string, unknown>) => Record<string, unknown>): PublicClient {
+  return tamperedClient(h, (m, p) => {
+    if (m !== "eth_getLogs" || at() === null) return { handled: false };
+    return {
+      handled: true,
+      result: (async () => {
+        const real = await rawRpc<Array<Record<string, unknown>>>(h, m, p);
+        return real.map((l) => (BigInt(l["blockNumber"] as string) === at() ? edit(l) : l));
       })(),
     };
   });
