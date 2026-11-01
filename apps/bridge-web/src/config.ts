@@ -21,6 +21,8 @@ export interface AppConfig {
   walletConnectProjectId: string | null;
   /** Max blocks scanned backwards for events when no relayer API is configured. */
   logLookback: bigint;
+  /** Built from `.env.placeholder` (CI/build check only): the app renders an error and never connects a wallet. */
+  placeholder: boolean;
 }
 
 export class ConfigError extends Error {
@@ -92,6 +94,7 @@ export function parseConfig(env: Env): AppConfig {
     relayerApi: url(env, "VITE_RELAYER_API", false),
     walletConnectProjectId: env.VITE_WC_PROJECT_ID?.trim() || null,
     logLookback: uint(env, "VITE_LOG_LOOKBACK_BLOCKS", "50000"),
+    placeholder: env.VITE_CONFIG_PLACEHOLDER === "1",
   };
 }
 
@@ -99,4 +102,8 @@ export function chainById(cfg: AppConfig, chainId: number): ChainConf | null {
   if (chainId === cfg.wantos.id) return cfg.wantos;
   if (chainId === cfg.bsc.id) return cfg.bsc;
   return null;
+}
+
+export function isPlaceholder(cfg: AppConfig): boolean {
+  return cfg.placeholder;
 }

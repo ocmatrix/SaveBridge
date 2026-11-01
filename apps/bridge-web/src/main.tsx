@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient } from "@tanstack/react-query";
 import { App } from "./App";
-import { ConfigError, parseConfig } from "./config";
+import { ConfigError, isPlaceholder, parseConfig } from "./config";
 import { makeClients } from "./lib/clients";
 import { ChainStatusProvider } from "./lib/statusProvider";
 import { createWagmiConfig } from "./wallet/wagmi";
@@ -15,6 +15,7 @@ const lang = storedLang() ?? pickInitialLang(navigator.languages ?? []);
 
 try {
   const cfg = parseConfig(import.meta.env as unknown as Record<string, string | undefined>);
+  if (isPlaceholder(cfg)) throw new ConfigError("placeholder build (no real configuration)");
   const clients = makeClients(cfg);
   root.render(
     <StrictMode>

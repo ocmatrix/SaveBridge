@@ -46,3 +46,11 @@ describe("parseConfig", () => {
     expect(c.walletConnectProjectId).toBe("abc123");
   });
 });
+
+describe("placeholder builds are inert", () => {
+  it("VITE_CONFIG_PLACEHOLDER=1 marks the config so the app refuses to run", async () => {
+    const { parseConfig: p, isPlaceholder } = await import("../../src/config");
+    expect(isPlaceholder(p({ ...testEnv, VITE_CONFIG_PLACEHOLDER: "1" }))).toBe(true);
+    expect(isPlaceholder(p(testEnv))).toBe(false);
+  });
+});

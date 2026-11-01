@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { parseConfig } from "./src/config";
@@ -19,6 +20,9 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "VITE_");
   return {
     plugins: [react(), headersPlugin(env)],
+    resolve: {
+      alias: [{ find: /^@reown\/appkit\/core$/, replacement: fileURLToPath(new URL("./src/stubs/appkit-core.ts", import.meta.url)) }],
+    },
     build: {
       sourcemap: false,
       modulePreload: { polyfill: false }, // no inline/polyfill script

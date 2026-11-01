@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && node scripts/check-dist.mjs",
+    "build": "vite build --mode placeholder && node scripts/check-dist.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:prod": "vite build --mode production && node scripts/check-dist.mjs --real"
   },
   "dependencies": {
     "@bridge/abi": "workspace:*",

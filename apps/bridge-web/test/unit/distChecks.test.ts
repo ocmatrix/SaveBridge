@@ -1,0 +1,30 @@
+import { describe, expect, it } from "vitest";
+// @ts-expect-error plain .mjs helper without types
+import { checkCsp, checkFile, checkIndexHtml } from "../../scripts/distChecks.mjs";
+import { buildHeadersFile } from "../../src/csp";
+import { testConfig } from "../fixtures";
+
+describe("post-build checks", () => {
+  it("accepts our generated headers, rejects unsafe ones", () => {
+    expect(checkCsp(buildHeadersFile(testConfig))).toEqual([]);
+    expect(checkCsp(null)).not.toEqual([]);
+    expect(checkCsp("/*\n  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline'\n")).not.toEqual([]);
+    expect(checkCsp("/*\n  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval'\n")).not.toEqual([]);
+  });
+  it("flags inline scripts / handlers", () => {
+    expect(checkIndexHtml('<script type="module" src="/a.js"></script>')).toEqual([]);
+    expect(checkIndexHtml("<script>alert(1)</script>")).not.toEqual([]);
+    expect(checkIndexHtml('<div onclick="x()"></div>')).not.toEqual([]);
+  });
+  it("flags MaxUint256 approvals, anvil keys, env files, eval", () => {
+    expect(checkFile("a.js", 'approve(s,"0x' + "f".repeat(64) + '")')).not.toEqual([]);
+    expect(checkFile("a.js", "approve(s, maxUint256)")).not.toEqual([]);
+    expect(checkFile("a.js", "approve(s, 2n ** 256n - 1n)")).not.toEqual([]);
+    expect(checkFile("a.js", "const bound=2n**256n-1n;function fee(){}")).toEqual([]); // viem's numeric bound
+    expect(checkFile("a.js", "0x1" + "f".repeat(130))).toEqual([]); // P-521 constant in a crypto lib is fine
+    expect(checkFile("a.js", "k='ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'")).not.toEqual([]);
+    expect(checkFile(".env", "")).not.toEqual([]);
+    expect(checkFile("a.js", "eval('1')")).not.toEqual([]);
+    expect(checkFile("a.js", "const ok = 1;")).toEqual([]);
+  });
+});
