@@ -30,6 +30,8 @@ export function useFlow(chainId: number, decimals: number, action: "w2b" | "b2w"
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  /** B1: the hash is unknown to the node and its nonce has been used by another tx → offer a confirmed manual unlock. */
+  const [replaced, setReplaced] = useState(false);
 
   const onStep: StepFn = (s, h) => {
     setStep(s);
@@ -65,20 +67,36 @@ export function useFlow(chainId: number, decimals: number, action: "w2b" | "b2w"
   async function recheck() {
     if (!pending || !key) return;
     setNote(null);
+    setReplaced(false);
     setDone(null);
     setError(null);
+    const pc = clientFor(cfg, clients, chainId);
     try {
-      const r = await clientFor(cfg, clients, chainId).getTransactionReceipt({ hash: pending.hash });
+      const r = await pc.getTransactionReceipt({ hash: pending.hash });
       store.clear(key);
       if (r.status !== "success") setError(t("pending.reverted"));
       else setDone(t(pending.kind === "approve" ? "pending.approveConfirmed" : "pending.confirmed"));
       await queryClient.invalidateQueries();
     } catch {
-      setNote(t("pending.notYet"));
+      // no receipt: still in the mempool, or replaced (sped up / cancelled) / dropped?
+      const inPool = await pc.getTransaction({ hash: pending.hash }).then(() => true, () => false);
+      const used =
+        !inPool && pending.nonce !== null
+          ? await pc.getTransactionCount({ address: pending.account as Address, blockTag: "latest" }).then((n) => n > pending.nonce!, () => false)
+          : false;
+      if (used) setReplaced(true);
+      else setNote(t("pending.notYet"));
     }
   }
 
-  return { step, hash, busy, error, done, pending: pending?.hash ?? null, note, run, recheck };
+  /** Manual release after the user confirmed twice (B1); only offered when `replaced`. */
+  function unlock() {
+    if (!key || !replaced) return;
+    store.clear(key);
+    setReplaced(false);
+  }
+
+  return { step, hash, busy, error, done, pending: pending?.hash ?? null, note, replaced, run, recheck, unlock };
 }
 
 export type Flow = ReturnType<typeof useFlow>;

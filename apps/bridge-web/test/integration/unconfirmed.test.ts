@@ -44,6 +44,9 @@ describe("errors after broadcast are never shown as 'failed' (B1)", () => {
     const sentHash = seen.filter(([st, h]) => st === "confirming" && h).at(-1)![1]!;
     expect(err.name).toBe("UnconfirmedTxError");
     expect(err.hash).toBe(sentHash);
+    expect(err.kind).toBe("send");
+    // nonce recorded for replacement detection (B1)
+    expect(err.nonce).toBe((await s.anvil.pc.getTransaction({ hash: sentHash })).nonce);
     // the transaction really is on chain
     expect((await s.anvil.pc.getTransactionReceipt({ hash: sentHash })).status).toBe("success");
     const tr = translateError(err, { decimals: 18 });

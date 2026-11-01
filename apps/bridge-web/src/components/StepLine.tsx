@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useI18n } from "../context";
 import type { ChainConf } from "../config";
 import type { Flow } from "./useFlow";
@@ -24,6 +25,7 @@ export function StepLine({ flow, amount }: { flow: Flow; amount: string }) {
 /** A broadcast transaction without a known result: hash, explorer link, re-check; never "failed" (B1). */
 export function PendingTx({ flow, chain }: { flow: Flow; chain: ChainConf }) {
   const { t } = useI18n();
+  const [asking, setAsking] = useState(false);
   if (!flow.pending) return null;
   return (
     <div className="notice warn">
@@ -37,6 +39,29 @@ export function PendingTx({ flow, chain }: { flow: Flow; chain: ChainConf }) {
         </button>
       </div>
       {flow.note && <p>{flow.note}</p>}
+      {flow.replaced && (
+        <div>
+          <p>{t("pending.replaced")}</p>
+          {!asking ? (
+            <button type="button" className="secondary" onClick={() => setAsking(true)}>
+              {t("pending.unlock")}
+            </button>
+          ) : (
+            <div className="row">
+              <span>{t("pending.unlockConfirm")}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setAsking(false);
+                  flow.unlock();
+                }}
+              >
+                {t("pending.unlockYes")}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
