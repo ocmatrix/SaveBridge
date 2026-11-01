@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {WantosFixture} from "./utils/WantosFixture.sol";
 import {BridgeBase} from "../src/BridgeBase.sol";
 import {WantosBridgeV2} from "../src/WantosBridgeV2.sol";
@@ -50,23 +51,88 @@ contract WantosInvariantsTest is WantosFixture {
         bridge.executeRefund(id);
     }
 
-    /// Fuzz: inbound queue amounts never push the day's usage over b2wDailyCap.
-    function testFuzz_inv03_b2wCap(uint256[16] calldata amts) public {
-        uint256 used;
-        uint256 day = bridge.currentDay();
-        for (uint256 i; i < amts.length; ++i) {
-            uint256 a = bound(amts[i], 1, 2_000) * U;
-            vm.prank(relayer);
-            if (used + a > 3_000 * U) {
-                vm.expectRevert();
-                bridge.queueRelease(i + 1, carol, a);
-            } else {
-                bridge.queueRelease(i + 1, carol, a);
-                used += a;
+    /// Fuzz: inbound queue / cancel sequences across UTC days; usage always equals the model, never exceeds
+    /// b2wDailyCap, and cancelling a same-day queued release returns its quota (B3d).
+    mapping(uint256 => uint256) mUsed;
+    uint256[] qNonce;
+    uint256[] qDay;
+    uint256[] qAmt;
+
+    function testFuzz_inv03_b2wCap(uint256[24] calldata seeds) public {
+        for (uint256 i; i < seeds.length; ++i) {
+            uint256 s = seeds[i];
+            uint256 op = s % 4;
+            uint256 d = bridge.currentDay();
+            if (op == 3) {
+                vm.warp(block.timestamp + (s >> 8) % 20 hours);
+                continue;
             }
-            assertEq(bridge.dailyUsed(day), used);
-            assertLe(used, 3_000 * U);
+            if (op == 2 && qNonce.length > 0) {
+                uint256 j = (s >> 8) % qNonce.length;
+                if (qNonce[j] == 0) continue;
+                vm.prank(wl);
+                bridge.cancelRelease(qNonce[j]);
+                if (qDay[j] == d) mUsed[d] -= qAmt[j];
+                qNonce[j] = 0;
+            } else {
+                uint256 a = bound(s >> 16, 1, 2_000) * U;
+                uint256 nonce = i + 1;
+                vm.prank(relayer);
+                if (mUsed[d] + a > 3_000 * U) {
+                    vm.expectRevert(
+                        abi.encodeWithSelector(BridgeBase.DailyCapExceeded.selector, mUsed[d] + a, 3_000 * U)
+                    );
+                    bridge.queueRelease(nonce, carol, a);
+                } else {
+                    bridge.queueRelease(nonce, carol, a);
+                    mUsed[d] += a;
+                    qNonce.push(nonce);
+                    qDay.push(d);
+                    qAmt.push(a);
+                }
+            }
+            assertEq(bridge.dailyUsed(d), mUsed[d]);
+            assertLe(bridge.dailyUsed(d), 3_000 * U);
         }
+    }
+
+    function test_inv03_pos_b2wCancelSameDayReturnsQuota() public {
+        vm.prank(relayer);
+        bridge.queueRelease(1, carol, 3_000 * U);
+        vm.prank(admin);
+        bridge.cancelRelease(1);
+        assertEq(bridge.dailyUsed(bridge.currentDay()), 0);
+        vm.prank(relayer);
+        bridge.queueRelease(2, carol, 3_000 * U); // full cap available again
+    }
+
+    // 7 (WANTOS half) ----------------------------------------------------------
+    function test_inv07_neg_pausedBlocksWantosMoneyPaths() public {
+        bytes4 P = PausableUpgradeable.EnforcedPause.selector;
+        _applyBatch(bridge, _one(alice), true);
+        vm.prank(alice);
+        uint256 id = bridge.bridgeOut(100 * U);
+        vm.prank(admin);
+        bridge.requestRefund(id);
+        vm.prank(relayer);
+        bridge.queueRelease(1, carol, 100 * U);
+        vm.warp(block.timestamp + 24 hours);
+        vm.prank(pauser);
+        bridge.pause();
+        vm.prank(alice);
+        vm.expectRevert(P);
+        bridge.bridgeOut(100 * U);
+        vm.expectRevert(P);
+        bridge.executeRefund(id);
+        vm.startPrank(relayer);
+        vm.expectRevert(P);
+        bridge.queueRelease(2, carol, 100 * U);
+        vm.expectRevert(P);
+        bridge.executeRelease(1);
+        vm.stopPrank();
+        vm.prank(address(tl));
+        vm.expectRevert(P);
+        bridge.withdraw(bob, 1);
     }
 
     // 6 ------------------------------------------------------------------
@@ -123,8 +189,10 @@ contract WantosInvariantsTest is WantosFixture {
     function test_inv10_neg_overCeilingRejectedAndCannotLowerBelowSupply() public {
         _applyBatch(bridge, _one(alice), true);
         token.mint(address(0xbad), 10_000 * U + 1);
+        uint256 supply = token.totalSupply();
+        uint256 ceil = bridge.supplyCeiling();
         vm.prank(alice);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(WantosBridgeV2.SupplyCeilingExceeded.selector, supply, ceil));
         bridge.bridgeOut(100 * U);
         uint256 ts = token.totalSupply();
         vm.prank(admin);
