@@ -254,6 +254,10 @@ export async function startHarness(): Promise<Harness> {
       wantos.proc.kill();
     },
     settle: async () => {
+      // Align both chains' clocks (evm_revert does not rewind anvil's time offset), then bury the tip.
+      const t = Math.max((await bsc.latest()).timestamp, (await wantos.latest()).timestamp) + 1;
+      await bsc.rpc("evm_setNextBlockTimestamp", [t]);
+      await wantos.rpc("evm_setNextBlockTimestamp", [t]);
       await bsc.mine(3);
       await wantos.mine(7);
     },
