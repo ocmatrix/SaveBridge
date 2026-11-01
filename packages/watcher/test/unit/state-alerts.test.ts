@@ -96,6 +96,25 @@ describe("alerts", () => {
     expect(sink.alerts).toHaveLength(2);
   });
 
+  it("B2: a failed send is queued (not lost), retried by flushOutbox; level-1 is registered for repeats only once delivered", async () => {
+    const { state, sink, am } = mk();
+    let fail = 1;
+    const orig = sink.send.bind(sink);
+    sink.send = async (a) => {
+      if (fail-- > 0) throw new Error("channel down");
+      return orig(a);
+    };
+    expect(await am.raise("AUTO_PAUSE", { title: "x", key: "kq" })).toBe(true);
+    expect(sink.alerts).toHaveLength(0);
+    expect(state.meta.outbox).toHaveLength(1);
+    expect(state.meta.openLevel1["kq"]).toBeUndefined();
+    expect(await am.raise("AUTO_PAUSE", { title: "x", key: "kq" })).toBe(false); // not queued twice
+    await am.flushOutbox();
+    expect(sink.alerts.map((a) => a.code)).toEqual(["AUTO_PAUSE"]);
+    expect(state.meta.outbox).toHaveLength(0);
+    expect(state.meta.openLevel1["kq"]).toBeDefined();
+  });
+
   it("level-2 alerts are not repeated; keyless alerts always send", async () => {
     const { sink, am, setNow } = mk();
     await am.raise("PAUSED", { title: "p" });

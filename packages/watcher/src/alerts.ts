@@ -149,9 +149,35 @@ export class AlertManager {
       ...(a.chain !== undefined ? { chain: a.chain } : {}),
       ...(a.key !== undefined ? { key: a.key } : {}),
     };
-    if (alert.level === 1) m.openLevel1[a.key ?? `${code}:${now}:${Object.keys(m.openLevel1).length}`] = { alert, lastSentAt: now };
-    await this.sink.send(alert);
+    try {
+      await this.sink.send(alert);
+    } catch {
+      m.outbox.push(alert); // B2: never lose an alert; flushOutbox() retries
+      return true;
+    }
+    this.delivered(alert);
     return true;
+  }
+
+  private delivered(alert: Alert): void {
+    if (alert.level !== 1 || alert.repeat) return;
+    const m = this.meta();
+    m.openLevel1[alert.key ?? `${alert.code}:${alert.at}:${Object.keys(m.openLevel1).length}`] = { alert, lastSentAt: this.clock() };
+  }
+
+  /** Retry alerts whose delivery failed earlier (oldest first; stops at the first failure). */
+  async flushOutbox(): Promise<void> {
+    const m = this.meta();
+    while (m.outbox.length > 0) {
+      const a = m.outbox[0]!;
+      try {
+        await this.sink.send(a);
+      } catch {
+        return;
+      }
+      m.outbox.shift();
+      this.delivered(a);
+    }
   }
 
   /** Allow a key to fire again (e.g. a condition that cleared). */
@@ -168,8 +194,12 @@ export class AlertManager {
     const now = this.clock();
     for (const entry of Object.values(this.meta().openLevel1)) {
       if (now - entry.lastSentAt >= REPEAT_LEVEL1_AFTER) {
-        entry.lastSentAt = now;
-        await this.sink.send({ ...entry.alert, at: now, repeat: true });
+        try {
+          await this.sink.send({ ...entry.alert, at: now, repeat: true });
+          entry.lastSentAt = now;
+        } catch {
+          /* retried next tick */
+        }
       }
     }
   }

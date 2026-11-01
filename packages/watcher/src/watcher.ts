@@ -99,6 +99,7 @@ export class Watcher {
 
   async tick(): Promise<TickReport> {
     const report: TickReport = { paused: [] };
+    await this.alerts.flushOutbox(); // B2: deliver alerts that failed earlier
     await this.alerts.flushDaily(); // close the previous UTC day before collecting this tick's entries
     const wantosOk = await this.checkWantosRollback(report);
     for (const c of CHAINS) if (c !== "wantos" || wantosOk) await this.advance(c);
@@ -310,19 +311,29 @@ export class Watcher {
       if (!t.ok) throw new Error(`timestamp of block ${n} not confirmed (${t.reason})`);
       times.set(n, t.value);
     }
-    const abiFor = (s: DecodedLog["source"]): Abi => (s === "bridge" ? bridgeAbiOf(c) : s === "timelock" ? (bridgeTimelockAbi as Abi) : (erc20Abi as Abi));
-    for (const { source, log } of logs) {
-      const meta = { address: log.address, block: log.blockNumber!, blockHash: log.blockHash!, txHash: log.transactionHash!, logIndex: log.logIndex!, timestamp: times.get(log.blockNumber!)! };
-      if (source === "legacy") {
-        await this.onLegacyLog(c, { source, name: "log", args: { topic0: log.topics[0] }, ...meta });
-        continue;
+    // B2: apply the whole range atomically — on any error restore the pre-range state, so a retry
+    // from the unchanged cursor cannot double-count sums.
+    const before = clone(this.state.derived);
+    const newOpsBefore = this.newOps.length;
+    try {
+      const abiFor = (s: DecodedLog["source"]): Abi => (s === "bridge" ? bridgeAbiOf(c) : s === "timelock" ? (bridgeTimelockAbi as Abi) : (erc20Abi as Abi));
+      for (const { source, log } of logs) {
+        const meta = { address: log.address, block: log.blockNumber!, blockHash: log.blockHash!, txHash: log.transactionHash!, logIndex: log.logIndex!, timestamp: times.get(log.blockNumber!)! };
+        if (source === "legacy") {
+          await this.onLegacyLog(c, { source, name: "log", args: { topic0: log.topics[0] }, ...meta });
+          continue;
+        }
+        const dec = decodeLog(abiFor(source), log);
+        if (!dec) continue;
+        const l: DecodedLog = { source, ...dec, ...meta };
+        if (source === "bridge") await this.onBridge(c, l);
+        else if (source === "timelock") await this.onTimelock(c, l);
+        else await this.onTransfer(c, l);
       }
-      const dec = decodeLog(abiFor(source), log);
-      if (!dec) continue;
-      const l: DecodedLog = { source, ...dec, ...meta };
-      if (source === "bridge") await this.onBridge(c, l);
-      else if (source === "timelock") await this.onTimelock(c, l);
-      else await this.onTransfer(c, l);
+    } catch (e) {
+      this.state.derived = before;
+      this.newOps.splice(newOpsBefore);
+      throw e;
     }
     const cursor: Cursor = { number: to.toString(), hash: end.hash, timestamp: end.timestamp };
     this.state.derived[c].cursor = cursor;

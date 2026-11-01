@@ -118,6 +118,8 @@ export interface MetaState {
   controlledSetHash: string | null;
   controlledSet: string[];
   snapshots: Array<{ wantosCursor: Cursor | null; derived: DerivedState }>;
+  /** Alerts whose delivery failed; retried every tick (B2). */
+  outbox: Alert[];
 }
 
 export interface State {

@@ -151,6 +151,27 @@ describe("pause semantics, rollback, replay", () => {
     expect(await H.isPaused("bsc")).toBe(true);
   });
 
+  it("B2: a failure in the middle of a range rolls back that range's partial effects (no double counting on retry)", async () => {
+    const t = await makeWatcher(H);
+    for (const amt of [E(100), E(200)]) {
+      await H.wantos.write(ACCOUNTS.user1, "approve", [H.wantos.bridge, amt], H.wantos.token);
+      await H.wantos.write(ACCOUNTS.user1, "bridgeOut", [amt]);
+    }
+    await H.settle();
+    const w = t.w as unknown as { onBridge: (c: string, l: { name: string }) => Promise<void> };
+    const orig = w.onBridge.bind(t.w);
+    let n = 0;
+    w.onBridge = async (c, l) => {
+      if (l.name === "BridgeOut" && n++ === 1) throw new Error("boom after the first BridgeOut");
+      return orig(c, l);
+    };
+    await t.w.tick();
+    expect(t.w.state.derived.wantos.sums["bridgeOut"] ?? "0").toBe("0");
+    w.onBridge = orig;
+    await t.w.tick();
+    expect(t.w.state.derived.wantos.sums["bridgeOut"]).toBe(E(300).toString());
+  });
+
   it("BSC finalized unavailable → wait + level-2 alert, no progress", async () => {
     const { tamperedClient } = await import("../helpers/watcher.js");
     const noFinal = () =>

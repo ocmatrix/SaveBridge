@@ -31,6 +31,7 @@ export const initialState = (): State => ({
     controlledSetHash: null,
     controlledSet: [],
     snapshots: [],
+    outbox: [],
   },
 });
 
