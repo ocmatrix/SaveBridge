@@ -70,6 +70,14 @@ alter table tx_attempts add column if not exists from_addr bytea;
 create index if not exists tx_attempts_chain_from_nonce_idx on tx_attempts (chain_id, from_addr, nonce);
 `,
   },
+  {
+    version: 6,
+    name: "approval_scope",
+    sql: `
+alter table orders add column if not exists approved_level text;
+alter table orders add column if not exists approved_reason text;
+`,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {

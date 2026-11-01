@@ -178,7 +178,45 @@ export class Processor {
     return encodeFunctionData({ abi: side.view.abi, functionName: action, args });
   }
 
+  /**
+   * Hard precondition before ANY payout tx (Gate2 A1/A2; §5.3 third line of defence). Neither the risk
+   * engine nor an owner approval can override it:
+   *  W2B: WANTOS orders[id] is Locked with the event's user and amount (no refund requested/executed);
+   *  B2W: BSC deposits(nonce) exists with the event's depositor and amount and no refund requested.
+   * Returns a description of the mismatch, or null when intact.
+   */
+  async sourceMismatch(o: Order): Promise<string | null> {
+    if (o.direction === "W2B") {
+      const src = await this.o.wantos.view.order(o.srcEventNonce);
+      if (src.status !== OrderStatusOnChain.Locked) return `WANTOS order status ${src.status} != Locked`;
+      if (src.user.toLowerCase() !== o.userAddr.toLowerCase() || src.amount !== o.amountWei) return "WANTOS order user/amount differ from the event";
+      return null;
+    }
+    const d = await this.o.bsc.view.deposit(o.srcEventNonce);
+    if (d.from.toLowerCase() !== o.userAddr.toLowerCase() || d.amount !== o.amountWei) return "BSC deposit differs from the event";
+    if (d.refundStatus !== DepositRefundStatus.None) return `BSC deposit refund status ${d.refundStatus}`;
+    return null;
+  }
+
+  /** Returns true (and parks the order) when the source order is no longer intact. */
+  private async blockedBySource(o: Order): Promise<boolean> {
+    const why = await this.sourceMismatch(o);
+    if (!why) return false;
+    await this.o.alerts.emit({
+      kind: "ORDER_ONCHAIN_MISMATCH",
+      key: `source:${o.eventKey}`,
+      message: `${o.direction} order ${o.srcEventNonce}: ${why}; not paying${o.status === "QUEUED" ? " (owner must cancelRelease)" : ", frozen for owner review"}`,
+      data: { eventKey: o.eventKey },
+    });
+    if (o.status === "QUEUED") await this.moveIfChanged(o, "QUEUED", { reason: "onchain_mismatch" });
+    else if (!(o.status === "REVIEW" && o.reviewLevel === "freeze" && o.reason === "onchain_mismatch")) {
+      await this.repo.move(o, "REVIEW", { reason: "onchain_mismatch", reviewLevel: "freeze" });
+    }
+    return true;
+  }
+
   private async submit(o: Order, action: PayoutAction): Promise<void> {
+    if (await this.blockedBySource(o)) return;
     const side = this.side(o);
     const res = await side.sender.send(
       { eventKey: o.eventKey, action, to: side.view.address, data: this.calldata(side, o, action) },
@@ -234,15 +272,20 @@ export class Processor {
       return;
     }
     if (pl.status !== PayoutStatus.None) return; // Released / Voided but not final yet → wait for the final read
+    if (await this.blockedBySource(o)) return;
     const d = await this.o.risk.evaluate(o, { outstandingWei: await this.outstanding(o) });
-    const decision = o.approvedAt && d.kind === "REVIEW" ? ({ kind: "DELAY" } as const) : d;
+    // An owner approval only covers the exact REVIEW level+reason it was given for (Gate2 A1).
+    const approved = !!o.approvedAt && d.kind === "REVIEW" && d.level === o.approvedLevel && (d.reason ?? null) === o.approvedReason;
+    const decision = approved ? ({ kind: "DELAY" } as const) : d;
     switch (decision.kind) {
       case "WAIT":
         if (decision.reason === "amount_limit") await this.moveIfChanged(o, "REVIEW", { reason: "amount_limit", reviewLevel: "audit" });
         else await this.moveIfChanged(o, "WAITING", { reason: decision.reason });
         return;
       case "REVIEW":
-        if (o.status !== "REVIEW") await this.repo.move(o, "REVIEW", { reason: decision.reason ?? null, reviewLevel: decision.level });
+        if (o.status !== "REVIEW" || o.reviewLevel !== decision.level || (o.reason ?? null) !== (decision.reason ?? null)) {
+          await this.repo.move(o, "REVIEW", { reason: decision.reason ?? null, reviewLevel: decision.level });
+        }
         return;
       case "AUTO":
         return this.submit(o, o.direction === "W2B" ? "release" : "queueRelease"); // B2W always queues (§5.3)

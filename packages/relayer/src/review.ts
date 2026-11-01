@@ -65,7 +65,12 @@ export class ReviewService {
       if (r.decision === "reject") {
         if (!(await tr.move(order, "REJECTED", { reason: "review_rejected" }))) throw new Error("order changed concurrently");
       } else {
-        await t.query("update orders set approved_at = $2, approved_by = $3 where event_key = $1", [toBytes(r.eventKey), this.o.now(), toBytes(admin)]);
+        // The approval is scoped to the REVIEW level+reason being approved; re-entering REVIEW with a
+        // different level or reason clears it (OrderRepo.move).
+        await t.query(
+          "update orders set approved_at = $2, approved_by = $3, approved_level = $4, approved_reason = $5 where event_key = $1 and status = 'REVIEW'",
+          [toBytes(r.eventKey), this.o.now(), toBytes(admin), order.reviewLevel, order.reason],
+        );
       }
       await t.query("insert into audit_log (actor, action, payload, at) values ($1, $2, $3, $4)", [
         admin,

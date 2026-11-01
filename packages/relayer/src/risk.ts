@@ -1,5 +1,4 @@
 import type { BridgeView } from "./chain/bridges";
-import { OrderStatusOnChain } from "./chain/bridges";
 import type { AlertSink } from "./alerts";
 import type { Order } from "./orders";
 import type { ReviewLevel, WaitReason } from "./stateMachine";
@@ -25,10 +24,11 @@ export interface RiskEngine {
 
 /**
  * Default engine using only on-chain information (no fund-source tracing):
- * W2B: WANTOS order re-read (must be Locked, same user/amount) → BSC paused → both-chain whitelist →
+ * (The source-order re-read is a processor hard precondition, not part of the engine.)
+ * W2B: BSC paused → both-chain whitelist →
  *      per-address cap (amount limit → REVIEW) → remaining daily/address quota → reserve →
  *      largeThreshold (AUTO vs DELAY).
- * B2W: BSC deposit re-read → WANTOS paused → b2wDailyCap remaining → reserve → always DELAY.
+ * B2W: WANTOS paused → b2wDailyCap remaining → reserve → always DELAY.
  */
 export class DefaultRiskEngine implements RiskEngine {
   constructor(
@@ -41,23 +41,9 @@ export class DefaultRiskEngine implements RiskEngine {
     return o.direction === "W2B" ? this.w2b(o, ctx) : this.b2w(o, ctx);
   }
 
-  private async mismatch(o: Order, what: string): Promise<RiskDecision> {
-    await this.alerts.emit({
-      kind: "ORDER_ONCHAIN_MISMATCH",
-      key: o.eventKey,
-      message: `${o.direction} order ${o.srcEventNonce}: ${what}; not paying, frozen for owner review`,
-      data: { eventKey: o.eventKey },
-    });
-    return { kind: "REVIEW", level: "freeze", reason: "onchain_mismatch" };
-  }
-
   private async w2b(o: Order, ctx: RiskContext): Promise<RiskDecision> {
-    // §5.3 third line of defence: re-read WANTOS orders[id].status == Locked before any BSC payout.
-    const src = await this.wantos.order(o.srcEventNonce);
-    if (src.status !== OrderStatusOnChain.Locked) return this.mismatch(o, `WANTOS order status ${src.status} != Locked`);
-    if (src.user.toLowerCase() !== o.userAddr.toLowerCase() || src.amount !== o.amountWei) {
-      return this.mismatch(o, "WANTOS order user/amount differ from the event");
-    }
+    // NOTE: "WANTOS orders[id] still Locked with the same user/amount" (§5.3 third line of defence) is a
+    // hard precondition enforced by the processor before every send; an engine cannot override it.
     if (await this.bsc.paused()) return { kind: "WAIT", reason: "paused" };
     const [wlW, wlB] = await Promise.all([this.wantos.whitelisted(o.userAddr), this.bsc.whitelisted(o.toAddr)]);
     // bridgeOut required the WANTOS whitelist at creation, so "not whitelisted on WANTOS now" means it was
@@ -74,9 +60,6 @@ export class DefaultRiskEngine implements RiskEngine {
   }
 
   private async b2w(o: Order, ctx: RiskContext): Promise<RiskDecision> {
-    const d = await this.bsc.deposit(o.srcEventNonce);
-    if (d.from.toLowerCase() !== o.userAddr.toLowerCase() || d.amount !== o.amountWei) return this.mismatch(o, "BSC deposit differs from the event");
-    if (d.refundStatus !== 0) return this.mismatch(o, `BSC deposit refund status ${d.refundStatus}`);
     if (await this.wantos.paused()) return { kind: "WAIT", reason: "paused" };
     const p = await this.wantos.wantosParams();
     const used = await this.wantos.dailyUsed(await this.wantos.currentDay());

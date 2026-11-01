@@ -22,6 +22,9 @@ export interface Order {
   lastError: string | null;
   timeoutAlertedFor: string | null;
   approvedAt: Date | null;
+  /** Approval only covers the REVIEW level+reason it was given for (Gate2 A1). */
+  approvedLevel: ReviewLevel | null;
+  approvedReason: string | null;
   createdAt: Date;
 }
 
@@ -68,6 +71,8 @@ function rowToOrder(r: Row): Order {
     lastError: (r.last_error as string | null) ?? null,
     timeoutAlertedFor: (r.timeout_alerted_for as string | null) ?? null,
     approvedAt: r.approved_at ? new Date(r.approved_at as string | Date) : null,
+    approvedLevel: (r.approved_level as ReviewLevel | null) ?? null,
+    approvedReason: (r.approved_reason as string | null) ?? null,
     createdAt: new Date(r.created_at as string | Date),
   };
 }
@@ -157,7 +162,8 @@ export class OrderRepo {
          last_tx_hash = coalesce($9, last_tx_hash),
          last_error = $10,
          reasons = coalesce(reasons, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('from', $2::text, 'to', $3::text, 'reason', $4::text, 'at', $6::timestamptz)),
-         updated_at = $6
+         updated_at = $6,
+         approved_at = case when $3 = 'REVIEW' and (approved_level is distinct from $5 or approved_reason is distinct from $4) then null else approved_at end
        where event_key = $1 and status = $2 returning event_key`,
       [
         toBytes(o.eventKey),
