@@ -154,12 +154,12 @@ abstract contract BridgeBase is
 
     // ------------------------------------------------------------------ modifiers
     modifier onlyAdmin() {
-        if (msg.sender != adminWallet()) revert NotAdmin(msg.sender);
+        _checkAdmin();
         _;
     }
 
     modifier onlyWhitelistManager() {
-        if (msg.sender != _b().whitelistManager) revert NotWhitelistManager(msg.sender);
+        _checkWl();
         _;
     }
 
@@ -625,6 +625,14 @@ abstract contract BridgeBase is
 
     function _requireWhitelisted(address a) internal view {
         if (!_b().whitelisted[a]) revert NotWhitelisted(a);
+    }
+
+    function _checkAdmin() internal view {
+        if (msg.sender != adminWallet()) revert NotAdmin(msg.sender);
+    }
+
+    function _checkWl() internal view {
+        if (msg.sender != _b().whitelistManager) revert NotWhitelistManager(msg.sender);
     }
 
     function _checkAdminOrWl() internal view {
