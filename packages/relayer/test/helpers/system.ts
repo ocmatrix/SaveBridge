@@ -28,6 +28,16 @@ export interface World {
 /** Two local anvils with PR-1 contracts deployed at the same proxy address, funded reserves. */
 export async function startWorld(): Promise<World> {
   const [wantos, bsc] = await Promise.all([startAnvil(WANTOS_ID), startAnvil(BSC_ID)]);
+  try {
+    return await setupWorld(wantos, bsc);
+  } catch (e) {
+    await wantos.stop(); // never leak local anvil processes when setup fails
+    await bsc.stop();
+    throw e;
+  }
+}
+
+async function setupWorld(wantos: Anvil, bsc: Anvil): Promise<World> {
   const act = actors();
   const deployerKey = newKey();
   const wantosRelayerKey = newKey();
