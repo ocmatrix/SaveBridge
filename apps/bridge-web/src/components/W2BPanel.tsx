@@ -27,7 +27,7 @@ export function W2BPanel({ state, onOrder }: { state: BridgeState | undefined; o
   const { address, chainId } = useConnection();
   const [input, setInput] = useState("");
   const dec = state?.wantos.decimals ?? 18;
-  const flow = useFlow(cfg.wantos.id, dec);
+  const flow = useFlow(cfg.wantos.id, dec, "w2b");
   const f = (v: bigint) => formatAmount(v, dec);
 
   const wrongNet = !!address && chainId !== cfg.wantos.id;

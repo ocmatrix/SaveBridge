@@ -26,7 +26,7 @@ export function B2WPanel({ state, onDeposit }: { state: BridgeState | undefined;
   const [input, setInput] = useState("");
   const [recipient, setRecipient] = useState("");
   const dec = state?.bsc.decimals ?? 18;
-  const flow = useFlow(cfg.bsc.id, dec);
+  const flow = useFlow(cfg.bsc.id, dec, "b2w");
   const f = (v: bigint) => formatAmount(v, dec);
 
   useEffect(() => {

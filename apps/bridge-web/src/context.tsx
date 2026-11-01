@@ -3,6 +3,7 @@ import type { AppConfig } from "./config";
 import type { Clients } from "./lib/clients";
 import type { StatusProvider } from "./lib/statusProvider";
 import { t as translate, type I18nKey, type Lang } from "./i18n";
+import { loadPending, pendingKey, savePending, sessionStore, type PendingMap, type PendingTx } from "./lib/pendingTx";
 
 export interface Deps {
   cfg: AppConfig;
@@ -54,4 +55,42 @@ export function useI18n() {
   const { lang, setLang } = c;
   const t = useCallback((key: I18nKey, params?: Record<string, string>) => translate(lang, key, params), [lang]);
   return { lang, setLang, t };
+}
+
+interface PendingApi {
+  get(key: string): PendingTx | null;
+  set(p: PendingTx): void;
+  clear(key: string): void;
+}
+const PendingCtx = createContext<PendingApi | null>(null);
+
+/** Page-level store of unconfirmed-transaction locks (survives tab switches; persisted to sessionStorage). */
+export function PendingProvider({ children }: { children: ReactNode }) {
+  const [map, setMap] = useState<PendingMap>(() => loadPending(sessionStore()));
+  const update = useCallback((f: (m: PendingMap) => PendingMap) => {
+    setMap((m) => {
+      const next = f(m);
+      savePending(sessionStore(), next);
+      return next;
+    });
+  }, []);
+  const api = useMemo<PendingApi>(
+    () => ({
+      get: (k) => map[k] ?? null,
+      set: (p) => update((m) => ({ ...m, [pendingKey(p.account, p.chainId, p.action)]: p })),
+      clear: (k) =>
+        update((m) => {
+          const { [k]: _gone, ...rest } = m;
+          return rest;
+        }),
+    }),
+    [map, update],
+  );
+  return <PendingCtx.Provider value={api}>{children}</PendingCtx.Provider>;
+}
+
+export function usePendingStore(): PendingApi {
+  const c = useContext(PendingCtx);
+  if (!c) throw new Error("PendingProvider missing");
+  return c;
 }

@@ -104,6 +104,7 @@ export const zh = {
   "pending.check": "在浏览器核对",
   "pending.recheck": "重新检查",
   "pending.confirmed": "交易已确认",
+  "pending.approveConfirmed": "授权已确认，请再次点击提交以完成跨链",
   "pending.reverted": "该交易已上链但被合约拒绝，资金未转出，可以重新提交",
   "pending.notYet": "还没有查到这笔交易的结果，请稍后再检查",
   "err.userRejected": "已在钱包中取消",

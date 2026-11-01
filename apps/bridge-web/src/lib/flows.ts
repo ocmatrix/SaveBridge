@@ -46,6 +46,9 @@ export class UnconfirmedTxError extends Error {
     readonly hash: Hex,
     readonly chainId: number,
     override readonly cause: unknown,
+    /** "approve" = the allowance tx (the bridge tx was NOT sent); "send" = bridgeOut / deposit. */
+    readonly kind: "approve" | "send" = "send",
+    readonly nonce: number | null = null,
   ) {
     super(`transaction ${hash} sent but not confirmed`);
     this.name = "UnconfirmedTxError";
@@ -86,12 +89,15 @@ export async function sendGuarded(ctx: TxContext, chainId: number, req: GuardedR
   return ctx.wallet.writeContract({ ...(request as object), account: account(ctx), chain: pc.chain } as never);
 }
 
-async function confirm(ctx: TxContext, chainId: number, hash: Hex) {
+async function confirm(ctx: TxContext, chainId: number, hash: Hex, kind: "approve" | "send") {
+  const pc = clientFor(ctx.cfg, ctx.clients, chainId);
   let r;
   try {
-    r = await clientFor(ctx.cfg, ctx.clients, chainId).waitForTransactionReceipt({ hash });
+    r = await pc.waitForTransactionReceipt({ hash });
   } catch (e) {
-    throw new UnconfirmedTxError(hash, chainId, e);
+    // best effort: remember the nonce so a later re-check can tell "replaced / dropped" from "still pending"
+    const nonce = await pc.getTransaction({ hash }).then((tx) => tx.nonce, () => null);
+    throw new UnconfirmedTxError(hash, chainId, e, kind, nonce);
   }
   if (r.status !== "success") throw new TxRevertedError(hash);
   return r;
@@ -107,7 +113,7 @@ async function ensureAllowance(ctx: TxContext, chainId: number, amount: bigint, 
   onStep("approve");
   const hash = await sendGuarded(ctx, chainId, req);
   onStep("confirming", hash);
-  await confirm(ctx, chainId, hash);
+  await confirm(ctx, chainId, hash, "approve");
   return hash;
 }
 
@@ -151,7 +157,7 @@ export async function bridgeOutFlow(ctx: TxContext, amount: bigint, onStep: Step
   onStep("send");
   const txHash = await sendGuarded(ctx, c.id, { ...W, abi: wantosBridgeV2Abi as Abi, functionName: "bridgeOut", args: [amount] });
   onStep("confirming", txHash);
-  const r = await confirm(ctx, c.id, txHash);
+  const r = await confirm(ctx, c.id, txHash, "send");
   const ev = parseEventLogs({ abi: wantosBridgeV2Abi, logs: r.logs, eventName: "BridgeOut" }).find(
     (l) => l.address.toLowerCase() === c.bridge.toLowerCase(),
   );
@@ -188,7 +194,7 @@ export async function depositFlow(ctx: TxContext, amount: bigint, recipient: Add
   onStep("send");
   const txHash = await sendGuarded(ctx, c.id, { ...B, abi: bscVaultV2Abi as Abi, functionName: "deposit", args: [amount, recipient] });
   onStep("confirming", txHash);
-  const r = await confirm(ctx, c.id, txHash);
+  const r = await confirm(ctx, c.id, txHash, "send");
   const ev = parseEventLogs({ abi: bscVaultV2Abi, logs: r.logs, eventName: "Deposited" }).find(
     (l) => l.address.toLowerCase() === c.bridge.toLowerCase(),
   );

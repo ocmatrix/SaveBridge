@@ -106,6 +106,7 @@ export const en: Dict = {
   "pending.check": "Check in explorer",
   "pending.recheck": "Check again",
   "pending.confirmed": "Transaction confirmed",
+  "pending.approveConfirmed": "Approval confirmed. Click submit again to complete the bridge transfer.",
   "pending.reverted": "The transaction is on chain but the contract rejected it; no funds moved. You can submit again.",
   "pending.notYet": "No result for this transaction yet; please check again later.",
   "err.userRejected": "Cancelled in wallet",

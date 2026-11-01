@@ -6,7 +6,7 @@ import type { Clients } from "./lib/clients";
 import type { KnownIds, StatusProvider } from "./lib/statusProvider";
 import type { BridgeWagmiConfig } from "./wallet/wagmi";
 import type { Lang } from "./i18n";
-import { DepsProvider, LangProvider, useDeps, useI18n } from "./context";
+import { DepsProvider, LangProvider, PendingProvider, useDeps, useI18n } from "./context";
 import { useBridgeState, useOrders } from "./hooks";
 import { ConnectWallet } from "./components/ConnectWallet";
 import { StatusBar } from "./components/StatusBar";
@@ -31,7 +31,9 @@ export function App(p: AppProps) {
       <QueryClientProvider client={p.queryClient}>
         <DepsProvider value={{ cfg: p.cfg, clients: p.clients, statusProvider: p.statusProvider }}>
           <LangProvider initial={p.initialLang}>
-            <Page />
+            <PendingProvider>
+              <Page />
+            </PendingProvider>
           </LangProvider>
         </DepsProvider>
       </QueryClientProvider>
