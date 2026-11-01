@@ -144,4 +144,17 @@ describe("§9.1-1 BSC payout ↔ WANTOS BridgeOut", () => {
     expect(t2.codes()).toContain("RPC_DISAGREE");
     expect(t2.w.state.derived.pending).toHaveLength(0);
   });
+
+  it("B7 / §6.2: a WANTOS event is ingested only after 6 confirmations (not while within latest − 5)", async () => {
+    const t = await makeWatcher(H);
+    await H.settle();
+    await t.w.tick();
+    await bridgeOut(E(100)); // includes approve; BridgeOut is in the latest block L
+    await H.wantos.mine(5); // latest = L + 5 → safe head = L − 1
+    await t.w.tick();
+    expect(t.w.state.derived.wantos.sums["bridgeOut"] ?? "0").toBe("0");
+    await H.wantos.mine(1); // latest = L + 6 → safe head = L
+    await t.w.tick();
+    expect(t.w.state.derived.wantos.sums["bridgeOut"]).toBe(E(100).toString());
+  });
 });
