@@ -8,7 +8,8 @@ export function redact(text: string): string {
     .replace(/\b([a-z][a-z0-9+.-]*):\/\/(?:[^@\s/"'<>]*@)?([^/\s"'?#<>:]+)(:\d+)?[^\s"'<>]*/gi, (_m, scheme: string, host: string, port?: string) => `${scheme}://${host}${port ?? ""}/<redacted>`)
     .replace(/(authorization["']?\s*[:=]\s*["']?)(bearer|basic)?\s*[^\s"',}]+/gi, (_m, k: string) => `${k}<redacted>`)
     .replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer <redacted>")
-    .replace(/(0x)?[0-9a-fA-F]{64}\b/g, "<redacted-64hex>");
+    .replace(/((?:x-)?api[-_]?key|token|secret|password)(["']?\s*[:=]\s*["']?)[^\s"'&,}]+/gi, (_m, k: string, sep: string) => `${k}${sep}<redacted>`)
+    .replace(/(0x)?[0-9a-fA-F]{64,}/g, "<redacted-64hex>");
 }
 
 export const errText = (e: unknown): string => redact(e instanceof Error ? e.message.split("\n")[0]! : String(e));

@@ -26,6 +26,30 @@ describe("B3 redaction of error text", () => {
     expect(redact("upstream said: Bearer abc123xyzTOKEN")).not.toContain("abc123xyzTOKEN");
   });
 
+  it("B4: 64+ hex runs are removed whatever follows/precedes them (underscore, concatenation, longer hex)", () => {
+    for (const t of [`k=${KEY64}_suffix`, `${KEY64}${KEY64}`, `0xdeadbeef01${KEY64}`, `x${KEY64}y`]) {
+      const m = redact(t);
+      expect(m).not.toMatch(/[0-9a-fA-F]{64}/);
+      expect(m).not.toContain(KEY64.slice(0, 20));
+    }
+  });
+
+  it("B4: x-api-key / api_key / apikey / token values outside URLs are removed", () => {
+    const m = redact(`headers {"x-api-key": "SECRETA1"} api_key=SECRETB2 apikey: SECRETC3 token=SECRETD4 "token":"SECRETE5"`);
+    for (const v of ["SECRETA1", "SECRETB2", "SECRETC3", "SECRETD4", "SECRETE5"]) expect(m).not.toContain(v);
+  });
+
+  it("B4: structured alert details (orderId / eventKey / txHash) are NOT redacted — only error text is", async () => {
+    const { AlertManager, MemoryAlertSink } = await import("../../src/alerts.js");
+    const { initialState } = await import("../../src/state.js");
+    const st = initialState();
+    const sink = new MemoryAlertSink();
+    const am = new AlertManager(sink, () => st.meta, () => 1);
+    const eventKey = `0x${KEY64}`;
+    await am.raise("AUTO_PAUSE", { title: "t", detail: { orderId: "7", eventKey, txHash: eventKey } });
+    expect(sink.alerts[0]!.detail).toEqual({ orderId: "7", eventKey, txHash: eventKey });
+  });
+
   it("leaves ordinary text and addresses intact", () => {
     expect(redact("nonce too low for 0x1111111111111111111111111111111111111111")).toBe("nonce too low for 0x1111111111111111111111111111111111111111");
   });
