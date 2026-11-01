@@ -102,6 +102,7 @@ export class Watcher {
     const report: TickReport = { paused: [] };
     await this.alerts.flushOutbox(); // B2: deliver alerts that failed earlier
     await this.alerts.flushDaily(); // close the previous UTC day before collecting this tick's entries
+    await this.checkClockSkew();
     const wantosOk = await this.checkWantosRollback(report);
     for (const c of CHAINS) if (c !== "wantos" || wantosOk) await this.advance(c);
     await this.evaluateChecks(report);
@@ -111,6 +112,18 @@ export class Watcher {
     this.snapshot();
     await this.d.store.save(this.state);
     return report;
+  }
+
+  /** B4: grace periods use the system clock — compare it with BSC's latest block time every tick. */
+  private async checkClockSkew(): Promise<void> {
+    try {
+      const b = await this.d.rpc.bsc.primary((cl) => cl.getBlock({ blockTag: "latest" }));
+      const skew = this.now() - Number(b.timestamp);
+      if (Math.abs(skew) > this.cfg.maxClockSkewSeconds)
+        await this.raise("CLOCK_SKEW", `系统时钟与 BSC 最新块时间相差 ${skew}s`, { detail: { skew, block: b.number.toString() }, key: `skew:${Math.floor(this.now() / 3600)}` });
+    } catch {
+      /* unreachable RPCs are reported elsewhere */
+    }
   }
 
   // ------------------------------------------------------------------ §6.2 / §9.1-5 rollback guard
@@ -386,17 +399,17 @@ export class Watcher {
         return;
       case "ReleaseQueued": {
         const eta = Number(a["executableAt"]);
-        if (c === "bsc") this.addCheck("w2b", c, l, a["srcEventNonce"], a["to"], a["amount"], a["eventKey"], l.timestamp + g.w2bSeconds);
-        else this.addCheck("b2w", c, l, a["srcEventNonce"], a["to"], a["amount"], a["eventKey"], eta - g.b2wBeforeEtaSeconds);
+        if (c === "bsc") this.addCheck("w2b", c, l, a["srcEventNonce"], a["to"], a["amount"], a["eventKey"], l.timestamp + g.w2bSeconds, eta);
+        else this.addCheck("b2w", c, l, a["srcEventNonce"], a["to"], a["amount"], a["eventKey"], eta - g.b2wBeforeEtaSeconds, eta);
         this.alerts.daily({ kind: "RELEASE_QUEUED", chain: c, id: key, data: { nonce: String(a["srcEventNonce"]), to: a["to"], amount: String(a["amount"]), executableAt: eta } });
         return;
       }
       case "RefundRequested":
-        this.addCheck("refund", c, l, a["orderId"], a["user"], a["amount"], a["eventKey"], Number(a["executableAt"]) - g.refundBeforeExecSeconds);
+        this.addCheck("refund", c, l, a["orderId"], a["user"], a["amount"], a["eventKey"], Number(a["executableAt"]) - g.refundBeforeExecSeconds, Number(a["executableAt"]));
         this.alerts.daily({ kind: "REFUND_REQUESTED", chain: c, id: key, data: { orderId: String(a["orderId"]), amount: String(a["amount"]) } });
         return;
       case "DepositRefundRequested":
-        this.addCheck("depositRefund", c, l, a["nonce"], a["from"], a["amount"], a["eventKey"], Number(a["executableAt"]) - g.depositRefundBeforeExecSeconds);
+        this.addCheck("depositRefund", c, l, a["nonce"], a["from"], a["amount"], a["eventKey"], Number(a["executableAt"]) - g.depositRefundBeforeExecSeconds, Number(a["executableAt"]));
         this.alerts.daily({ kind: "DEPOSIT_REFUND_REQUESTED", chain: c, id: key, data: { nonce: String(a["nonce"]), amount: String(a["amount"]) } });
         return;
       case "RefundCancelled":
@@ -536,7 +549,7 @@ export class Watcher {
   }
 
   // ------------------------------------------------------------------ §9.1 checks
-  private addCheck(kind: CheckKind, c: ChainName, l: DecodedLog, nonce: unknown, to: unknown, amount: unknown, eventKey: unknown, decideAt: number): void {
+  private addCheck(kind: CheckKind, c: ChainName, l: DecodedLog, nonce: unknown, to: unknown, amount: unknown, eventKey: unknown, decideAt: number, executableAt?: number): void {
     const id = `${kind}:${c}:${l.txHash}:${l.logIndex}`;
     if (this.state.meta.decided[id] !== undefined || this.state.derived.pending.some((p) => p.id === id)) return;
     this.state.derived.pending.push({
@@ -553,6 +566,7 @@ export class Watcher {
       amount: String(amount),
       eventKey: eventKey as Hex,
       decideAt,
+      ...(executableAt !== undefined ? { executableAt } : {}),
     });
   }
 
@@ -577,6 +591,7 @@ export class Watcher {
           detail: { check: p, sourceCursor: srcCursor },
           key: `deferred:${p.id}`,
         });
+        await this.overdue(p, "监控源链进度未越过目标交易");
         continue;
       }
       const v = await this.verifier.verdict(p); // ② ≥2 RPCs agree, inside
@@ -586,6 +601,7 @@ export class Watcher {
       }
       if (v.kind === "undecided") {
         await this.raise("RPC_DISAGREE", `${p.kind} 核对无法由 ≥2 个 RPC 一致确认，不暂停`, { chain: p.targetChain, detail: { check: p, verdict: v }, key: `disagree:${p.id}` });
+        await this.overdue(p, "RPC 结果不一致");
         continue;
       }
       if (v.kind === "no-target") {
@@ -595,6 +611,12 @@ export class Watcher {
       }
       await this.onMismatch(p, v.reason, v.observed, report);
     }
+  }
+
+  /** B4: a check still undecidable when its target becomes executable → level 1 (never pauses by itself). */
+  private async overdue(p: PendingCheck, why: string): Promise<void> {
+    if (p.executableAt === undefined || this.now() < p.executableAt) return;
+    await this.raise("CHECK_OVERDUE", `${p.kind} 核对在目标可执行时间仍无法判定（${why}），请人工核查`, { chain: p.targetChain, detail: { check: p }, key: `overdue:${p.id}` });
   }
 
   private async onMismatch(p: PendingCheck, reason: string, observed: unknown, report: TickReport): Promise<void> {

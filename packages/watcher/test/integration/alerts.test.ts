@@ -224,6 +224,16 @@ describe("§9.3 alert drills", () => {
     expect(levelOf(t, "WANTOS_STALLED")).toBe(2);
   });
 
+  it("B4: system clock vs BSC latest block time differing by > 60 s → level 2", async () => {
+    const t = await makeWatcher(H);
+    t.clock.now = (await H.bsc.latest()).timestamp + 5;
+    await t.w.tick();
+    expect(t.codes()).not.toContain("CLOCK_SKEW");
+    t.clock.now += 3600;
+    await t.w.tick();
+    expect(levelOf(t, "CLOCK_SKEW")).toBe(2);
+  });
+
   it("level-1 alerts repeat after 24h until acknowledged", async () => {
     const t = await makeWatcher(H);
     await H.bsc.write(ACCOUNTS.admin, "revokeKey", [RELAYER_ROLE, ACCOUNTS.relayer.address]);

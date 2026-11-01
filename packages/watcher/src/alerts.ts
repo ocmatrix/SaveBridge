@@ -14,6 +14,7 @@ export const ALERT_LEVELS = {
   RELAYER_UNREACHABLE: 1,
   WANTOS_REORG: 1,
   MINT_EXCESS: 1,
+  CHECK_OVERDUE: 1,
   // level 2
   PAUSED: 2,
   UNPAUSED: 2,
@@ -44,6 +45,7 @@ export const ALERT_LEVELS = {
   TIMELOCK_REMINDER: 2,
   TIMELOCK_CANCELLED: 2,
   HEARTBEAT_FAILED: 2,
+  CLOCK_SKEW: 2,
   // level 3
   DAILY_REPORT: 3,
 } as const satisfies Record<string, AlertLevel>;

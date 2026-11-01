@@ -67,6 +67,8 @@ export interface PendingCheck {
   eventKey: Hex;
   /** Earliest moment a mismatch may be acted upon (end of the grace period). */
   decideAt: number;
+  /** When the target becomes executable (queue eta / refund executableAt); undefined for an already-paid Released. */
+  executableAt?: number;
   pauseFailures?: number;
   /** First failed auto-pause attempt (PAUSE_FAILED is repeated at most hourly from here, B1). */
   firstPauseFailAt?: number;

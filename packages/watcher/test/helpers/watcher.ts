@@ -76,6 +76,7 @@ export async function makeWatcher(H: Harness, o: WOpts = {}): Promise<TW> {
     maxRangesPerTick: 20,
     gasCheckIntervalSeconds: 300,
     wantosStallSeconds: 60,
+    maxClockSkewSeconds: 60,
     pauseRetry: { attempts: 2, backoffMs: 0 },
     timelockRemindersSeconds: [86_400, 21_600],
     dailyCapReportRatioBps: 7000,

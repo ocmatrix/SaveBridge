@@ -90,6 +90,12 @@ describe("§9.1-2/3/4", () => {
       await t.w.tick();
       expect(await H.isPaused("wantos")).toBe(false);
       expect(t.codes()).toContain("CHECK_DEFERRED");
+      expect(t.codes()).not.toContain("CHECK_OVERDUE");
+      // B4: still undecidable when the queue item becomes executable → level-1 escalation (no pause)
+      t.clock.now = await etaOf(q.block);
+      await t.w.tick();
+      expect(t.sink.alerts.find((a) => a.code === "CHECK_OVERDUE")!.level).toBe(1);
+      expect(await H.isPaused("wantos")).toBe(false);
     });
   });
 

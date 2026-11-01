@@ -32,6 +32,7 @@
   "heartbeatIntervalSeconds": 300,
   "gasCheckIntervalSeconds": 300,
   "wantosStallSeconds": 60,
+  "maxClockSkewSeconds": 60,
   "pauseRetry": { "attempts": 5, "backoffMs": 3000 },
   "timelockRemindersSeconds": [86400, 21600],
   "dailyCapReportRatioBps": 7000,

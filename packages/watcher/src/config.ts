@@ -45,6 +45,8 @@ export interface WatcherConfig {
   maxRangesPerTick: number;
   gasCheckIntervalSeconds: number;
   wantosStallSeconds: number;
+  /** System clock vs BSC latest block time; above this → CLOCK_SKEW (level 2). */
+  maxClockSkewSeconds: number;
   pauseRetry: { attempts: number; backoffMs: number };
   timelockRemindersSeconds: number[];
   dailyCapReportRatioBps: number;
@@ -128,6 +130,7 @@ export function parseConfig(raw: unknown): WatcherConfig {
     maxRangesPerTick: num(r["maxRangesPerTick"] ?? 20, "maxRangesPerTick", 1),
     gasCheckIntervalSeconds: num(r["gasCheckIntervalSeconds"] ?? 300, "gasCheckIntervalSeconds", 1),
     wantosStallSeconds: num(r["wantosStallSeconds"], "wantosStallSeconds", 1),
+    maxClockSkewSeconds: num(r["maxClockSkewSeconds"] ?? 60, "maxClockSkewSeconds", 1),
     pauseRetry: { attempts: num(pr["attempts"], "pauseRetry.attempts", 1), backoffMs: num(pr["backoffMs"], "pauseRetry.backoffMs") },
     timelockRemindersSeconds: arr(r["timelockRemindersSeconds"], "timelockRemindersSeconds").map((x, i) => num(x, `timelockRemindersSeconds[${i}]`, 1)),
     dailyCapReportRatioBps: num(r["dailyCapReportRatioBps"] ?? 7000, "dailyCapReportRatioBps", 1),
