@@ -60,6 +60,20 @@ describe("ChainStatusProvider with an (untrusted) relayer API — A3 / B4", () =
     expect((await sp.list(KEYS.alice.address)).map((o) => o.id)).toEqual([1n]);
   });
 
+  it("extra API fields (status: REVIEW, risk flags…) never reach the output (round-3 B6)", async () => {
+    await whitelist(env, env.wantos, [KEYS.alice.address]);
+    await bridgeOutDirect(env, KEYS.alice, 50n * U);
+    const api = withApi([
+      { direction: "W2B", srcEventNonce: "1", dstTxHash: null, status: "REVIEW", level: "FREEZE", rules: ["controlled-source"], risk: "red" },
+    ]);
+    const sp = new ChainStatusProvider(api.cfg, makeClients(env.cfg), api.fetchFn);
+    const out = await sp.list(KEYS.alice.address);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.status).toBe("processing"); // from chain
+    expect(Object.keys(out[0]!).sort()).toEqual(["amount", "direction", "dstTxHash", "id", "srcTxHash", "status"]);
+    expect(JSON.stringify(out, (_k, v) => (typeof v === "bigint" ? v.toString() : v))).not.toMatch(/REVIEW|FREEZE|controlled|risk|red/);
+  });
+
   it("dstTxHash link only once the payout is Released on chain (B4/M22)", async () => {
     await whitelist(env, env.wantos, [KEYS.alice.address]);
     await whitelist(env, env.bsc, [KEYS.alice.address]);
