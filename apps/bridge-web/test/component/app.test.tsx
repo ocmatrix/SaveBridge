@@ -54,7 +54,7 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     await waitFor(() => expect(btn).toBeEnabled(), T);
     await user.click(btn);
     await within(w2b).findByText("已提交，订单 #1", {}, T);
-    const orders = screen.getByRole("region", { name: "我的订单" });
+    const orders = await screen.findByRole("region", { name: "我的订单" }, T);
     await within(orders).findByText("WANTOS → BSC 订单 #1", {}, T);
     expect(within(orders).getByText("处理中")).toBeInTheDocument();
     await screen.findByText("本地址今日可跨出：1,876.5 USDT", {}, T);
@@ -80,7 +80,7 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     await waitFor(() => expect(btn).toBeEnabled(), T);
     await user.click(btn);
     await within(b2w).findByText("已存入，存入编号 #1，约 15 分钟到账 WANTOS", {}, T);
-    const orders = screen.getByRole("region", { name: "我的订单" });
+    const orders = await screen.findByRole("region", { name: "我的订单" }, T);
     await within(orders).findByText("BSC → WANTOS 存入 #1", {}, T);
     expect(within(orders).getByText("BSC 已存入，等待 WANTOS 到账（约 15 分钟）")).toBeInTheDocument();
   });
@@ -152,7 +152,7 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     };
     renderApp(env.cfg, KEYS.alice.address, { statusProvider: sp });
     await connect();
-    const orders = screen.getByRole("region", { name: "我的订单" });
+    const orders = await screen.findByRole("region", { name: "我的订单" }, T);
     await within(orders).findByText("WANTOS → BSC 订单 #9", {}, T);
     expect(within(orders).getByText("处理中")).toBeInTheDocument();
     expect(within(orders).getByText("已退款")).toBeInTheDocument();

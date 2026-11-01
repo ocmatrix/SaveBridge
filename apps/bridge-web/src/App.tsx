@@ -76,7 +76,7 @@ function Page() {
         </div>
       </header>
       <main>
-        <StatusBar state={state.data} connected={!!address} loading={state.isLoading} failed={state.isError} onRefresh={() => void state.refetch()} />
+        <StatusBar state={state.data} connected={!!address} loading={state.isLoading} error={state.error} onRefresh={() => void state.refetch()} />
         <div role="tablist" className="tabs">
           {(["w2b", "b2w"] as const).map((k) => (
             <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>
@@ -85,8 +85,9 @@ function Page() {
           ))}
         </div>
         {tab === "w2b" ? <W2BPanel state={state.data} onOrder={addW2b} /> : <B2WPanel state={state.data} onDeposit={addB2w} />}
-        {address && (
-          <Orders orders={orders.data} decimals={{ wantos: state.data?.wantos.decimals ?? 18, bsc: state.data?.bsc.decimals ?? 18 }} />
+        {/* amounts are formatted with chain decimals: no state (e.g. decimals mismatch) → no order list */}
+        {address && state.data && (
+          <Orders orders={orders.data} decimals={{ wantos: state.data.wantos.decimals, bsc: state.data.bsc.decimals }} />
         )}
       </main>
       <Footer key={cfg.wantos.bridge} />

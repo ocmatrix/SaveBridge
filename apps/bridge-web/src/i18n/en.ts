@@ -28,6 +28,7 @@ export const en: Dict = {
   "status.supplyCeiling": "WANTOS-USDT supply is above the safety ceiling; bridging out is suspended. Please try again later.",
   "status.loading": "Reading on-chain data…",
   "status.readError": "Could not read on-chain data. Check your connection and refresh.",
+  "status.decimalsMismatch": "USDT decimals differ between the two chains; the page is disabled. Please contact support.",
   "status.refresh": "Refresh",
 
   "tab.w2b": "WANTOS → BSC",

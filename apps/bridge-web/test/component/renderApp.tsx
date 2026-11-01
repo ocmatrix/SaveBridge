@@ -4,13 +4,13 @@ import { mock } from "wagmi/connectors";
 import type { Address } from "viem";
 import { App } from "../../src/App";
 import { createWagmiConfig } from "../../src/wallet/wagmi";
-import { makeClients } from "../../src/lib/clients";
+import { makeClients, type Clients } from "../../src/lib/clients";
 import { ChainStatusProvider, type StatusProvider } from "../../src/lib/statusProvider";
 import type { AppConfig } from "../../src/config";
 
-export function renderApp(cfg: AppConfig, account: Address, opts: { statusProvider?: StatusProvider } = {}) {
+export function renderApp(cfg: AppConfig, account: Address, opts: { statusProvider?: StatusProvider; clients?: Clients } = {}) {
   const wagmiConfig = createWagmiConfig(cfg, { connectors: [mock({ accounts: [account] })], storage: null });
-  const clients = makeClients(cfg);
+  const clients = opts.clients ?? makeClients(cfg);
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const statusProvider = opts.statusProvider ?? new ChainStatusProvider(cfg, clients);
   const utils = render(

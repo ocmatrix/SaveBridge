@@ -4,6 +4,16 @@ import type { AppConfig } from "../config";
 import type { Clients } from "./clients";
 import { remaining, whitelistState, type WhitelistState } from "./quota";
 
+export class DecimalsMismatchError extends Error {
+  constructor(
+    readonly wantos: number,
+    readonly bsc: number,
+  ) {
+    super(`USDT decimals differ: WANTOS ${wantos} vs BSC ${bsc}`);
+    this.name = "DecimalsMismatchError";
+  }
+}
+
 export interface BridgeState {
   wl: WhitelistState;
   wantos: {
@@ -55,7 +65,7 @@ export async function readBridgeState(cfg: AppConfig, clients: Clients, user: Ad
   ]);
 
   // amounts cross chains 1:1 in base units (B2W cap is compared with BSC amounts): decimals must match
-  if (wDec !== bDec) throw new Error(`USDT decimals differ: WANTOS ${wDec} vs BSC ${bDec}`);
+  if (wDec !== bDec) throw new DecimalsMismatchError(wDec, bDec);
   return {
     wl: whitelistState(wWl, bWl),
     wantos: {

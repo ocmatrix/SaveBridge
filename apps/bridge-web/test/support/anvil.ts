@@ -274,3 +274,9 @@ export async function bridgeOutDirect(env: Env, account: HDAccount, amount: bigi
   await send(env.wantos, account, env.wantos.usdt, artifact("MockToken.sol", "MockToken").abi, "approve", [env.wantos.bridge, amount]);
   await send(env.wantos, account, env.wantos.bridge, wantosBridgeV2Abi as Abi, "bridgeOut", [amount]);
 }
+
+/** Direct BSC deposit (approve + deposit), bypassing the page. */
+export async function depositDirect(env: Env, account: HDAccount, amount: bigint, recipient: Address) {
+  await send(env.bsc, account, env.bsc.usdt, artifact("MockToken.sol", "MockToken").abi, "approve", [env.bsc.bridge, amount]);
+  await send(env.bsc, account, env.bsc.bridge, bscVaultV2Abi as Abi, "deposit", [amount, recipient]);
+}

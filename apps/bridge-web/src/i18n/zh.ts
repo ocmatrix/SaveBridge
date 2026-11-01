@@ -26,6 +26,7 @@ export const zh = {
   "status.supplyCeiling": "WANTOS-USDT 发行量超过安全上限，跨出暂停，请稍后再试",
   "status.loading": "读取链上数据…",
   "status.readError": "读取链上数据失败，请检查网络后刷新",
+  "status.decimalsMismatch": "两条链 USDT 精度不一致，页面已停用，请联系客服",
   "status.refresh": "刷新",
 
   "tab.w2b": "WANTOS → BSC",

@@ -1,12 +1,13 @@
 import { useI18n } from "../context";
-import type { BridgeState } from "../lib/reader";
+import { DecimalsMismatchError, type BridgeState } from "../lib/reader";
 
-export function StatusBar({ state, connected, loading, failed, onRefresh }: { state: BridgeState | undefined; connected: boolean; loading: boolean; failed: boolean; onRefresh(): void }) {
+export function StatusBar({ state, connected, loading, error, onRefresh }: { state: BridgeState | undefined; connected: boolean; loading: boolean; error: unknown; onRefresh(): void }) {
   const { t } = useI18n();
   return (
     <div className="statusbar">
       {loading && <p>{t("status.loading")}</p>}
-      {failed && (
+      {error instanceof DecimalsMismatchError && <p className="notice warn">{t("status.decimalsMismatch")}</p>}
+      {!!error && !(error instanceof DecimalsMismatchError) && (
         <p className="error">
           {t("status.readError")}{" "}
           <button type="button" className="link" onClick={onRefresh}>
