@@ -115,7 +115,7 @@ export class TxSender {
       const msg = ((e as Error).message ?? "").toLowerCase();
       // Already in the node's pool / already mined: broadcasting succeeded earlier.
       if (!/already known|known transaction|already imported|nonce too low/.test(msg)) {
-        return { ok: false, message: (e as Error).message };
+        return { ok: false, message: errText(e) };
       }
     }
     await this.setState(row.id, "broadcast");
@@ -256,7 +256,7 @@ export class TxSender {
       await this.o.alerts.emit({
         kind: "KMS_FAILURE",
         key: `${this.o.chainId}`,
-        message: `chain ${this.o.chainId}: signer failed: ${(e as Error).message}`,
+        message: `chain ${this.o.chainId}: signer failed: ${errText(e)}`,
       });
       return null;
     }

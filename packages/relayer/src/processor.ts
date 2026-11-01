@@ -1,4 +1,5 @@
 import { encodeFunctionData } from "viem";
+import { errText, redact } from "./redact";
 import type { AlertSink } from "./alerts";
 import type { Db } from "./db/types";
 import type { SafetyState } from "./safety";
@@ -67,7 +68,7 @@ export class Processor {
       try {
         await side.sender.tick();
       } catch (e) {
-        await this.o.alerts.emit({ kind: "RPC_UNAVAILABLE", key: `${side.name}:sender`, message: `${side.name} sender tick failed: ${(e as Error).message}` });
+        await this.o.alerts.emit({ kind: "RPC_UNAVAILABLE", key: `${side.name}:sender`, message: `${side.name} sender tick failed: ${errText(e)}` });
       }
     }
     this.finals = { bsc: await this.o.bsc.finalBlock(), wantos: await this.o.wantos.finalBlock() };
@@ -79,7 +80,7 @@ export class Processor {
         await this.o.alerts.emit({
           kind: "ORDER_PROCESSING_ERROR",
           key: `${ord.eventKey}:${ord.status}`,
-          message: `${ord.direction} order ${ord.srcEventNonce} (${ord.status}): ${(e as Error).message}`,
+          message: `${ord.direction} order ${ord.srcEventNonce} (${ord.status}): ${errText(e)}`,
         });
       }
     }
@@ -242,7 +243,7 @@ export class Processor {
       errorMessage: rv.message,
     });
     if (out.alert) await this.o.alerts.emit({ kind: out.alert, key: `${side.name}:${out.alert}`, message: `${side.name}: ${rv.errorName} while ${action} for ${o.eventKey}` });
-    const lastError = rv.errorName ?? rv.message ?? rv.raw ?? "revert";
+    const lastError = rv.errorName ?? (rv.message ? redact(rv.message) : undefined) ?? rv.raw ?? "revert";
     // RELEASED / REJECTED / QUEUED derived from a non-final read: wait for finality (settled by the final read).
     if (out.status === "RELEASED" || out.status === "REJECTED") return;
     if (out.status === "QUEUED") {

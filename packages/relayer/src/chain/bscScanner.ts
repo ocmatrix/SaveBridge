@@ -1,4 +1,5 @@
 import type { AlertSink } from "../alerts";
+import { errText } from "../redact";
 import type { Db } from "../db/types";
 import type { SafetyState } from "../safety";
 import type { Address } from "../types";
@@ -119,7 +120,7 @@ export class BscScanner {
       this.firstScan = false;
       return { status: "ok", from, to, newOrders };
     } catch (e) {
-      await o.alerts.emit({ kind: "RPC_UNAVAILABLE", key: "bsc:scan", message: `BSC scan failed: ${(e as Error).message}` });
+      await o.alerts.emit({ kind: "RPC_UNAVAILABLE", key: "bsc:scan", message: `BSC scan failed: ${errText(e)}` });
       return { status: "waiting", newOrders: 0 };
     }
   }

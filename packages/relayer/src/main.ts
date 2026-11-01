@@ -8,7 +8,7 @@
 import { readFileSync } from "node:fs";
 import pg from "pg";
 import { createPublicClient, http, type PublicClient } from "viem";
-import { parseConfig, type RelayerConfig } from "./config";
+import { parseConfig, resolveRpcUrls, type RelayerConfig } from "./config";
 import { PgDb } from "./db/pg";
 import { migrate } from "./db/migrations";
 import { DedupAlertSink, LogAlertSink } from "./alerts";
@@ -35,8 +35,9 @@ async function main(): Promise<void> {
   const safety = new SafetyState(alerts);
   safety.onReorg((side, info) => console.error(JSON.stringify({ event: "reorg", side, block: info.block.toString() })));
 
-  const wPrimary = client(cfg.wantos.primaryRpcUrl);
-  const bPrimary = client(cfg.bsc.rpcUrls[0]!);
+  const urls = resolveRpcUrls(cfg); // RPC URLs (may embed API keys) come from the environment only
+  const wPrimary = client(urls.wantosPrimary);
+  const bPrimary = client(urls.bsc[0]!);
   const relayer = new Relayer({
     db,
     alerts,
@@ -46,7 +47,7 @@ async function main(): Promise<void> {
       bridge: cfg.wantos.bridgeAddress,
       client: wPrimary,
       primary: new ViemChainReader("wantos-primary", wPrimary),
-      crossChecks: cfg.wantos.crossCheckRpcUrls.map((u, i) => new ViemChainReader(`wantos-cross-${i}`, client(u))),
+      crossChecks: urls.wantosCross.map((u, i) => new ViemChainReader(`wantos-cross-${i}`, client(u))),
       signer: new KmsSigner({ keyId: cfg.signer.wantosKeyId, address: cfg.signer.wantosAddress }),
       confirmations: cfg.wantos.confirmations,
       startBlock: BigInt(cfg.wantos.startBlock),
@@ -56,7 +57,7 @@ async function main(): Promise<void> {
       chainId: cfg.bsc.chainId,
       vault: cfg.bsc.bridgeAddress,
       client: bPrimary,
-      readers: cfg.bsc.rpcUrls.map((u, i) => new ViemChainReader(`bsc-${i}`, client(u))),
+      readers: urls.bsc.map((u, i) => new ViemChainReader(`bsc-${i}`, client(u))),
       signer: new KmsSigner({ keyId: cfg.signer.bscKeyId, address: cfg.signer.bscAddress }),
       startBlock: BigInt(cfg.bsc.startBlock),
       minBalanceWei: BigInt(cfg.gas.bscMinBalanceWei),

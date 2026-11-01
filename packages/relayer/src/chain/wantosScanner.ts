@@ -1,4 +1,5 @@
 import type { AlertSink } from "../alerts";
+import { errText } from "../redact";
 import type { Db } from "../db/types";
 import type { SafetyState } from "../safety";
 import type { Address } from "../types";
@@ -157,7 +158,7 @@ export class WantosScanner {
       this.firstScan = false;
       return { status, from, to, newOrders };
     } catch (e) {
-      await this.alert("RPC_UNAVAILABLE", `scan failed: ${(e as Error).message}`, "scan");
+      await this.alert("RPC_UNAVAILABLE", `scan failed: ${errText(e)}`, "scan");
       return { status: "waiting", newOrders: 0 };
     }
   }

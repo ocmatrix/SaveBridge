@@ -1,4 +1,5 @@
 import type { PublicClient } from "viem";
+import { errText } from "./redact";
 import type { AlertSink } from "./alerts";
 import type { Db } from "./db/types";
 import type { SafetyState } from "./safety";
@@ -174,7 +175,7 @@ export class Relayer {
         try {
           await this.tick();
         } catch (e) {
-          await this.deps.alerts.emit({ kind: "LOOP_ERROR", key: "loop", message: `relayer tick failed: ${(e as Error).message}` });
+          await this.deps.alerts.emit({ kind: "LOOP_ERROR", key: "loop", message: `relayer tick failed: ${errText(e)}` });
         }
         await new Promise((r) => setTimeout(r, o.intervalMs));
       }

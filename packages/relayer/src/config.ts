@@ -10,18 +10,18 @@ export interface RelayerConfig {
     chainId: number;
     /** Block the bridge was deployed at (first scan). */
     startBlock: number;
-    /** Self-hosted non-validator full node (primary). */
-    primaryRpcUrl: string;
-    /** At least one of rpc/rpc2/rpc3 for receipt cross-check (§6.2). */
-    crossCheckRpcUrls: string[];
+    /** Env var holding the self-hosted non-validator full node URL (primary). URLs never live in the config file. */
+    primaryRpcUrlEnv: string;
+    /** Env vars holding at least one of rpc/rpc2/rpc3 for receipt cross-check (§6.2). */
+    crossCheckRpcUrlEnvs: string[];
     bridgeAddress: Address;
     /** §6.2: WANTOS events wait 6 more blocks. */
     confirmations: number;
   };
   bsc: {
     chainId: number;
-    /** >= 2 independent RPCs; only `finalized` blocks are processed (§6.2). */
-    rpcUrls: string[];
+    /** Env vars of >= 2 independent RPCs; only `finalized` blocks are processed (§6.2). */
+    rpcUrlEnvs: string[];
     bridgeAddress: Address;
     startBlock: number;
   };
@@ -48,14 +48,14 @@ export const EXAMPLE_CONFIG: RelayerConfig = {
   wantos: {
     chainId: 13555,
     startBlock: 0,
-    primaryRpcUrl: "http://wantos-fullnode.example.invalid:8545",
-    crossCheckRpcUrls: ["http://wantos-crosscheck.example.invalid:8545"],
+    primaryRpcUrlEnv: "WANTOS_RPC_PRIMARY",
+    crossCheckRpcUrlEnvs: ["WANTOS_RPC_CROSSCHECK_1"],
     bridgeAddress: "0x000000000000000000000000000000000000dEaD",
     confirmations: 6,
   },
   bsc: {
     chainId: 56,
-    rpcUrls: ["http://bsc-rpc-a.example.invalid", "http://bsc-rpc-b.example.invalid"],
+    rpcUrlEnvs: ["BSC_RPC_1", "BSC_RPC_2"],
     bridgeAddress: "0x000000000000000000000000000000000000dEaD",
     startBlock: 0,
   },
@@ -93,17 +93,53 @@ function scanForKeyMaterial(v: unknown, path: string): void {
   }
 }
 
+const ENV_NAME = /^[A-Z][A-Z0-9_]*$/;
+const URL_LIKE = /:\/\//;
+
+function scanForUrls(v: unknown, path: string): void {
+  if (typeof v === "string") {
+    if (URL_LIKE.test(v)) throw new Error(`config: URL found at ${path}; RPC URLs must come from environment variables`);
+    return;
+  }
+  if (Array.isArray(v)) return v.forEach((x, i) => scanForUrls(x, `${path}[${i}]`));
+  if (v && typeof v === "object") for (const [k, x] of Object.entries(v as Record<string, unknown>)) if (k !== "corsOrigins") scanForUrls(x, `${path}.${k}`);
+}
+
+function envName(n: unknown, what: string): string {
+  if (typeof n !== "string" || !ENV_NAME.test(n)) throw new Error(`config: ${what} must be an environment variable name`);
+  return n;
+}
+
+/** Reads RPC URLs from the environment (never from the config file; Gate2 B3). */
+export function resolveRpcUrls(c: RelayerConfig, env: Record<string, string | undefined> = process.env) {
+  const get = (n: string): string => {
+    const v = env[n];
+    if (!v) throw new Error(`config: ${n} is not set`);
+    return v;
+  };
+  const wantosPrimary = get(c.wantos.primaryRpcUrlEnv);
+  const wantosCross = c.wantos.crossCheckRpcUrlEnvs.map(get);
+  const bsc = c.bsc.rpcUrlEnvs.map(get);
+  if (wantosCross.includes(wantosPrimary)) throw new Error("config: WANTOS cross-check URL must be distinct from the primary");
+  if (new Set(bsc).size !== bsc.length) throw new Error("config: BSC RPC URLs must be distinct");
+  return { wantosPrimary, wantosCross, bsc };
+}
+
 export function parseConfig(raw: RelayerConfig): RelayerConfig {
   scanForKeyMaterial(raw, "config");
   const c = raw;
-  if (!c.bsc || !Array.isArray(c.bsc.rpcUrls) || c.bsc.rpcUrls.length < 2) {
+  envName(c.wantos?.primaryRpcUrlEnv, "wantos.primaryRpcUrlEnv");
+  scanForUrls(raw, "config");
+  if (!c.bsc || !Array.isArray(c.bsc.rpcUrlEnvs) || c.bsc.rpcUrlEnvs.length < 2) {
     throw new Error("config: BSC needs at least 2 independent RPC urls");
   }
-  if (new Set(c.bsc.rpcUrls).size !== c.bsc.rpcUrls.length) throw new Error("config: BSC RPC urls must be distinct");
-  if (!c.wantos || !Array.isArray(c.wantos.crossCheckRpcUrls) || c.wantos.crossCheckRpcUrls.length < 1) {
+  c.bsc.rpcUrlEnvs.forEach((n, i) => envName(n, `bsc.rpcUrlEnvs[${i}]`));
+  if (new Set(c.bsc.rpcUrlEnvs).size !== c.bsc.rpcUrlEnvs.length) throw new Error("config: BSC RPC url env vars must be distinct");
+  if (!c.wantos || !Array.isArray(c.wantos.crossCheckRpcUrlEnvs) || c.wantos.crossCheckRpcUrlEnvs.length < 1) {
     throw new Error("config: WANTOS needs at least 1 cross-check RPC url");
   }
-  if (c.wantos.crossCheckRpcUrls.includes(c.wantos.primaryRpcUrl)) {
+  c.wantos.crossCheckRpcUrlEnvs.forEach((n, i) => envName(n, `wantos.crossCheckRpcUrlEnvs[${i}]`));
+  if (c.wantos.crossCheckRpcUrlEnvs.includes(c.wantos.primaryRpcUrlEnv)) {
     throw new Error("config: WANTOS cross-check RPC must be distinct from the primary");
   }
   if (!Number.isInteger(c.wantos.confirmations) || c.wantos.confirmations < 6) {

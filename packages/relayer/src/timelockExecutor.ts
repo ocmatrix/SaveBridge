@@ -1,4 +1,5 @@
 import { decodeEventLog, encodeFunctionData, type Abi, type PublicClient } from "viem";
+import { redact } from "./redact";
 import { bridgeTimelockAbi } from "@bridge/abi";
 import type { AlertSink } from "./alerts";
 import type { Db } from "./db/types";
@@ -119,7 +120,7 @@ export class TimelockExecutor {
           await this.o.alerts.emit({
             kind: "TIMELOCK_EXEC_BLOCKED",
             key: op.id,
-            message: `chain ${this.o.chainId}: timelock proposal ${op.id} is ready but execution reverts (${res.revert.errorName ?? res.revert.message ?? "unknown"}); will retry`,
+            message: `chain ${this.o.chainId}: timelock proposal ${op.id} is ready but execution reverts (${res.revert.errorName ?? redact(res.revert.message ?? "unknown")}); will retry`,
           });
         }
       } else if (res.kind === "sent" && (await this.notice(op.id, "executed"))) {
