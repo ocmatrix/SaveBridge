@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { KEYS, U, startEnv, whitelist, pause, snapshot, relayerRelease, type Env } from "../support/anvil";
 import { renderApp } from "./renderApp";
 import type { StatusProvider } from "../../src/lib/statusProvider";
+import { bscVaultV2Abi } from "@bridge/abi";
 
 let env: Env;
 let revert: () => Promise<void>;
@@ -90,6 +91,28 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     const orders = screen.getByRole("region", { name: "我的订单" });
     await within(orders).findByText("BSC → WANTOS 存入 #1", {}, T);
     expect(within(orders).getByText("BSC 已存入，等待 WANTOS 到账（约 15 分钟）")).toBeInTheDocument();
+  });
+
+  it("B2W to another recipient: confirm line shows bob's checksum address and the chain records bob (A1)", async () => {
+    renderApp(env.cfg, KEYS.alice.address);
+    const user = await connect();
+    await user.click(screen.getByRole("tab", { name: "BSC → WANTOS" }));
+    const b2w = panel("BSC → WANTOS");
+    await user.click(await within(b2w).findByRole("button", { name: "切换到 BSC" }));
+    await waitFor(() => expect(within(b2w).queryByText("当前网络不是 BSC，请切换")).toBeNull(), T);
+    const r = within(b2w).getByLabelText("WANTOS 收款地址");
+    await user.clear(r);
+    await user.type(r, KEYS.bob.address.toLowerCase());
+    await user.type(within(b2w).getByLabelText("金额（USDT）"), "25");
+    expect(await within(b2w).findByText(`将存入 25 USDT，到账 WANTOS 地址：${KEYS.bob.address}`)).toBeInTheDocument();
+    const btn = within(b2w).getByRole("button", { name: "存入" });
+    await waitFor(() => expect(btn).toBeEnabled(), T);
+    await user.click(btn);
+    await within(b2w).findByText("已存入，存入编号 #1，约 15 分钟到账 WANTOS", {}, T);
+    const logs = await env.bsc.anvil.pc.getContractEvents({ address: env.bsc.bridge, abi: bscVaultV2Abi, eventName: "Deposited", fromBlock: 0n });
+    expect(logs).toHaveLength(1);
+    expect(logs[0]!.args.from).toBe(KEYS.alice.address);
+    expect(logs[0]!.args.wantosRecipient).toBe(KEYS.bob.address);
   });
 
   it("B2W rejects an invalid / zero recipient", async () => {

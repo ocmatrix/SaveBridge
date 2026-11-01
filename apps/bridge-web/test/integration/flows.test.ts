@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createWalletClient, decodeFunctionData, erc20Abi, http, maxUint256, type Address } from "viem";
+import { createWalletClient, decodeFunctionData, erc20Abi, http, maxUint256, parseEventLogs, type Address } from "viem";
+import { bscVaultV2Abi } from "@bridge/abi";
 import { KEYS, U, startEnv, whitelist, pause, relayerRelease, relayerCredit, snapshot, type Env } from "../support/anvil";
 import { makeClients } from "../../src/lib/clients";
 import { readBridgeState } from "../../src/lib/reader";
@@ -146,10 +147,25 @@ describe("B2W deposit (acceptance: 方向二 / 订单状态)", () => {
     expect(orders[0]!.status).toBe("completed");
   });
 
-  it("zero recipient refused locally; amount limits enforced on chain", async () => {
+  it("deposit to a different WANTOS recipient: the chain records that recipient (A1)", async () => {
     const ctx = ctxFor("bsc");
+    const res = await depositFlow(ctx, 40n * U, KEYS.bob.address, () => {});
+    const r = await env.bsc.anvil.pc.getTransactionReceipt({ hash: res.txHash });
+    const ev = parseEventLogs({ abi: bscVaultV2Abi, logs: r.logs, eventName: "Deposited" });
+    expect(ev).toHaveLength(1);
+    expect(ev[0]!.args.from).toBe(KEYS.alice.address);
+    expect(ev[0]!.args.wantosRecipient).toBe(KEYS.bob.address);
+    // and the order view shows bob as recipient while it is listed for the depositor
+    const orders = await new ChainStatusProvider(env.cfg, makeClients(env.cfg)).list(KEYS.alice.address);
+    expect(orders[0]).toEqual(expect.objectContaining({ direction: "B2W", recipient: KEYS.bob.address }));
+  });
+
+  it("zero recipient refused locally with zero transactions sent (A4); amount limits enforced", async () => {
+    const ctx = ctxFor("bsc");
+    const before = await env.bsc.anvil.pc.getTransactionCount({ address: KEYS.alice.address });
     const z = await depositFlow(ctx, 100n * U, "0x0000000000000000000000000000000000000000" as Address, () => {}).catch((e) => e);
     expect(translateError(z, { decimals: 18 }).key).toBe("err.zeroAddress");
+    expect(await env.bsc.anvil.pc.getTransactionCount({ address: KEYS.alice.address })).toBe(before);
     const big = await depositFlow(ctx, 2001n * U, KEYS.alice.address, () => {}).catch((e) => e);
     expect(translateError(big, { decimals: 18 })).toEqual({ key: "err.amountAboveLimit", params: { amount: "2,001", limit: "2,000" } });
   });
