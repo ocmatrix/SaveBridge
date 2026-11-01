@@ -222,6 +222,18 @@ describe("round-2 RPC hardening", () => {
       expect(t.codes()).toContain("RPC_DISAGREE");
     });
 
+    it("R04: with 3 RPCs, an RPC omitting a log is still reported (the log itself is confirmed by the other two)", async () => {
+      const silent = tamperedClient(H.bsc, (m) => (m === "eth_getLogs" ? { handled: true, result: [] } : { handled: false }));
+      const t = await makeWatcher(H, {
+        endpoints: { bsc: [{ label: "a", client: H.bsc.pub }, { label: "b", client: tamperedClient(H.bsc, () => ({ handled: false })) }, { label: "silent", client: silent }] },
+      });
+      await H.bsc.write(ACCOUNTS.admin, "fund", [E(1)]);
+      await H.settle();
+      await t.w.tick();
+      expect(t.codes()).toContain("RPC_DISAGREE");
+      expect(t.w.state.derived.bsc.sums["funded"]).toBe(E(1).toString()); // confirmed by 2 → counted
+    });
+
     it("R13: a failed range rolls back ALL derived state (here: the mint total), not only the sums", async () => {
       const t = await makeWatcher(H);
       await H.wantos.write(ACCOUNTS.tokenDeployer, "mint", [ACCOUNTS.attacker.address, E(7)], H.wantos.token);

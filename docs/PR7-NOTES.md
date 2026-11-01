@@ -21,6 +21,24 @@
 | B7 | 测试：落在 `latest − 5` 内的 WANTOS 事件不摄取 | `check-w2b > B7 …`（杀死 M35） |
 | B8 | 删除 Telegram / 心跳草稿适配器；`main.ts` 未接签名器时拒绝启动（`--dry-run` 除外，`startupGuard`）；状态文件 fsync 后 rename，并保留 `.bak`、主文件损坏时回退 | `misc > B8 …`、`state-alerts > B8 …` |
 
+## 0b. GATE2 第 2 轮修复（v3）摘要
+
+| 项 | 修复 | 回归测试 |
+|---|---|---|
+| A-1 | 并集里每条日志算 `confirmed`：同一位置只有一个版本、且 ≥ `minRpcAgreement` 个 RPC 报告（1 对 1 平局 = 未确认，不再让主 RPC 版本获胜）。**未确认日志只允许建核对项和告警**，不改累计值、增发累计、存款区块索引（且首次确认写入后不覆盖）、最大编号、解除暂停标记、时间锁操作删除；`RefundCancelled` / `DepositRefundCancelled` 不再删核对项（由 Verifier 共识读判断是否撤回）；区块 hash 与共识不一致的日志（滞后在旧分叉的 RPC）直接丢弃；各块 hash/时间戳并发共识读；分歧按区块段汇总成一条告警 | `rpc-hardening-r2 > POC-A/B/C`（各含对照组）、`… stale fork …` |
+| A-2 | 核对项在宽限期结束后第一次暂缓 / 无法判定时写 `blindAt`；有 `blindAt` 的项**任何解除暂停都不能确认它**，不符必暂停；BSC `Released` 的核对项 `executableAt = 事件时间`，宽限期一过仍判不了即一级 `CHECK_OVERDUE` | `rpc-hardening-r2 > POC-D`；`pause-reorg-replay > A3 boundary (R25/R26)` |
+| A-3 | 告警按通道分别投递、分别排队：只重发失败的通道；一级告警在**所有通道**都送达后才登记 24h 重复；重复告警发送失败同样入队 | `state-alerts > A-3 …`（含 R32 / R33）、`alerts > A-3 / R12 …` |
+| B1 | 游标既没前进也没追平超过 `cursorStallSeconds`（默认 600 s）→ 一级 `CURSOR_STUCK`；示例配置每链 3 个 RPC | `rpc-hardening > B1 …` |
+| B2 | 自己的暂停交易已上链但第二个 RPC 未确认时，60 s 冷却期内只重读不重发；`PAUSE_FAILED` 写明「自己的交易已上链」；回执超时时 txHash 仍保留在结果里 | `pauser > B2 …` ×2 |
+| B3 | 每通道积压 > 3 条时恢复后合并为一条 `ALERT_BACKLOG`（级别取最严重的），每通道上限 500 条并记录丢弃数 | `state-alerts > B3 …` |
+| B4 | 脱敏：任意 ≥64 位 hex 串（不再依赖单词边界）、URL 之外的 `x-api-key` / `api_key` / `apikey` / `token` / `secret` / `password`；结构化告警字段不脱敏 | `redact > B4 …` ×3 |
+| B5 | 启动与运行期：服务错误 chainId 或 decimals 与多数不符的 RPC **剔除**并发一级 `RPC_MISCONFIGURED`；只有剩余验证通过的 RPC 少于 `minRpcAgreement` 才拒绝启动 | `startup > B5 …` ×2、`R21 …` |
+| B6 | 从 `.bak` 恢复状态时发二级 `STATE_RESTORED_FROM_BACKUP` | `startup > B6 …` |
+| B8 | 区块时间戳 / hash 共识读并发；漏报分歧按区块段汇总（随 A-1 提交） | — |
+| 变异补测 | R02/R34（块 hash / 时间戳共识）、R31（向前补查共识）、R05/R06（安全头取最小、WANTOS 头法定数）、R13（区段整体回滚）、R09（上链 ≠ 已确认）、R16（裸 Bearer）、R19（时钟落后） | `rpc-hardening-r2 > single-RPC protections …`、`pauser > R09 …`、`redact > R16 …`、`alerts > R19 …` |
+
+**运维要求（新增）**：每条链至少配 **3 个**独立 RPC（`minRpcAgreement = 2`）。共识读要求「≥2 一致且无任何不同答案」，所以只配 2 个时坏 1 个就会失明（`CURSOR_STUCK` 一级），配 3 个时坏 1 个仍会因「有不同答案」而暂缓——见 R11。
+
 下文各节已按 v2 更新。
 
 ## 1. 文件
@@ -42,7 +60,7 @@
 | `config/watcher.example.json` | 配置示例：RPC 全是 `*.example.invalid` 占位；桥 / 时间锁 / 钱包地址为占位；只出现 DESIGN 中的主网地址（USDT、旧金库、旧付款程序） |
 | `config/controlled-set.example.json` | 附录 A 受控集合（22 条），可加载 |
 | `test/helpers/harness.ts` | 两条本地 anvil（BSC 本地 chainId 5600、`--slots-in-an-epoch 1` 使 `finalized = latest − 2`；WANTOS 本地 13500）+ 用 `out/*.json` 字节码按 §5.1 nonce 0/1/2 部署两链（地址相同）+ EIP-712 白名单批次 |
-| `test/unit/*`、`test/integration/*` | 107 个测试，见 §0、§8 |
+| `test/unit/*`、`test/integration/*` | 140 个测试，见 §0、§0b、§8 |
 
 依赖：只依赖 `@bridge/abi` 与 `viem`；**不依赖 `@bridge/relayer`，不读付款程序数据库**。
 
@@ -192,6 +210,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 | Q3 | 两链 USDT 小数位是否都为 18 | 原始值相等比较 |
 | Q4 | 付款程序存活探测的方式（HTTP 健康端点？） | `RelayerProbe` 接口，未接 |
 | Q5 | WANTOS `confirmations` 是否沿用付款程序的 6 | 默认 6，可配 |
+| Q6 | 共识规则：「≥2 一致且无不同答案」（当前，最保守，单个坏 RPC 可致失明）vs「多数一致」（单个坏 RPC 不致失明，但 3 个中 2 个合谋即可） | 当前保持最保守，由负责人决定 |
 
 ### 7.3 与 PR1-NOTES 事件名的对照
 
@@ -219,7 +238,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 
 ## 8. 测试（DH L2）
 
-`pnpm -r typecheck` 通过；`pnpm -r test`：**14 个文件 / 107 个测试全部通过**（约 4 秒，两条本地 anvil）。v2 变异重跑结果见 GATE2 第 2 次报告。
+`pnpm -r typecheck` 通过；`pnpm -r test`：**15 个文件 / 140 个测试全部通过**（约 4 秒，两条本地 anvil）。变异重跑结果见 GATE2 第 2、3 次报告。
 
 覆盖率（`vitest run --coverage`，`src/main.ts`、`src/index.ts` 除外）：语句 94.98%、分支 85.6%、函数 99.41%、行 96.55%。核心逻辑：`watcher.ts` 行 95.1% / 语句 94.3%，`verifier.ts` 行 98.6% / 语句 92.4%，`pauser.ts` 行 100% / 语句 93.9%，`rpc.ts` 100%，`alerts.ts` 100%。
 
@@ -257,7 +276,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 
 **部署前**
 1. 服务器 B 与服务器 A 不同机器、不同云账户；不放付款程序的任何凭据与数据库连接。
-2. 至少 2 个独立 RPC / 链（WANTOS 建议：自建节点 + 一个公开节点；BSC：两个不同服务商），`minRpcAgreement = 2`。
+2. **至少 3 个**独立 RPC / 链（WANTOS 建议：自建节点 + 两个其他节点；BSC：三个不同服务商），`minRpcAgreement = 2`；配错链的 RPC 会被自动剔除并一级告警。
 3. 暂停钥匙：两条链各一把，经 KMS 适配器实现 `RawTxSender`，只交给 `PauseOnlySigner`；每条链 gas 备足并加入 `gasWatch`。
 4. 填 `startBlock` = 两链桥代理的部署区块；`legacyAddresses`、`controlledSetFile` 按负责人确认的清单。
 5. 外部心跳服务：超时（建议 10 分钟）直接电话 / 短信负责人。告警通道接一级电话 + 短信、二级即时消息、三级日报。
@@ -291,4 +310,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 | R7 | `main.ts` 未接签名器与通道：没有 `--dry-run` 时拒绝启动；dry-run 下暂停一定失败（一级 `PAUSE_FAILED`） | 有意为之（本 PR 禁止接真实服务）；PR-10 接入前不得作为生产监控 |
 | R9 | 并集摄取：单个 RPC 伪造的事件会进入累计值（对账表现为短缺告警）并建核对项（由逐笔存在性共识过滤，不会误暂停）；单个 RPC 漏报会触发 `RPC_DISAGREE` | 宁可多报；累计值偏差会在对账中暴露 |
 | R10 | 时钟偏差只告警（`CLOCK_SKEW`），不自动校正 | 部署启用 NTP |
+| R11 | 共识读取「全体回答者一致」：任何一个 RPC 持续给出不同的块 hash / 时间戳 / 状态，都会让对应区段或核对项暂缓（失明），由 `CURSOR_STUCK` / `CHECK_OVERDUE` 一级告警兜底，需人工剔除该 RPC | 待决 Q6：是否改为「多数一致」 |
+| R12 | 未确认的日志不进累计值：某个 RPC 长期漏报时，真实事件只被核对、不被计入，对账会出现「多出」或「短缺」告警（同时有 `RPC_DISAGREE`） | 按 A-1 要求；修复 RPC 后可删状态文件全量重放 |
+| R13 | 变异 R14（区段回滚不恢复 newOps）、R29（B5 不看恢复时间点）为等价变异：前者的残留 id 在下一次处理时因对应提议已回滚而被跳过，重试时会重新登记；后者被多删的已判定项，其日志都在恢复点游标之前，不会再被摄取 | 不加测试 |
 | R8 | 对账在游标区块读状态，要求 RPC 保留近期状态（非归档节点一般 128 块以内够用）；BSC 公共节点对 `eth_getLogs` 区间有限制 | `maxBlockRange` 可调小；`startBlock` 远早于当前高度的首次同步需要支持历史日志的节点 |
