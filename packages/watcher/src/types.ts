@@ -82,8 +82,11 @@ export type Sums = Record<string, string>;
 
 export interface ChainDerived {
   cursor: Cursor | null;
-  /** Block number of the latest observed `Unpaused` event. Events at or below it are "acknowledged". */
-  lastUnpausedBlock: string | null;
+  /**
+   * Latest observed `Unpaused` (block + block timestamp). An event counts as acknowledged by the owner
+   * only if it is at/below that block AND the unpause happened after the event's grace period ended.
+   */
+  lastUnpaused: { block: string; timestamp: number } | null;
   sums: Sums;
 }
 

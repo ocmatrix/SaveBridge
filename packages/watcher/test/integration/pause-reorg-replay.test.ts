@@ -39,6 +39,8 @@ describe("pause semantics, rollback, replay", () => {
     await t.w.tick();
     expect(await H.isPaused("bsc")).toBe(true);
 
+    // The owner reviews and unpauses later: on chain the Unpaused is after the event's grace period ended.
+    await H.bsc.increaseTime(400);
     await H.bsc.write(ACCOUNTS.admin, "unpause", []);
     for (let i = 0; i < 3; i++) {
       await H.settle();
@@ -50,7 +52,7 @@ describe("pause semantics, rollback, replay", () => {
     expect(t.codes().filter((c) => c === "AUTO_PAUSE")).toHaveLength(1);
 
     // Restart from the stale file: the old forged event is replayed and found mismatching, but it is
-    // before the Unpaused block → alert only.
+    // before the Unpaused block, and the unpause happened after its grace period → alert only.
     const t2 = await makeWatcher(H, { store: new FileStateStore(join(dir, "stale.json")) });
     t2.clock.now = t.clock.now;
     await t2.w.tick();
@@ -67,19 +69,36 @@ describe("pause semantics, rollback, replay", () => {
     expect(t.codes().filter((c) => c === "AUTO_PAUSE")).toHaveLength(2);
   });
 
-  it("an unpause that lands before the decision (not yet ingested) still counts: old event → alert only", async () => {
+  it("POC1: an unrelated pause + unpause INSIDE the grace window does not acknowledge a forged payout → BSC paused", async () => {
     const t = await makeWatcher(H);
     const r = await forge(13n);
     await H.settle();
     t.clock.now = r.timestamp + 10;
+    await t.w.tick(); // ingested, in grace
+    await H.bsc.write(ACCOUNTS.admin, "pause", []);
+    await H.bsc.write(ACCOUNTS.wl, "unpause", []); // e.g. maintenance; decision 17: either wallet may unpause
+    await H.settle();
+    t.clock.now = r.timestamp + 400;
+    await t.w.tick();
+    await t.w.tick();
+    expect(await H.isPaused("bsc")).toBe(true);
+    expect(t.codes()).toContain("AUTO_PAUSE");
+    expect(t.codes()).not.toContain("MISMATCH_ACKNOWLEDGED");
+  });
+
+  it("an unpause not yet under the safe head is not used to acknowledge anything (look-ahead stops at finalized)", async () => {
+    const t = await makeWatcher(H);
+    const r = await forge(14n);
+    await H.settle();
+    t.clock.now = r.timestamp + 10;
     await t.w.tick();
     await H.bsc.write(ACCOUNTS.admin, "pause", []);
-    await H.bsc.write(ACCOUNTS.wl, "unpause", []); // decision 17: either wallet may unpause
-    // not settled: the Unpaused log is above BSC finalized, found by the look-ahead
-    t.clock.now = r.timestamp + 301;
+    await H.bsc.increaseTime(400);
+    await H.bsc.write(ACCOUNTS.wl, "unpause", []); // after the grace period, but not finalized yet
+    t.clock.now = r.timestamp + 401;
     await t.w.tick();
-    expect(await H.isPaused("bsc")).toBe(false);
-    expect(t.codes()).toContain("MISMATCH_ACKNOWLEDGED");
+    expect(await H.isPaused("bsc")).toBe(true);
+    expect(t.codes()).toContain("AUTO_PAUSE");
   });
 
   it("WANTOS block-hash change → level-1 alert and both chains paused; state rewound and re-ingested", async () => {

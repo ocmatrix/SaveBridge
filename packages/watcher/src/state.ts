@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname } from "node:path";
 import type { ChainDerived, DerivedState, State } from "./types.js";
 
-const emptyChain = (): ChainDerived => ({ cursor: null, lastUnpausedBlock: null, sums: {} });
+const emptyChain = (): ChainDerived => ({ cursor: null, lastUnpaused: null, sums: {} });
 
 export const initialDerived = (): DerivedState => ({
   bsc: emptyChain(),

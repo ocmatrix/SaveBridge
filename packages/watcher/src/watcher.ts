@@ -75,6 +75,8 @@ export class Watcher {
   private newOps: string[] = [];
   private paramsDirty = true;
   private decimals: Partial<Record<ChainName, number>> = {};
+  /** Safe head computed this tick, per chain. */
+  private heads: Partial<Record<ChainName, bigint>> = {};
 
   constructor(private readonly d: WatcherDeps) {
     this.cfg = d.config;
@@ -206,6 +208,7 @@ export class Watcher {
     const cfg = this.cfg.chains[c];
     const head = await this.safeHead(c);
     if (head === null) return;
+    this.heads[c] = head;
     const der = this.state.derived[c];
     let from = der.cursor ? BigInt(der.cursor.number) + 1n : cfg.startBlock;
     for (let i = 0; i < this.cfg.maxRangesPerTick && from <= head; i++) {
@@ -408,7 +411,7 @@ export class Watcher {
         await this.raise("PAUSED", `${c} 桥已暂停（by ${String(a["account"])}）`, { chain: c, detail: this.evDetail(l), key });
         return;
       case "Unpaused":
-        der.lastUnpausedBlock = l.block.toString();
+        this.noteUnpause(der, l.block, l.timestamp);
         await this.raise("UNPAUSED", `${c} 桥已解除暂停（by ${String(a["account"])}）；此前事件视为已确认`, { chain: c, detail: this.evDetail(l), key });
         return;
       case "Upgraded":
@@ -585,10 +588,12 @@ export class Watcher {
   private async onMismatch(p: PendingCheck, reason: string, observed: unknown, report: TickReport): Promise<void> {
     const c = p.targetChain;
     await this.refreshUnpauseMarker(c);
-    const ack = this.state.derived[c].lastUnpausedBlock;
+    const lu = this.state.derived[c].lastUnpaused;
     const detail = { reason, observed, check: p };
-    if (ack !== null && BigInt(p.block) <= BigInt(ack)) {
-      await this.raise("MISMATCH_ACKNOWLEDGED", `${p.kind} 不符，但事件早于解除暂停（区块 ${ack}），只告警不暂停`, { chain: c, detail, key: `ack:${p.id}` });
+    // GATE2 A3: acknowledged only if the owner unpaused AFTER this event's grace period ended
+    // (i.e. when the watcher could already have flagged it) and the event is not newer than the unpause.
+    if (lu !== null && BigInt(p.block) <= BigInt(lu.block) && lu.timestamp >= p.decideAt) {
+      await this.raise("MISMATCH_ACKNOWLEDGED", `${p.kind} 不符，但负责人已在其宽限期结束后解除暂停（区块 ${lu.block}），视为已确认，只告警不暂停`, { chain: c, detail, key: `ack:${p.id}` });
       this.decide(p);
       return;
     }
@@ -599,23 +604,28 @@ export class Watcher {
     else p.pauseFailures = (p.pauseFailures ?? 0) + 1;
   }
 
-  /** Look ahead (past the safe head) for an `Unpaused` so a just-unpaused chain is not re-paused for old events. */
+  private noteUnpause(der: ChainDerived, block: bigint, timestamp: number): void {
+    if (der.lastUnpaused === null || block > BigInt(der.lastUnpaused.block)) der.lastUnpaused = { block: block.toString(), timestamp };
+  }
+
+  /**
+   * Look ahead from the cursor to this tick's SAFE head (BSC finalized / WANTOS confirmed) for an
+   * `Unpaused` not yet ingested (e.g. maxRangesPerTick cut the catch-up short). Consensus reads only.
+   */
   private async refreshUnpauseMarker(c: ChainName): Promise<void> {
     const cfg = this.cfg.chains[c];
     const der = this.state.derived[c];
+    const head = this.heads[c];
     const fromBlock = der.cursor ? BigInt(der.cursor.number) + 1n : cfg.startBlock;
-    try {
-      const ev = getAbiItem({ abi: bridgeAbiOf(c), name: "Unpaused" }) as AbiEvent;
-      const logs = await this.d.rpc[c].primary(async (cl) => {
-        const latest = await cl.getBlockNumber({ cacheTime: 0 });
-        return fromBlock > latest ? [] : cl.getLogs({ address: cfg.bridge, event: ev, fromBlock, toBlock: latest });
-      });
-      for (const l of logs) {
-        if (der.lastUnpausedBlock === null || l.blockNumber! > BigInt(der.lastUnpausedBlock)) der.lastUnpausedBlock = l.blockNumber!.toString();
-      }
-    } catch {
-      /* best effort; the ingested marker still applies */
-    }
+    if (head === undefined || fromBlock > head) return;
+    const ev = getAbiItem({ abi: bridgeAbiOf(c), name: "Unpaused" }) as AbiEvent;
+    const r = await this.d.rpc[c].consensus(async (cl) => {
+      const logs = await cl.getLogs({ address: cfg.bridge, event: ev, fromBlock, toBlock: head });
+      const last = logs[logs.length - 1];
+      if (!last) return null;
+      return { block: last.blockNumber!, timestamp: Number((await cl.getBlock({ blockNumber: last.blockNumber! })).timestamp) };
+    });
+    if (r.ok && r.value) this.noteUnpause(der, r.value.block, r.value.timestamp);
   }
 
   private async autoPause(c: ChainName, report: TickReport, key: string, detail: Record<string, unknown>): Promise<boolean> {
