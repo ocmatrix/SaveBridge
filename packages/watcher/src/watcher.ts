@@ -243,22 +243,21 @@ export class Watcher {
       const wc = s.wantosCursor;
       let canonical = wc === null;
       if (wc) {
-        try {
-          const b = await this.d.rpc.wantos.primary((c) => c.getBlock({ blockNumber: BigInt(wc.number) }));
-          canonical = b.hash === wc.hash;
-        } catch {
-          canonical = false;
-        }
+        // S-5: canonicity by consensus; anything not agreed counts as non-canonical (→ converge to full replay)
+        const r = await this.d.rpc.wantos.consensus(async (c) => (await c.getBlock({ blockNumber: BigInt(wc.number) })).hash, `getBlock ${wc.number} (rewind)`);
+        canonical = r.ok && r.value === wc.hash;
       }
       if (canonical) {
         this.state.derived = clone(s.derived);
         this.reopenAfter(s.takenAt ?? 0);
+        await this.raise("STATE_REWOUND", `回滚后恢复到快照（WANTOS 区块 ${wc?.number ?? "起点"}）并重新摄取`, { detail: { restoredTo: wc?.number ?? null } });
         return;
       }
       snaps.pop();
     }
     this.state.derived = initialDerived();
     this.reopenAfter(0);
+    await this.raise("STATE_REWOUND", "回滚后没有可验证的快照：从 startBlock 全量重放", { detail: { restoredTo: null } });
   }
 
   /**

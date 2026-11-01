@@ -262,4 +262,31 @@ describe("round-3 hardening", () => {
       expect(t.w.state.meta.openLevel1[k!]).toBeUndefined();
     });
   });
+
+  it("S-5 / MA23: rewind checks snapshot canonicity by consensus; an unverifiable snapshot is NOT restored (falls back towards full replay)", async () => {
+    let below: bigint | null = null;
+    const flaky = tamperedClient(H.wantos, (m, p) =>
+      below !== null && m === "eth_getBlockByNumber" && typeof p[0] === "string" && /^0x[0-9a-f]+$/.test(p[0] as string) && BigInt(p[0] as string) < below
+        ? { handled: true, result: new Error("flaky") }
+        : { handled: false },
+    );
+    const t = await makeWatcher(H, { endpoints: { wantos: [{ label: "a", client: H.wantos.pub }, { label: "flaky", client: flaky }] } });
+    await H.settle();
+    await t.w.tick(); // snapshot S1 — canonical, but only verifiable through the flaky RPC's help
+    await H.wantos.write(ACCOUNTS.user1, "approve", [H.wantos.bridge, E(100)], H.wantos.token);
+    const fork = await H.wantos.snapshot();
+    await H.wantos.write(ACCOUNTS.user1, "bridgeOut", [E(100)]);
+    await H.settle();
+    t.clock.now = (await H.wantos.latest()).timestamp;
+    await t.w.tick();
+    const cur = BigInt(t.w.state.derived.wantos.cursor!.number);
+    await H.wantos.revert(fork);
+    await H.wantos.rpc("evm_setNextBlockTimestamp", [(await H.wantos.latest()).timestamp + 500]);
+    await H.wantos.mine(12);
+    below = cur;
+    await t.w.tick();
+    const rw = t.sink.alerts.find((a) => a.code === "STATE_REWOUND")!;
+    expect(rw.level).toBe(2);
+    expect(rw.detail["restoredTo"]).toBeNull();
+  });
 });

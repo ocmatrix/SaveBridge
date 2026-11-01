@@ -51,6 +51,7 @@ export const ALERT_LEVELS = {
   ALERT_BACKLOG: 2, // level is overridden with the most severe queued item
   CLOCK_SKEW: 2,
   RPC_LAGGING: 2,
+  STATE_REWOUND: 2,
   STATE_RESTORED_FROM_BACKUP: 2,
   // level 3
   DAILY_REPORT: 3,
