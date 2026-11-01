@@ -31,7 +31,8 @@ describe("pending-transaction locks (round-2 A1)", () => {
       JSON.stringify({
         good: { ...p },
         badHash: { ...p, hash: "0x12" },
-        badKind: { ...p, kind: "confirmed" },
+        badKind: { ...p, account: "0x6666666666666666666666666666666666666666", kind: "confirmed" },
+        badAction: { ...p, account: "0x7777777777777777777777777777777777777777", action: "admin" },
         extra: { ...p, confirmed: true, status: "success" },
       }),
     );
