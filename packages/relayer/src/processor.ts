@@ -161,7 +161,9 @@ export class Processor {
 
   private async lastAttempt(eventKey: Hex): Promise<AttemptInfo | null> {
     const r = await this.o.db.query<{ id: string; action: string | null; state: string; tx_hash: Uint8Array }>(
-      "select id, action, state, tx_hash from tx_attempts where event_key = $1 order by id desc limit 1",
+      // A resolved (mined/reverted) row of the latest nonce wins over its "replaced" siblings: after a fee
+      // bump the ORIGINAL tx may be the one that got mined (Gate2 A3).
+      "select id, action, state, tx_hash from tx_attempts where event_key = $1 order by nonce desc, (state in ('mined','reverted')) desc, id desc limit 1",
       [toBytes(eventKey)],
     );
     const row = r.rows[0];
