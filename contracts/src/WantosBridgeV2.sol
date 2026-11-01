@@ -4,7 +4,7 @@ pragma solidity 0.8.28;
 import {BridgeBase} from "./BridgeBase.sol";
 
 /// @title WantosBridgeV2
-/// @notice WANTOS side of the whitelist bridge v2 (DESIGN.md v0.9.3 §5.3). Holds WANTOS-USDT.
+/// @notice WANTOS side of the whitelist bridge v2 (DESIGN.md v0.9.4 §5.3). Holds WANTOS-USDT.
 ///         W2B: bridgeOut (whitelisted EOAs only, per-address UTC-day cap, supply ceiling) creating Orders;
 ///         refunds of rejected orders (24h, counted in b2wDailyCap); B2W inbound releases always queued (b2wDelay).
 contract WantosBridgeV2 is BridgeBase {

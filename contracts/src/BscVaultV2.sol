@@ -4,7 +4,7 @@ pragma solidity 0.8.28;
 import {BridgeBase} from "./BridgeBase.sol";
 
 /// @title BscVaultV2
-/// @notice BSC side of the whitelist bridge v2 (DESIGN.md v0.9.3 §5.2). Holds BSC-USDT directly.
+/// @notice BSC side of the whitelist bridge v2 (DESIGN.md v0.9.4 §5.2). Holds BSC-USDT directly.
 ///         W2B payouts (release / queueRelease / executeRelease) only to whitelisted addresses, within
 ///         UTC-day global and per-address caps; B2W deposits; deposit refunds; timelocked legacy payouts.
 contract BscVaultV2 is BridgeBase {

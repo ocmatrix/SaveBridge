@@ -13,7 +13,7 @@ import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/crypt
 import {ITimelockForBridge} from "./interfaces/IBridgeV2.sol";
 
 /// @title BridgeBase
-/// @notice Shared machinery of BscVaultV2 and WantosBridgeV2 (DESIGN.md v0.9.3 §4.1-§4.5, §5.2-§5.3):
+/// @notice Shared machinery of BscVaultV2 and WantosBridgeV2 (DESIGN.md v0.9.4 §4.1-§4.5, §5.2-§5.3):
 ///         keys & mutual exclusion, EIP-712 whitelist batches, whitelist-wallet handover & recovery,
 ///         pause, UTC-day quotas, payout state machine (None/Queued/Released/Voided), reserve fund/withdraw.
 abstract contract BridgeBase is

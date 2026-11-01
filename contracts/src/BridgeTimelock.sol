@@ -5,7 +5,7 @@ import {TimelockController} from "@openzeppelin/contracts/governance/TimelockCon
 import {IBridgeForTimelock, ITimelockForBridge} from "./interfaces/IBridgeV2.sol";
 
 /// @title BridgeTimelock
-/// @notice 48h timelock governing one bridge (DESIGN.md v0.9.3 §4.2 items 1-8, §4.6). Not upgradeable.
+/// @notice 48h timelock governing one bridge (DESIGN.md v0.9.4 §4.2 items 1-8, §4.6). Not upgradeable.
 /// - exactly one proposer (= admin wallet); executor = anyone; no timelock admin
 /// - cancel: admin wallet or the bridge's current whitelist wallet (read at runtime)
 /// - operations expire 14 days after they become ready; proposals carry an epoch, bumped by admin recovery

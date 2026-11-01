@@ -1,6 +1,6 @@
 # PR-1 合约：实现说明、偏差与待决、下游接口清单
 
-> 依据：`docs/DESIGN.md` v0.9.3（唯一权威）、`docs/PR0-FINDINGS.md`。分支 `pr-1-contracts`。
+> 依据：`docs/DESIGN.md` v0.9.4（唯一权威）、`docs/PR0-FINDINGS.md`。分支 `pr-1-contracts`。
 > 范围：只写代码与本地测试。**未部署、未广播、未接触任何节点或真实私钥。**
 > 工具链：solc 0.8.28，`evm_version = cancun`，optimizer **1 run**（B1，原 200），OpenZeppelin Contracts / Contracts-Upgradeable v5.1.0。
 
@@ -16,7 +16,7 @@
 | `contracts/script/PredictAddresses.s.sol` | §5.1 nonce 表 n/n+1/n+2 的 CREATE 地址预测（纯计算） |
 | `contracts/script/Deploy.s.sol` | §5.1 部署脚本，**只写好、未运行广播**；测试里在内存中演练两条链 |
 | `contracts/script/Verify.s.sol` | §5.1 部署后验收（角色、时间锁成员与延迟、实现 codehash、参数、白名单为空、地址一致） |
-| `contracts/test/*` | 230 个测试（含 2 个 fuzz，各 512 轮），见 §7；布局快照在 `contracts/test/layout/` |
+| `contracts/test/*` | 240 个测试（含 2 个 fuzz，各 512 轮），见 §7；布局快照在 `contracts/test/layout/` |
 
 ## 2. 实现说明（按规格条目）
 
@@ -134,10 +134,11 @@
 ### 4.1 升级检查清单（每次升级桥合约前逐条确认）
 
 1. **新实现必须保留 `IBridgeForTimelock` 的五个视图且语义不变**：`timelock()`、`whitelistManager()`、`paused()`、`whitelistRecoveryActive()`、`isKeyHolder(address)`。
-   时间锁在每次 `execute/executeBatch`（含升级本身）之后做自检 `_checkBridgeSane()`：`paused()` 可调用；任一恢复都不在进行中；`whitelistManager() != 0` 且 `isKeyHolder(whitelistManager())`；`timelock() == 时间锁地址`。任一项回滚或不成立 → `BridgeCheckFailed()`，整笔执行（含升级）回滚，治理不会被坏升级锁死（A1，测试 `TimelockSelfCheckTest`）。
+   时间锁在每次 `execute/executeBatch`（含升级本身）之后做自检 `_checkBridgeSane()`：`paused()` 可调用；任一恢复都不在进行中；`whitelistManager() != 0` 且 `isKeyHolder(whitelistManager())`；`timelock() == 时间锁地址`。值不成立 → `BridgeCheckFailed()`；**视图本身回滚时，冒出的是该视图的原始回滚数据（可能为空，例如新实现删掉了视图）**，不是 `BridgeCheckFailed()`。两种情况都会让整笔执行（含升级）回滚，治理不会被坏升级锁死。
+   测试：`TimelockSelfCheckTest`（真实 vault 的升级路径，含"恰好坏一项"的 `test_upgradeOneBroken_*` ×4）与 `BridgeTimelockTest.test_selfCheck_*`（MockBridge 恰好坏一项 ×4 + 全部正常 ×1）；每个子条件都做过"删掉该检查"的变异验证。
 2. 存储只能在各命名空间 struct **末尾追加**字段；不得改动、删除、重排已有字段；不得改命名空间字符串。对比 `contracts/test/layout/*.json` 快照（B5）：
    - `*.storageLayout.json` = `forge inspect <C> storageLayout --json` 的提交快照。两个桥必须为空（全部状态在 ERC-7201 命名空间里），时间锁是普通顺序存储。CI 命令：`for c in BridgeTimelock BscVaultV2 WantosBridgeV2; do diff <(forge inspect $c storageLayout --json) contracts/test/layout/$c.storageLayout.json; done`。
-   - `*.namespace.json` = 每个命名空间的字段表（slot / 字节偏移 / 字节数）。solc 不输出命名空间布局，所以由 `StorageLayout.t.sol` 用 `vm.load` 逐字段核对（含映射与结构体打包：`Payout`、`Order`、`Deposit`）。字段被重排时测试变红（已用"交换 `unit` 与 `peerChainId`"变异验证）。
+   - `*.namespace.json` = 每个命名空间的字段表（slot / 字节偏移 / 字节数）。solc 不输出命名空间布局，所以由 `StorageLayout.t.sol` 用 `vm.load` 逐字段核对（含映射与结构体打包：`Payout`、`Order`、`Deposit`——`Deposit` 的第 2 个槽为 amount@0 / refundRequestedAt@16 / refundStatus@24，交换后两字段的变异已验证会被抓住）。字段被重排时测试变红（已用"交换 `unit` 与 `peerChainId`"变异验证）。
    - 追加字段的升级由 `test_upgradeWithAppendedFieldKeepsDataAndZeroesNewField`（mock `BscVaultV2Appended`）覆盖：旧数据不变，新字段为零，写新字段不影响旧数据。
    - 打包细节（下游直接读槽时注意）：`Order.refundRequestedAt` 不在 `amount/createdAt/status` 那个槽，而在结构体第 3 个槽。
 3. 新实现先开源验证，codehash 与可复现构建一致（`Verify.s.sol`）。
@@ -315,11 +316,13 @@ struct InitArgs { address timelock; address token; address whitelistManager; add
 | `cancelAdminRecovery()` | 管理钱包或 `bridge.whitelistManager()` |
 | `updateDelay(uint256)` | 仅时间锁自身；48h ≤ 新延迟 ≤ 7d（`DelayBelowMinimum` / `DelayAboveMaximum`） |
 
+常量视图：`MIN_DELAY()`（48h）、`MAX_DELAY()`（7d）、`EXPIRY_PERIOD()`（14d）、`PENDING_ADMIN_TTL()`（7d）、`ADMIN_RECOVERY_DELAY()`（14d）、`RECOVERY_COOLDOWN()`（3d）、`PROPOSER_ROLE()`、`EXECUTOR_ROLE()`、`CANCELLER_ROLE()`、`DEFAULT_ADMIN_ROLE()`。
+
 视图：`adminWallet()`、`bridge()`、`pendingAdmin()`、`pendingAdminExpiresAt()`、`epoch()`、`proposalEpoch(bytes32)`、`isOperationExpired(bytes32)`、`adminRecoveryActive()`、`adminRecoveryCandidate()`、`adminRecoveryReadyAt()`、`adminRecoveryCooldownUntil()`、`MIN_DELAY()`、`getMinDelay()`，以及 OZ 的 `hashOperation`、`hashOperationBatch`、`getTimestamp`、`getOperationState`、`isOperation*`。
 
 事件（自定义）：`AdminTransferStarted(address indexed currentAdmin, address indexed newAdmin, uint256 expiresAt)`、`AdminTransferred(address indexed previousAdmin, address indexed newAdmin, uint256 epoch, bool viaRecovery)`、`AdminRecoveryStarted(address indexed initiator, address indexed candidate, uint256 readyAt)`、`AdminRecoveryCancelled(address indexed by, address indexed candidate, uint256 cooldownUntil)`、`ProposalRecorded(bytes32 indexed id, uint256 epoch)`；以及 OZ 的 `CallScheduled`、`CallSalt`、`CallExecuted`、`Cancelled`、`MinDelayChange`、`RoleGranted`、`RoleRevoked`。
 
-错误：`ZeroAddress()`、`RoleChangeForbidden()`、`DelayBelowMinimum(uint256 requested, uint256 minimum)`、`DelayAboveMaximum(uint256 requested, uint256 maximum)`、`NotCanceller(address caller)`、`OperationExpired(bytes32 id)`、`OperationStaleEpoch(bytes32 id)`、`RecoveryInProgress()`、`BridgePaused()`、`InvalidNewAdmin(address)`、`KeyConflict(address)`、`NotPendingAdmin(address caller)`、`PendingAdminExpired()`、`NotWhitelistManager(address caller)`、`RecoveryCooldown(uint256 until)`、`NoRecovery()`、`RecoveryNotReady(uint256 readyAt)`，以及 OZ `Timelock*`。
+错误：`ZeroAddress()`、`RoleChangeForbidden()`、`DelayBelowMinimum(uint256 requested, uint256 minimum)`、`DelayAboveMaximum(uint256 requested, uint256 maximum)`、`NotCanceller(address caller)`、`OperationExpired(bytes32 id)`、`OperationStaleEpoch(bytes32 id)`、`RecoveryInProgress()`、`BridgePaused()`、`InvalidNewAdmin(address)`、`KeyConflict(address)`、`NotPendingAdmin(address caller)`、`PendingAdminExpired()`、`NotWhitelistManager(address caller)`、`RecoveryCooldown(uint256 until)`、`NoRecovery()`、`RecoveryNotReady(uint256 readyAt)`、`BridgeCheckFailed()`（执行后自检失败，见 §4.1），以及 OZ `Timelock*`；另外执行可能冒出桥视图自身的原始回滚数据（可能为空）。
 
 ### 5.10 事件（桥，监控 PR-7 / 付款程序 PR-3 用）
 
@@ -385,7 +388,7 @@ Refunded(uint256 indexed orderId, address indexed user, uint256 amount)
 1. **紧急移除前先冻结**（PR-6 紧急页）：`emergencyRemove` 不推进 `whitelistNonce`，已签未提交的添加批次仍能把地址加回来。管理后台的"紧急移除"按钮必须先发 `freezeWhitelist()`（或确认已冻结）再发 `emergencyRemove`。测试：`test_runbook_emergencyRemoveWithoutFreezeCanBeUndoneByPresignedAdd`。
 2. **未来 orderId 可被作废**（PR-3 / PR-7）：`voidSource(n)` 对尚未出现的 `n` 也成立（None→Voided）。付款程序遇到 `BadPayoutStatus(key, 3)` 直接把订单转 REJECTED → 退款；监控对"作废了尚不存在的 orderId"的 `SourceVoided` 应告警（可能是白名单钱包被盗）。测试：`test_runbook_wlCanVoidFutureOrderIds`。
 3. **重复暂停**（PR-7）：桥已暂停时再 `pause()` 回滚 `EnforcedPause()`；监控应先读 `paused()`，或把这个回滚当作成功。测试：`test_runbook_doublePauseRevertsEnforcedPause`。
-4. **时间锁自检**（PR-6 时间锁面板）：任何执行（含升级）后若桥的视图异常，整笔回滚 `BridgeCheckFailed()`；面板应把它显示为"新实现不合格"，而不是"执行失败重试"。
+4. **时间锁自检**（PR-6 时间锁面板）：任何执行（含升级）后若桥的视图值异常，整笔回滚 `BridgeCheckFailed()`；若视图本身回滚，冒出的是视图的原始回滚数据（**可能为空**）。面板对 `BridgeCheckFailed()`、**空回滚、无法解码的回滚**一律显示为"新实现不合格"，**不要重试**（提议到期前可取消后换正确实现重新提议）。
 
 ### 5.12 部署
 
@@ -398,13 +401,13 @@ Refunded(uint256 indexed orderId, address indexed user, uint256 amount)
 
 | 合约 | 运行时 | 余量 | initcode keccak256（与地址无关） |
 |---|---|---|---|
-| BridgeTimelock | 11,635 B | 12,941 B | `0xb9a09dfa8f32fe52d755f5cb13a9a113cbbffaaf64860e1acd964e75c21181e6` |
-| BscVaultV2 | 22,483 B | 2,093 B | `0x5a452ec9e84081f509586c655f5bac7b615d2647bf4a144d0b5b669603fc19ed` |
-| WantosBridgeV2 | 21,661 B | 2,915 B | `0x69d0b764fcc310e0972b9293a00e6bc15405ffd72f5e30b0a15327355fb62adc` |
+| BridgeTimelock | 11,635 B | 12,941 B | `0xa870375f7f2eda28eb2a5223349df6c1bd3a4844e7e8a197625755222619b633` |
+| BscVaultV2 | 22,483 B | 2,093 B | `0x537205b1b6168e3f300bb5d60313ae43d1620d305e808f2b1131b45cb17f92ba` |
+| WantosBridgeV2 | 21,661 B | 2,915 B | `0x78c2abb14ff85232889f71281134454e4c6ee9c6e24e1d64bbafe8b34bb2033b` |
 
 - **CI 门槛**：任何核心合约运行时余量必须 ≥ 1,500 B；由 `SizeGateTest.test_runtimeSizeMargins` 强制（`forge test` 不过即红）。
 - **codehash 说明**：实现合约含 UUPS 的 `__self` immutable（= 实现自身地址），时间锁含 `bridge`/`MIN_DELAY` immutable，所以**运行时 codehash 取决于部署地址与构造参数**，不能离线写死。验收脚本 `Verify.s.sol` 的 `IMPLEMENTATION_CODEHASH` 取法：用同一提交、同一 `foundry.toml`（runs = 1）在本地以 `PredictAddresses` 预测出的实现地址重放部署（或 fork 演练），读取 `extcodehash`；构建可复现性用上表 initcode 哈希核对。任何编译设置变化（含 optimizer_runs）都会改变这些哈希。
-- `forge test`：**230 通过 / 0 失败**（13 个测试套件；fuzz 512 轮）。
+- `forge test`：**240 通过 / 0 失败**（13 个测试套件；fuzz 512 轮）。
 - `forge coverage --report summary --no-match-coverage "(test|script)/"`：四个核心合约行、语句、分支、函数**均 100%**。
 - `forge fmt --check`：通过。
 - `forge lint`：block-timestamp、unsafe-typecast 两类警告（见 §4，均为预期）。
