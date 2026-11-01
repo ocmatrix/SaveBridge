@@ -358,7 +358,7 @@ abstract contract BridgeBase is
         if (signer != $.whitelistManager) revert InvalidSigner(signer);
         $.whitelistNonce = nonce + 1;
         bytes32 listHash = keccak256(abi.encode(sortedAddrs));
-        address prev;
+        address prev = address(0);
         for (uint256 i; i < n; ++i) {
             address a = sortedAddrs[i];
             if (a == address(0)) revert ZeroAddress();
@@ -528,6 +528,8 @@ abstract contract BridgeBase is
         Payout storage p = $.payouts[key];
         uint8 st = p.status;
         if (st == P_QUEUED) {
+            // same-UTC-day comparison of day numbers, not of balances
+            // slither-disable-next-line incorrect-equality
             if (p.queuedAt / 1 days == currentDay()) _unchargeQuota(p.to, p.amount);
         } else if (requireQueued || st != P_NONE) {
             revert BadPayoutStatus(key, st);

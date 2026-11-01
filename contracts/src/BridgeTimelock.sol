@@ -175,7 +175,9 @@ contract BridgeTimelock is TimelockController, ITimelockForBridge {
     ///      whole execution, so a bad upgrade can never leave governance bricked.
     function _checkBridgeSane() private view {
         IBridgeForTimelock b = IBridgeForTimelock(bridge);
-        b.paused(); // must be callable
+        // liveness probe only: the value is irrelevant, the call must not revert
+        // slither-disable-next-line unused-return
+        b.paused();
         address wlm = b.whitelistManager();
         if (_anyRecoveryActive() || wlm == address(0) || !b.isKeyHolder(wlm) || b.timelock() != address(this)) {
             revert BridgeCheckFailed();

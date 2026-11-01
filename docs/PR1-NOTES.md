@@ -98,10 +98,10 @@
 | Q3 | 恢复期间是否应允许白名单钱包的**移除**批次（D4） | §4.4 vs §4.5 | 当前禁止；如要允许，改一行条件 |
 | Q4 | `pendingAdmin`（已执行、待接收）没有单独的取消函数；只能等 7 天过期、被下一次 `transferAdmin` 覆盖，或由白名单钱包启动恢复作废 | §4.6 | 规格未要求；若要加"白名单钱包可撤销 pendingAdmin"属新机制，未加 |
 | Q5 | 存储布局检查：未安装 `openzeppelin-foundry-upgrades`，用 ERC-7201 命名空间 + 测试固定命名空间槽位（`test_inv06_pos_upgradePreservesState`）代替 | §5.6 #6 | 建议 PR-2 审计时用 OZ Upgrades 插件做 `validateUpgrade` |
-| Q6 | slither 未安装，未运行 | §13 PR-1 | 自查清单见 §4；PR-2 前需跑 slither 并清零高危 |
+| Q6 | ~~slither 未运行~~ → **已完成（A2）**：High 0 / Medium 0，见 §4.0 | §13 PR-1 | — |
 | Q7 | 两条链的实际 fork 部署演练（PR-0 ⑧）未做；`Deploy.s.sol` 只在内存演练 | §5.1 | 需负责人授权后在 fork / 测试网做 |
 
-## 4. 自查清单（slither 未运行）
+## 4. 自查清单
 
 | 项 | 结论 |
 |---|---|
@@ -113,6 +113,23 @@
 | 初始化 | `initializer` 只能一次；代理部署与初始化同一笔交易（`ERC1967Proxy` 构造）；实现合约不可初始化（已测试） |
 | EVM 版本 | 反汇编三份运行时字节码的可执行区（第一个 `0xFE` 之前）：**无** `BLOBBASEFEE`/`PREVRANDAO`/`SELFDESTRUCT`/`CALLCODE`/`TLOAD`/`TSTORE`；唯一 `DELEGATECALL` 来自 UUPS 升级。`0xFE` 之后是数据区，反汇编出的零星"操作码"不可执行 |
 | 时间戳 | 13 处 `block.timestamp` 比较均为小时/天量级的等待期，验证者可操纵的秒级偏差无实质影响 |
+
+### 4.0 slither（A2）
+
+- 版本 **slither 0.11.6**（装在 scratchpad 的 venv 中，未全局安装）；Python 3.14.7。
+- 命令：`slither . --foundry-out-directory out --filter-paths "lib/|contracts/test/|contracts/script/"`（slither 自己会 `forge clean` + `forge build --build-info --skip test/script`）。
+- 首次结果：High 0 / Medium 3 / Low 13 / Informational 6。处理：
+
+| 检测器 | 等级 | 位置 | 处理 |
+|---|---|---|---|
+| uninitialized-local | Medium | `BridgeBase.applyWhitelistBatch` 的 `prev` | **修复**：显式 `address prev = address(0)`（行为不变，首个地址由 `i > 0` 守卫） |
+| incorrect-equality | Medium | `BridgeBase._void`：`p.queuedAt / 1 days == currentDay()` | **误报**：比较的是 UTC 日序号（"同一天才退额度"的规格本意），不是余额；加 `// slither-disable-next-line incorrect-equality` |
+| unused-return | Medium | `BridgeTimelock._checkBridgeSane`：`b.paused()` | **误报**：A1 自检里的可调用性探针，返回值本就不用；加 `// slither-disable-next-line unused-return` |
+| missing-zero-check | Low | `transferAdmin(newAdmin)`、`startAdminRecovery(candidate)` | **误报**：两处都先调用 `_checkCandidate`，第一行即 `if (a == address(0)) revert ZeroAddress()`（slither 不跟进内部函数）；有测试 `test_transferAdminRejectsZeroSelfAndKeyHolder`、`test_startAdminRecoveryRejectsBadCandidates` |
+| timestamp | Low ×11 | 各等待期/过期比较 | 预期：小时/天量级的等待期 |
+| assembly / naming-convention / unused-state | Info | ERC-7201 取槽、`_b/_v/_w`、OZ 常量 | 预期 |
+
+- 处理后：**High 0 / Medium 0** / Low 13（均为上表误报或预期）/ Informational 6。
 
 ### 4.1 升级检查清单（每次升级桥合约前逐条确认）
 
