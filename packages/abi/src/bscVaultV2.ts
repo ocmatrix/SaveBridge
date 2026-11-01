@@ -2628,5 +2628,4 @@ export const bscVaultV2Abi = [
     "name": "ZeroAmount",
     "inputs": []
   }
-]
- as const;
+] as const;
