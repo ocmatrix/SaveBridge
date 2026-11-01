@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { WagmiProvider, useConnection } from "wagmi";
 import type { AppConfig } from "./config";
@@ -14,6 +14,7 @@ import { W2BPanel } from "./components/W2BPanel";
 import { B2WPanel } from "./components/B2WPanel";
 import { Orders } from "./components/Orders";
 import { Footer } from "./components/Footer";
+import { browserStorage, loadKnown, saveKnown, type Known } from "./lib/knownOrders";
 
 export interface AppProps {
   cfg: AppConfig;
@@ -43,12 +44,22 @@ function Page() {
   const { cfg } = useDeps();
   const { address } = useConnection();
   const [tab, setTab] = useState<"w2b" | "b2w">("w2b");
-  const [known, setKnown] = useState<{ w2b: bigint[]; b2w: bigint[] }>({ w2b: [], b2w: [] });
+  const [known, setKnown] = useState<Known>({ w2b: [], b2w: [] });
+  useEffect(() => setKnown(address ? loadKnown(browserStorage(), address) : { w2b: [], b2w: [] }), [address]);
   const state = useBridgeState(address);
   const knownIds: KnownIds = known;
   const orders = useOrders(address, knownIds);
-  const addW2b = useCallback((id: bigint) => setKnown((k) => ({ ...k, w2b: [...k.w2b, id] })), []);
-  const addB2w = useCallback((id: bigint) => setKnown((k) => ({ ...k, b2w: [...k.b2w, id] })), []);
+  const remember = useCallback(
+    (dir: keyof Known, id: bigint) =>
+      setKnown((k) => {
+        const next = { ...k, [dir]: [...k[dir], id] };
+        if (address) saveKnown(browserStorage(), address, next);
+        return next;
+      }),
+    [address],
+  );
+  const addW2b = useCallback((id: bigint) => remember("w2b", id), [remember]);
+  const addB2w = useCallback((id: bigint) => remember("b2w", id), [remember]);
 
   return (
     <div className="page">
