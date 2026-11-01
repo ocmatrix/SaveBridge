@@ -261,7 +261,10 @@ export class Watcher {
   private async advance(c: ChainName): Promise<void> {
     const cfg = this.cfg.chains[c];
     const head = await this.safeHead(c);
-    if (head === null) return;
+    if (head === null) {
+      await this.checkStuck(c, null);
+      return;
+    }
     this.heads[c] = head;
     const der = this.state.derived[c];
     let from = der.cursor ? BigInt(der.cursor.number) + 1n : cfg.startBlock;
@@ -275,10 +278,31 @@ export class Watcher {
       }
       from = to + 1n;
     }
-    const cur = der.cursor ? BigInt(der.cursor.number) : cfg.startBlock - 1n;
+    const curC = this.state.derived[c].cursor;
+    const cur = curC ? BigInt(curC.number) : cfg.startBlock - 1n;
     if (head - cur > BigInt(cfg.maxLagBlocks)) {
       await this.raise("INDEX_LAG", `${c} 监控落后 ${head - cur} 块`, { chain: c, detail: { head: head.toString(), cursor: cur.toString() }, key: `lag:${c}` });
     } else this.alerts.clearKey(`lag:${c}`);
+    await this.checkStuck(c, head);
+  }
+
+  /** B1: the cursor neither moved nor is caught up for longer than `cursorStallSeconds` → level 1. */
+  private async checkStuck(c: ChainName, head: bigint | null): Promise<void> {
+    const m = this.state.meta;
+    const now = this.now();
+    const cur = this.state.derived[c].cursor?.number ?? null;
+    const prev = m.cursorProgress[c];
+    const caughtUp = head !== null && cur !== null && BigInt(cur) >= head;
+    if (!prev || prev.number !== cur || caughtUp) {
+      m.cursorProgress[c] = { number: cur, at: now };
+      return;
+    }
+    if (now - prev.at > this.cfg.cursorStallSeconds)
+      await this.raise("CURSOR_STUCK", `${c} 监控游标已 ${Math.round((now - prev.at) / 60)} 分钟未前进（RPC 不足 / 不一致 / 取不到安全高度），监控处于失明状态`, {
+        chain: c,
+        detail: { cursor: cur, since: prev.at, head: head?.toString() ?? null },
+        key: `stuck:${c}:${prev.at}`,
+      });
   }
 
   private legacyOn(c: ChainName): Address[] {

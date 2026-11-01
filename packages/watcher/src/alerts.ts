@@ -15,6 +15,7 @@ export const ALERT_LEVELS = {
   WANTOS_REORG: 1,
   MINT_EXCESS: 1,
   CHECK_OVERDUE: 1,
+  CURSOR_STUCK: 1,
   // level 2
   PAUSED: 2,
   UNPAUSED: 2,

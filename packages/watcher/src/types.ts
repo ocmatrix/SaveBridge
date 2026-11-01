@@ -126,6 +126,8 @@ export interface MetaState {
   controlledSet: string[];
   snapshots: Array<{ wantosCursor: Cursor | null; derived: DerivedState; takenAt?: number }>;
   /** (alert, channel) pairs whose delivery failed; retried per channel every tick (B2 / A-3). */
+  /** B1: last time each chain's cursor moved (or was caught up). */
+  cursorProgress: Partial<Record<ChainName, { number: string | null; at: number }>>;
   outbox: Array<{ id: string; channel: number; alert: Alert }>;
   /** Per channel: items dropped because the outbox hit its cap (B3). */
   outboxDropped: Record<string, number>;

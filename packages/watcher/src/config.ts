@@ -47,6 +47,8 @@ export interface WatcherConfig {
   wantosStallSeconds: number;
   /** System clock vs BSC latest block time; above this → CLOCK_SKEW (level 2). */
   maxClockSkewSeconds: number;
+  /** B1: cursor not moving (and not caught up) for longer than this → level 1 CURSOR_STUCK. */
+  cursorStallSeconds: number;
   pauseRetry: { attempts: number; backoffMs: number };
   timelockRemindersSeconds: number[];
   dailyCapReportRatioBps: number;
@@ -131,6 +133,7 @@ export function parseConfig(raw: unknown): WatcherConfig {
     gasCheckIntervalSeconds: num(r["gasCheckIntervalSeconds"] ?? 300, "gasCheckIntervalSeconds", 1),
     wantosStallSeconds: num(r["wantosStallSeconds"], "wantosStallSeconds", 1),
     maxClockSkewSeconds: num(r["maxClockSkewSeconds"] ?? 60, "maxClockSkewSeconds", 1),
+    cursorStallSeconds: num(r["cursorStallSeconds"] ?? 600, "cursorStallSeconds", 1),
     pauseRetry: { attempts: num(pr["attempts"], "pauseRetry.attempts", 1), backoffMs: num(pr["backoffMs"], "pauseRetry.backoffMs") },
     timelockRemindersSeconds: arr(r["timelockRemindersSeconds"], "timelockRemindersSeconds").map((x, i) => num(x, `timelockRemindersSeconds[${i}]`, 1)),
     dailyCapReportRatioBps: num(r["dailyCapReportRatioBps"] ?? 7000, "dailyCapReportRatioBps", 1),

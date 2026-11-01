@@ -28,7 +28,7 @@ describe("misc", () => {
     const cfg = parseConfig(JSON.parse(readFileSync(join(__dirname, "../../config/watcher.example.json"), "utf8")));
     const rpc = buildRpc(cfg);
     expect(rpc.bsc.endpoints).toHaveLength(3);
-    expect(rpc.wantos.endpoints).toHaveLength(2);
+    expect(rpc.wantos.endpoints).toHaveLength(3);
     expect(rpc.bsc.minAgree).toBe(2);
   });
 });

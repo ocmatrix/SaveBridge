@@ -43,6 +43,21 @@ describe("RPC hardening", () => {
       expect(t.codes()).toContain("RPC_UNREACHABLE");
     });
 
+    it("B1: a cursor that cannot move for more than 10 minutes escalates to level 1 (CURSOR_STUCK)", async () => {
+      const broken = tamperedClient(H.bsc, (m) => (m === "eth_getLogs" ? { handled: true, result: new Error("getLogs down") } : { handled: false }));
+      const t = await makeWatcher(H, { endpoints: { bsc: [{ label: "a", client: H.bsc.pub }, { label: "broken", client: broken }] } });
+      await H.settle();
+      await t.w.tick();
+      t.clock.now += 599;
+      await t.w.tick();
+      expect(t.codes()).not.toContain("CURSOR_STUCK");
+      t.clock.now += 2;
+      await t.w.tick();
+      const a = t.sink.alerts.find((x) => x.code === "CURSOR_STUCK")!;
+      expect(a.level).toBe(1);
+      expect(a.chain).toBe("bsc");
+    });
+
     it("safe head is the minimum across RPCs: a primary claiming a far-ahead finalized block cannot move the cursor past the others", async () => {
       const ahead = tamperedClient(H.bsc, (m, p) =>
         m === "eth_getBlockByNumber" && p[0] === "finalized" ? { handled: true, result: new Error("no finalized here") } : { handled: false },

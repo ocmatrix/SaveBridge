@@ -16,7 +16,7 @@
     },
     "wantos": {
       "chainId": 13555,
-      "rpcUrls": ["https://wantos-selfnode.example.invalid", "https://wantos-rpc-b.example.invalid"],
+      "rpcUrls": ["https://wantos-selfnode.example.invalid", "https://wantos-rpc-b.example.invalid", "https://wantos-rpc-c.example.invalid"],
       "bridge": "0x00000000000000000000000000000000000b0001",
       "timelock": "0x00000000000000000000000000000000000b0002",
       "token": "0xc74F2e7fBdA2af9D1fc26b85E341229063Dc0873",
@@ -33,6 +33,7 @@
   "gasCheckIntervalSeconds": 300,
   "wantosStallSeconds": 60,
   "maxClockSkewSeconds": 60,
+  "cursorStallSeconds": 600,
   "pauseRetry": { "attempts": 5, "backoffMs": 3000 },
   "timelockRemindersSeconds": [86400, 21600],
   "dailyCapReportRatioBps": 7000,
