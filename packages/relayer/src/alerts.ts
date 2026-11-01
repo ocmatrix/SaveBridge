@@ -7,6 +7,8 @@ export const ALERT_LEVEL = {
   HEARTBEAT_MISSED: 1,
   RESERVE_CRITICAL: 1,
   BSC_REORG: 1,
+  /** A rejected / to-be-refunded order whose payout is Released: refunding it would pay twice. */
+  PAYOUT_ALREADY_RELEASED: 1,
   WAIT_TIMEOUT: 2,
   STATE_TIMEOUT: 2,
   NONCE_MISMATCH: 2,

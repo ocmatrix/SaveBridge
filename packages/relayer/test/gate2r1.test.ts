@@ -176,4 +176,30 @@ describe("Gate2 r1: source-order hard preconditions, approvals, bump race", () =
     await sys.relayer.tick();
     expect((await new OrderRepo(sys.db).get(wKey(1n)))!.status).toBe("RELEASED");
   });
+
+  it("B1: owner reject is refused when the payout is already Released; REJECTED never advances over a Released payout", async () => {
+    const review: RiskEngine = { evaluate: async () => ({ kind: "REVIEW", level: "audit", reason: "pr4" }) };
+    const sys = await buildRelayer(world, { risk: review });
+    await bridgeOut(world, world.act.user, 100n * U);
+    await bridgeOut(world, world.act.user2, 100n * U);
+    await confirmWantos(world);
+    await sys.relayer.tick();
+    // payouts released outside the relayer's own flow (e.g. a racing / compromised payout key)
+    const relayer = privateKeyToAccount(world.bscRelayerKey);
+    await write(world.bsc, relayer, world.b.bridge, bscVaultV2Abi as Abi, "release", [1n, world.act.user.address, 100n * U]);
+    await write(world.bsc, relayer, world.b.bridge, bscVaultV2Abi as Abi, "release", [2n, world.act.user2.address, 100n * U]);
+    const exp = BigInt(Math.floor(sys.clock.now / 1000) + 600);
+    const sig = await world.act.admin.signMessage({ message: reviewMessage({ chainId: BSC_ID, eventKey: wKey(1n), decision: "reject", expires: exp }) });
+    await expect(sys.relayer.review.decide({ eventKey: wKey(1n), decision: "reject", expires: exp, signature: sig })).rejects.toThrow(/released/i);
+    expect((await new OrderRepo(sys.db).get(wKey(1n)))!.status).toBe("REVIEW");
+    expect(sys.alerts.byKind("PAYOUT_ALREADY_RELEASED")).toHaveLength(1);
+    expect(sys.alerts.byKind("PAYOUT_ALREADY_RELEASED")[0]!.level).toBe(1);
+    // order 2 somehow ended up REJECTED (e.g. rejected before the release landed)
+    await sys.db.query("update orders set status = 'REJECTED' where event_key = $1", [(await import("../src/bytes")).toBytes(wKey(2n))]);
+    await finalizeBsc(world);
+    await sys.relayer.tick();
+    await sys.relayer.tick();
+    expect((await new OrderRepo(sys.db).get(wKey(2n)))!.status).toBe("REJECTED");
+    expect(sys.alerts.byKind("PAYOUT_ALREADY_RELEASED").length).toBeGreaterThanOrEqual(2);
+  });
 });

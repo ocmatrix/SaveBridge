@@ -365,6 +365,15 @@ export class Processor {
   private async handleRejected(o: Order): Promise<void> {
     const pf = await this.finalPayout(o);
     if (pf?.status === PayoutStatus.Voided) await this.repo.move(o, "REFUNDING", { reason: null });
+    else if (pf?.status === PayoutStatus.Released) {
+      // Gate2 B1: REJECTED but paid out → never move towards a refund; page the owner.
+      await this.o.alerts.emit({
+        kind: "PAYOUT_ALREADY_RELEASED",
+        key: o.eventKey,
+        message: `${o.direction} order ${o.srcEventNonce} is REJECTED but its payout is Released (final); do NOT refund`,
+        data: { eventKey: o.eventKey },
+      });
+    }
   }
 
   private async handleRefunding(o: Order): Promise<void> {

@@ -4,6 +4,7 @@ import type { BridgeView } from "./chain/bridges";
 import type { Db } from "./db/types";
 import { OrderRepo } from "./orders";
 import { toBytes } from "./bytes";
+import { PayoutStatus } from "./classify";
 import type { Hex } from "./types";
 
 export type ReviewDecision = "approve" | "reject";
@@ -53,6 +54,19 @@ export class ReviewService {
     if (r.expires < nowSec) throw new Error("decision expired");
     if (r.expires > nowSec + MAX_DECISION_TTL_S) throw new Error("decision expires too far in the future (max 24h)");
     const { view, chainId, client } = this.o.payoutView(order.direction);
+    if (r.decision === "reject") {
+      // Gate2 B1: never mark REJECTED (→ refund path) an order whose payout already went out.
+      const p = await view.payout(r.eventKey);
+      if (p.status === PayoutStatus.Released) {
+        await this.o.alerts.emit({
+          kind: "PAYOUT_ALREADY_RELEASED",
+          key: r.eventKey,
+          message: `reject refused for ${r.eventKey}: payout is already Released on chain ${chainId}; a refund would pay twice`,
+          data: { eventKey: r.eventKey },
+        });
+        throw new Error("payout already released; reject refused");
+      }
+    }
     const admin = await view.adminWallet();
     const message = reviewMessage({ chainId, eventKey: r.eventKey, decision: r.decision, expires: r.expires });
     const ok = await client.verifyMessage({ address: admin, message, signature: r.signature }).catch(() => false);
