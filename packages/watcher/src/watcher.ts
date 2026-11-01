@@ -42,6 +42,7 @@ const MAX_SNAPSHOTS = 16;
 const KEY_CHANGE_EVENTS = new Set([
   "RoleGranted",
   "RoleRevoked",
+  "RoleAdminChanged",
   "WhitelistManagerTransferStarted",
   "WhitelistManagerTransferCancelled",
   "WhitelistManagerChanged",
