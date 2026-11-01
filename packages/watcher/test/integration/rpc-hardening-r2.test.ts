@@ -108,4 +108,110 @@ describe("round-2 RPC hardening", () => {
     expect(await H.isPaused("bsc")).toBe(true);
     expect(t.codes()).not.toContain("MISMATCH_ACKNOWLEDGED");
   });
+
+  describe("single-RPC protections (mutation survivors R02 / R34 / R31 / R05 / R06 / R13)", () => {
+    const blockLie = (h: ChainH, on: () => boolean, edit: (b: Record<string, unknown>) => void) =>
+      tamperedClient(h, (m, p) => {
+        if (!on() || m !== "eth_getBlockByNumber" || typeof p[0] !== "string" || !/^0x[0-9a-f]+$/.test(p[0] as string)) return { handled: false };
+        return {
+          handled: true,
+          result: (async () => {
+            const j = (await (await fetch(h.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: m, params: p }) })).json()) as { result: Record<string, unknown> };
+            edit(j.result);
+            return j.result;
+          })(),
+        };
+      });
+
+    it("R02: a primary lying once about a range-end block hash cannot plant a fake cursor (no false WANTOS rollback)", async () => {
+      let lie = true;
+      const liar = blockLie(H.wantos, () => lie, (b) => void (b["hash"] = `0x${"77".repeat(32)}`));
+      const t = await makeWatcher(H, { endpoints: { wantos: [{ label: "liar", client: liar }, { label: "honest", client: H.wantos.pub }] } });
+      await H.settle();
+      await t.w.tick();
+      lie = false;
+      await H.settle();
+      await t.w.tick();
+      await t.w.tick();
+      expect(t.codes()).not.toContain("WANTOS_REORG");
+      expect(await H.isPaused("bsc")).toBe(false);
+      expect(await H.isPaused("wantos")).toBe(false);
+      expect(t.w.state.derived.wantos.cursor).not.toBeNull();
+    });
+
+    it("R34: a primary lying once about a log's block timestamp cannot push decideAt into the far future", async () => {
+      let lie = true;
+      const liar = blockLie(H.bsc, () => lie, (b) => void (b["timestamp"] = `0x${(BigInt(b["timestamp"] as string) + 10_000_000n).toString(16)}`));
+      const t = await makeWatcher(H, { endpoints: { bsc: [{ label: "liar", client: liar }, { label: "honest", client: H.bsc.pub }] } });
+      const r = await H.bsc.write(ACCOUNTS.relayer, "release", [51n, ACCOUNTS.user2.address, E(50)]);
+      await H.settle();
+      t.clock.now = r.timestamp + 10;
+      await t.w.tick();
+      lie = false;
+      t.clock.now = r.timestamp + 400;
+      await t.w.tick();
+      expect(await H.isPaused("bsc")).toBe(true);
+    });
+
+    it("R31: the Unpaused look-ahead is a consensus read — a fabricated Unpaused from one RPC does not acknowledge", async () => {
+      let X: bigint | null = null;
+      const liar = injector(H.bsc, () => X, fakeEvent(H.bsc, "Unpaused", () => ACCOUNTS.admin.address), { withTopics: true });
+      const t = await makeWatcher(H, {
+        endpoints: { bsc: [{ label: "liar", client: liar }, { label: "honest", client: H.bsc.pub }] },
+        config: (c) => void ((c.chains.bsc.maxBlockRange = 1), (c.maxRangesPerTick = 1)),
+      });
+      const r = await H.bsc.write(ACCOUNTS.relayer, "release", [52n, ACCOUNTS.user2.address, E(50)]);
+      await H.settle();
+      t.clock.now = r.timestamp + 10;
+      await t.w.tick(); // forged payout ingested, cursor lags behind the safe head
+      await H.bsc.increaseTime(400);
+      await H.bsc.mine(5);
+      X = (await H.bsc.pub.getBlock({ blockTag: "finalized" })).number;
+      t.clock.now = r.timestamp + 401;
+      await t.w.tick();
+      expect(await H.isPaused("bsc")).toBe(true);
+      expect(t.codes()).not.toContain("MISMATCH_ACKNOWLEDGED");
+    });
+
+    it("R05: the safe head is the minimum — a primary reporting 'latest' as finalized cannot pull the cursor past honest finality", async () => {
+      const liar = tamperedClient(H.bsc, (m, p) =>
+        m === "eth_getBlockByNumber" && p[0] === "finalized"
+          ? { handled: true, result: (async () => ((await (await fetch(H.bsc.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: m, params: ["latest", p[1]] }) })).json()) as { result: unknown }).result)() }
+          : { handled: false },
+      );
+      const t = await makeWatcher(H, { endpoints: { bsc: [{ label: "liar", client: liar }, { label: "honest", client: H.bsc.pub }] } });
+      await H.settle();
+      await H.bsc.mine(5);
+      await t.w.tick();
+      const fin = (await H.bsc.pub.getBlock({ blockTag: "finalized" })).number;
+      expect(BigInt(t.w.state.derived.bsc.cursor!.number)).toBeLessThanOrEqual(fin);
+    });
+
+    it("R06: WANTOS head needs ≥ minRpcAgreement answers — one RPC failing eth_blockNumber stops progress with an alert", async () => {
+      const flaky = tamperedClient(H.wantos, (m) => (m === "eth_blockNumber" ? { handled: true, result: new Error("down") } : { handled: false }));
+      const t = await makeWatcher(H, { endpoints: { wantos: [{ label: "a", client: H.wantos.pub }, { label: "flaky", client: flaky }] } });
+      await H.settle();
+      await t.w.tick();
+      expect(t.w.state.derived.wantos.cursor).toBeNull();
+      expect(t.codes()).toContain("RPC_UNREACHABLE");
+    });
+
+    it("R13: a failed range rolls back ALL derived state (here: the mint total), not only the sums", async () => {
+      const t = await makeWatcher(H);
+      await H.wantos.write(ACCOUNTS.tokenDeployer, "mint", [ACCOUNTS.attacker.address, E(7)], H.wantos.token);
+      await H.wantos.write(ACCOUNTS.user1, "approve", [H.wantos.bridge, E(20)], H.wantos.token);
+      await H.wantos.write(ACCOUNTS.user1, "bridgeOut", [E(20)]);
+      await H.settle();
+      const w = t.w as unknown as { onBridge: (c: string, l: { name: string }) => Promise<void> };
+      const orig = w.onBridge.bind(t.w);
+      let n = 0;
+      w.onBridge = async (c, l) => {
+        if (l.name === "BridgeOut" && n++ === 0) throw new Error("boom");
+        return orig(c, l);
+      };
+      await t.w.tick();
+      await t.w.tick();
+      expect(t.w.state.derived.mintTotal).toBe(E(7).toString());
+    });
+  });
 });

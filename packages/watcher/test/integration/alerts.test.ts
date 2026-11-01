@@ -235,6 +235,13 @@ describe("§9.3 alert drills", () => {
     expect(levelOf(t, "CLOCK_SKEW")).toBe(2);
   });
 
+  it("R19: CLOCK_SKEW also fires when the system clock is BEHIND the chain", async () => {
+    const t = await makeWatcher(H);
+    t.clock.now = (await H.bsc.latest()).timestamp - 3600;
+    await t.w.tick();
+    expect(levelOf(t, "CLOCK_SKEW")).toBe(2);
+  });
+
   it("A-3 / R12: a phone channel that was down gets the alert on the next tick (only that channel is retried)", async () => {
     const phone = new MemoryAlertSink();
     let down = 1;

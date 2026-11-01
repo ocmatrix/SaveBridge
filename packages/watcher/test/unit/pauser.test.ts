@@ -118,6 +118,13 @@ describe("PauseExecutor", () => {
     expect(await ex.pause("bsc")).toMatchObject({ ok: true, status: "already-paused" });
   });
 
+  it("R09: a mined pause tx is not success until the RPCs confirm paused()", async () => {
+    const reader = new FakeReader(false);
+    reader.waitReceipt = async () => "success"; // mined, but paused() never confirmed
+    const { ex } = mk(reader);
+    expect(await ex.pause("bsc")).toMatchObject({ ok: false, status: "failed" });
+  });
+
   it("an EnforcedPause claim that the RPCs do not confirm is a failure (A2)", async () => {
     const sender = new FakeSender();
     for (let i = 0; i < 3; i++) sender.failures.push(new Error("execution reverted: custom error 0xd93c0665"));

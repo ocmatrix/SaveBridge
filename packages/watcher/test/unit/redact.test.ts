@@ -22,6 +22,10 @@ describe("B3 redaction of error text", () => {
     expect(m).not.toContain(KEY64);
   });
 
+  it("R16: a bare Bearer token (no Authorization header) is removed", () => {
+    expect(redact("upstream said: Bearer abc123xyzTOKEN")).not.toContain("abc123xyzTOKEN");
+  });
+
   it("leaves ordinary text and addresses intact", () => {
     expect(redact("nonce too low for 0x1111111111111111111111111111111111111111")).toBe("nonce too low for 0x1111111111111111111111111111111111111111");
   });
