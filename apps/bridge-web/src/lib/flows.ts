@@ -113,6 +113,8 @@ export async function bridgeOutFlow(ctx: TxContext, amount: bigint, onStep: (s: 
     pc.readContract({ ...W, functionName: "currentDay" }),
   ]);
   if (paused) throw new PreflightError("EnforcedPause");
+  const bscPaused = await ctx.clients.bsc.readContract({ address: ctx.cfg.bsc.bridge, abi: bscVaultV2Abi, functionName: "paused" });
+  if (bscPaused) throw new PreflightError("EnforcedPause"); // B6: payout side paused
   if (!wl) throw new PreflightError("NotWhitelisted", [user]);
   if (code && code !== "0x") throw new PreflightError("ContractCaller", [user]);
   if (ts > ceiling) throw new PreflightError("SupplyCeilingExceeded", [ts, ceiling]);

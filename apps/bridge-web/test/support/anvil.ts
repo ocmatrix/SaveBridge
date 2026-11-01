@@ -257,3 +257,20 @@ export async function snapshot(env: Env): Promise<() => Promise<void>> {
 }
 
 export const amount = (n: string) => parseUnits(n, 18);
+
+/** Relayer: WANTOS queueRelease only (uses up b2wDailyCap without executing). */
+export async function relayerQueue(env: Env, nonce: bigint, to: Address, amount: bigint) {
+  await send(env.wantos, KEYS.relayer, env.wantos.bridge, wantosBridgeV2Abi as Abi, "queueRelease", [nonce, to, amount]);
+}
+
+/** MockToken has an open mint: raise WANTOS-USDT totalSupply (to trip supplyCeiling). */
+export async function mintWantosUsdt(env: Env, to: Address, amount: bigint) {
+  const token = artifact("MockToken.sol", "MockToken");
+  await send(env.wantos, KEYS.deployer, env.wantos.usdt, token.abi, "mint", [to, amount]);
+}
+
+/** Alice spends W2B quota directly on chain (approve + bridgeOut), bypassing the page. */
+export async function bridgeOutDirect(env: Env, account: HDAccount, amount: bigint) {
+  await send(env.wantos, account, env.wantos.usdt, artifact("MockToken.sol", "MockToken").abi, "approve", [env.wantos.bridge, amount]);
+  await send(env.wantos, account, env.wantos.bridge, wantosBridgeV2Abi as Abi, "bridgeOut", [amount]);
+}

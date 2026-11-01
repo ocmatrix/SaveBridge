@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createWalletClient, decodeFunctionData, erc20Abi, http, maxUint256, parseEventLogs, type Address } from "viem";
 import { bscVaultV2Abi } from "@bridge/abi";
-import { KEYS, U, startEnv, whitelist, pause, relayerRelease, relayerCredit, snapshot, type Env } from "../support/anvil";
+import { KEYS, U, startEnv, whitelist, pause, relayerRelease, relayerCredit, relayerQueue, mintWantosUsdt, snapshot, type Env } from "../support/anvil";
 import { makeClients } from "../../src/lib/clients";
 import { readBridgeState } from "../../src/lib/reader";
 import { bridgeOutFlow, depositFlow, sendGuarded } from "../../src/lib/flows";
@@ -178,6 +178,40 @@ describe("B2W preflight also checks the WANTOS side (review finding 7)", () => {
     const err = await depositFlow(ctxFor("bsc"), 100n * U, KEYS.alice.address, () => {}).catch((e) => e);
     expect(translateError(err, { decimals: 18 }).key).toBe("err.paused");
     expect(await env.bsc.anvil.pc.getTransactionCount({ address: KEYS.alice.address })).toBe(before);
+  });
+});
+
+describe("preflights refuse before any transaction (A2 / B6)", () => {
+  async function zeroTx(side: "wantos" | "bsc", run: () => Promise<unknown>, key: string) {
+    const pc = env[side].anvil.pc;
+    const before = await pc.getTransactionCount({ address: KEYS.alice.address });
+    const err = await run().catch((e) => e);
+    expect(translateError(err, { decimals: 18 }).key).toBe(key);
+    expect(await pc.getTransactionCount({ address: KEYS.alice.address })).toBe(before);
+  }
+
+  it("deposit: BSC paused", async () => {
+    await pause(env, env.bsc);
+    await zeroTx("bsc", () => depositFlow(ctxFor("bsc"), 100n * U, KEYS.alice.address, () => {}), "err.paused");
+  });
+
+  it("deposit: WANTOS inbound daily cap would be exceeded", async () => {
+    await relayerQueue(env, 999n, KEYS.bob.address, 2950n * U);
+    await zeroTx("bsc", () => depositFlow(ctxFor("bsc"), 100n * U, KEYS.alice.address, () => {}), "err.dailyCapExceeded");
+  });
+
+  it("bridgeOut: supplyCeiling exceeded", async () => {
+    await whitelist(env, env.wantos, [KEYS.alice.address]);
+    await whitelist(env, env.bsc, [KEYS.alice.address]);
+    await mintWantosUsdt(env, KEYS.bob.address, 20_000n * U);
+    await zeroTx("wantos", () => bridgeOutFlow(ctxFor("wantos"), 100n * U, () => {}), "err.supplyCeiling");
+  });
+
+  it("bridgeOut: BSC (payout side) paused (B6)", async () => {
+    await whitelist(env, env.wantos, [KEYS.alice.address]);
+    await whitelist(env, env.bsc, [KEYS.alice.address]);
+    await pause(env, env.bsc);
+    await zeroTx("wantos", () => bridgeOutFlow(ctxFor("wantos"), 100n * U, () => {}), "err.paused");
   });
 });
 

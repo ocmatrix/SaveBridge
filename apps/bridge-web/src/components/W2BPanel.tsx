@@ -12,7 +12,8 @@ import { StepLine } from "./StepLine";
 
 /** First reason the bridge-out button is disabled, or null. */
 export function w2bBlocker(st: BridgeState): I18nKey | null {
-  if (st.wantos.paused) return "status.paused";
+  // B6: also when the payout side (BSC) is paused — otherwise the funds sit locked on WANTOS
+  if (st.wantos.paused || st.bsc.paused) return "status.paused";
   // conservative: bridge out only when open on both chains (BSC release requires the BSC whitelist too)
   if (st.wl !== "open") return st.wl === "syncing" ? "wl.syncing" : "wl.closed";
   if (st.supplyCeilingHit) return "status.supplyCeiling";
