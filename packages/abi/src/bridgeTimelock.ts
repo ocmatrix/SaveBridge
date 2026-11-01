@@ -1550,5 +1550,4 @@ export const bridgeTimelockAbi = [
     "name": "ZeroAddress",
     "inputs": []
   }
-]
- as const;
+] as const;

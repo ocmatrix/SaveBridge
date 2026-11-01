@@ -2569,5 +2569,4 @@ export const wantosBridgeV2Abi = [
     "name": "ZeroAmount",
     "inputs": []
   }
-]
- as const;
+] as const;
