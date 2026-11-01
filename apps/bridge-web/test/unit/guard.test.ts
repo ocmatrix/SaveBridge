@@ -30,3 +30,16 @@ describe("target allow-list (DESIGN §8.1)", () => {
     expect(() => assertAllowedTarget(testConfig, 13555, undefined)).toThrow(TargetNotAllowedError);
   });
 });
+
+describe("function allow-list (review finding 8)", () => {
+  it("only approve(bridge,·) on USDT, bridgeOut / deposit on the bridge", async () => {
+    const { assertAllowedCall } = await import("../../src/lib/guard");
+    expect(() => assertAllowedCall(testConfig, 13555, W_USDT, "approve", [BRIDGE, 1n])).not.toThrow();
+    expect(() => assertAllowedCall(testConfig, 13555, BRIDGE, "bridgeOut", [1n])).not.toThrow();
+    expect(() => assertAllowedCall(testConfig, 56, BRIDGE, "deposit", [1n, BRIDGE])).not.toThrow();
+    expect(() => assertAllowedCall(testConfig, 13555, W_USDT, "approve", ["0x4444444444444444444444444444444444444444", 1n])).toThrow(TargetNotAllowedError);
+    expect(() => assertAllowedCall(testConfig, 13555, W_USDT, "transfer", [BRIDGE, 1n])).toThrow(TargetNotAllowedError);
+    expect(() => assertAllowedCall(testConfig, 13555, BRIDGE, "deposit", [1n, BRIDGE])).toThrow(TargetNotAllowedError);
+    expect(() => assertAllowedCall(testConfig, 56, BRIDGE, "bridgeOut", [1n])).toThrow(TargetNotAllowedError);
+  });
+});

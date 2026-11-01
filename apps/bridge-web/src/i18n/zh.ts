@@ -38,6 +38,7 @@ export const zh = {
   "b2w.recipient": "WANTOS 收款地址",
   "b2w.recipientHint": "默认为当前地址。请勿填写交易所充值地址。",
   "b2w.recipientInvalid": "收款地址无效",
+  "b2w.confirmRecipient": "将存入 {amount} USDT，到账 WANTOS 地址：{to}",
   "b2w.eta": "BSC 存入后约 15 分钟排队，到账 WANTOS。",
   "b2w.notOpenNote": "当前地址未开通跨链：存入可以到账 WANTOS，但从 WANTOS 跨回 BSC 需要先开通。",
 

@@ -28,3 +28,14 @@ describe("post-build checks", () => {
     expect(checkFile("a.js", "const ok = 1;")).toEqual([]);
   });
 });
+
+describe("real-build connect-src gate (review finding 2)", () => {
+  it("rejects extra or plain-http origins", async () => {
+    // @ts-expect-error plain .mjs
+    const { checkConnectSrc } = await import("../../scripts/distChecks.mjs");
+    const ok = "/*\n  Content-Security-Policy: default-src 'none'; connect-src 'self' https://a.io https://b.io wss://relay.walletconnect.com wss://relay.walletconnect.org; frame-ancestors 'none'\n";
+    expect(checkConnectSrc(ok)).toEqual([]);
+    expect(checkConnectSrc(ok.replace("https://b.io", "https://b.io https://evil.io https://c.io"))).not.toEqual([]);
+    expect(checkConnectSrc(ok.replace("https://b.io", "http://127.0.0.1:8545"))).not.toEqual([]);
+  });
+});

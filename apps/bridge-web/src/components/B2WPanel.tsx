@@ -1,9 +1,9 @@
 import { useEffect, useId, useState } from "react";
 import { useConnection } from "wagmi";
-import { getAddress, isAddress, zeroAddress } from "viem";
+import { getAddress } from "viem";
 import { useDeps, useI18n } from "../context";
 import type { BridgeState } from "../lib/reader";
-import { formatAmount, parseAmountInput, validateB2W } from "../lib/amount";
+import { formatAmount, parseAmountInput, validateB2W, validRecipient } from "../lib/amount";
 import { depositFlow } from "../lib/flows";
 import type { I18nKey } from "../i18n";
 import { AmountField } from "./AmountField";
@@ -35,7 +35,7 @@ export function B2WPanel({ state, onDeposit }: { state: BridgeState | undefined;
 
   const wrongNet = !!address && chainId !== cfg.bsc.id;
   const blocker = state ? b2wBlocker(state) : null;
-  const recipientOk = isAddress(recipient, { strict: false }) && recipient.toLowerCase() !== zeroAddress;
+  const recipientOk = validRecipient(recipient);
   const parsed = input.trim() ? parseAmountInput(input, dec) : null;
   const problem =
     parsed && state
@@ -88,6 +88,7 @@ export function B2WPanel({ state, onDeposit }: { state: BridgeState | undefined;
       <StepLine step={flow.step} amount={parsed?.ok ? f(parsed.value) : ""} />
       {flow.done && <p className="ok">{flow.done}</p>}
       {flow.error && <p className="error">{flow.error}</p>}
+      {recipientOk && parsed?.ok && <p className="confirm">{t("b2w.confirmRecipient", { amount: f(parsed.value), to: getAddress(recipient) })}</p>}
       <button type="button" className="primary" disabled={!canSubmit} onClick={() => void submit()}>
         {t("b2w.submit")}
       </button>

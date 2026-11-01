@@ -53,3 +53,4 @@ footer code { font-size: 0.85rem; }
 h2 { font-size: 1rem; margin: 0 0 8px; }
 h3 { font-size: 0.9rem; margin: 0 0 8px; }
 a { color: var(--accent); }
+.confirm { font-family: ui-monospace, monospace; font-size: 0.85rem; word-break: break-all; }

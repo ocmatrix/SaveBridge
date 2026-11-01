@@ -2,7 +2,7 @@ import { erc20Abi, parseEventLogs, zeroAddress, type Abi, type Account, type Add
 import { bscVaultV2Abi, wantosBridgeV2Abi } from "@bridge/abi";
 import type { AppConfig } from "../config";
 import { clientFor, type Clients } from "./clients";
-import { assertAllowedTarget } from "./guard";
+import { assertAllowedCall, assertAllowedTarget } from "./guard";
 import { buildExactApprove } from "./approve";
 
 export interface TxContext {
@@ -59,7 +59,7 @@ export interface GuardedRequest {
  * USDT contracts of that chain (DESIGN §8.1), that the wallet is on that chain, and simulates first.
  */
 export async function sendGuarded(ctx: TxContext, chainId: number, req: GuardedRequest): Promise<Hex> {
-  assertAllowedTarget(ctx.cfg, chainId, req.address);
+  assertAllowedCall(ctx.cfg, chainId, req.address, req.functionName, req.args);
   const actual = await ctx.wallet.getChainId();
   if (actual !== chainId) throw new WrongNetworkError(chainId, actual);
   const pc = clientFor(ctx.cfg, ctx.clients, chainId);
@@ -145,6 +145,17 @@ export async function depositFlow(ctx: TxContext, amount: bigint, recipient: Add
   const B = { address: c.bridge, abi: bscVaultV2Abi } as const;
   const [paused, params] = await Promise.all([pc.readContract({ ...B, functionName: "paused" }), pc.readContract({ ...B, functionName: "params" })]);
   if (paused) throw new PreflightError("EnforcedPause");
+  // the credit happens on WANTOS: refuse while it is paused or today's inbound cap cannot take the amount
+  const W = { address: ctx.cfg.wantos.bridge, abi: wantosBridgeV2Abi } as const;
+  const w = ctx.clients.wantos;
+  const [wPaused, wParams, wDay] = await Promise.all([
+    w.readContract({ ...W, functionName: "paused" }),
+    w.readContract({ ...W, functionName: "params" }),
+    w.readContract({ ...W, functionName: "currentDay" }),
+  ]);
+  if (wPaused) throw new PreflightError("EnforcedPause");
+  const wUsed = await w.readContract({ ...W, functionName: "dailyUsed", args: [wDay] });
+  if (wUsed + amount > wParams.b2wDailyCap) throw new PreflightError("DailyCapExceeded", [wUsed + amount, wParams.b2wDailyCap]);
   if (amount < params.minDeposit) throw new PreflightError("AmountBelowMinimum", [amount, params.minDeposit]);
   if (amount > params.maxDepositPerTx) throw new PreflightError("AmountAboveLimit", [amount, params.maxDepositPerTx]);
   await balanceCheck(ctx, c.id, c.usdt, amount);

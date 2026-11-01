@@ -57,3 +57,19 @@ export function checkFile(name, text) {
   if (/\beval\s*\(|new Function\s*\(/.test(text)) errs.push(`${name}: eval/new Function (blocked by CSP)`);
   return errs;
 }
+
+const WC = new Set(["wss://relay.walletconnect.com", "wss://relay.walletconnect.org"]);
+
+/** Real builds: connect-src = 'self' + ≤3 https origins (two RPCs, optional relayer API) + WalletConnect relay only. */
+export function checkConnectSrc(headers) {
+  const line = (headers ?? "").split("\n").find((l) => l.includes("Content-Security-Policy:")) ?? "";
+  const dir = line.split(";").map((d) => d.trim()).find((d) => d.startsWith("connect-src ") || d.includes(" connect-src "));
+  if (!dir) return ["no connect-src"];
+  const srcs = dir.slice(dir.indexOf("connect-src ") + 12).split(/\s+/).filter(Boolean);
+  const errs = [];
+  const others = srcs.filter((s) => s !== "'self'" && !WC.has(s));
+  for (const s of others) if (!/^https:\/\/[^/]+$/.test(s) || /localhost|127\.0\.0\.1|\[::1\]/.test(s)) errs.push(`connect-src origin not allowed in a real build: ${s}`);
+  if (others.length < 2 || others.length > 3) errs.push(`connect-src must list the two RPCs (+ optional relayer API), got ${others.length}`);
+  if (!/frame-ancestors 'none'/.test(line)) errs.push("frame-ancestors is not 'none'");
+  return errs;
+}

@@ -40,6 +40,7 @@ export const en: Dict = {
   "b2w.recipient": "WANTOS recipient",
   "b2w.recipientHint": "Defaults to your address. Do not enter an exchange deposit address.",
   "b2w.recipientInvalid": "Invalid recipient address",
+  "b2w.confirmRecipient": "Depositing {amount} USDT to WANTOS address: {to}",
   "b2w.eta": "After the BSC deposit, funds arrive on WANTOS after a ~15 minute queue.",
   "b2w.notOpenNote": "This address is not enabled: a deposit will arrive on WANTOS, but bridging back to BSC requires access first.",
 

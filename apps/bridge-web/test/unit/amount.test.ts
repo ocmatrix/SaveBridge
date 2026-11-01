@@ -72,3 +72,14 @@ describe("formatAmount", () => {
     expect(formatAmount(1999999999n * 10n ** 9n, 18)).toBe("1.999999");
   });
 });
+
+describe("recipient validation (review finding 1)", () => {
+  it("rejects a mixed-case address with a bad checksum and the zero address", async () => {
+    const { validRecipient } = await import("../../src/lib/amount");
+    expect(validRecipient("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed")).toBe(true);
+    expect(validRecipient("0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed")).toBe(true);
+    expect(validRecipient("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")).toBe(false);
+    expect(validRecipient("0x0000000000000000000000000000000000000000")).toBe(false);
+    expect(validRecipient("0x1234")).toBe(false);
+  });
+});

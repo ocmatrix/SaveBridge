@@ -1,4 +1,4 @@
-import { formatUnits } from "viem";
+import { formatUnits, isAddress, zeroAddress } from "viem";
 import type { I18nKey } from "../i18n/zh";
 
 export interface Problem {
@@ -71,4 +71,9 @@ export function validateB2W(c: B2WCheck): Problem | null {
   if (c.amount > c.b2wRemaining) return { key: "amount.aboveRemaining", params: { remaining: f(c.b2wRemaining) } };
   if (c.amount > c.balance) return { key: "amount.aboveBalance" };
   return null;
+}
+
+/** WANTOS recipient: a valid address (mixed case must carry a correct EIP-55 checksum), not zero. */
+export function validRecipient(s: string): boolean {
+  return isAddress(s, { strict: true }) && s.toLowerCase() !== zeroAddress;
 }

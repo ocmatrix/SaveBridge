@@ -27,3 +27,20 @@ export function assertAllowedTarget(cfg: AppConfig, chainId: number, to: string 
     throw new TargetNotAllowedError(chainId, to ?? undefined);
   }
 }
+
+/**
+ * Function-level allow-list on top of the target check: USDT → only `approve(bridge, amount)`;
+ * WANTOS bridge → only `bridgeOut`; BSC bridge → only `deposit`.
+ */
+export function assertAllowedCall(cfg: AppConfig, chainId: number, to: string | undefined | null, functionName: string, args: readonly unknown[]): void {
+  assertAllowedTarget(cfg, chainId, to);
+  const c = chainById(cfg, chainId)!;
+  const t = to!.toLowerCase();
+  const ok =
+    t === c.usdt.toLowerCase()
+      ? functionName === "approve" && typeof args[0] === "string" && args[0].toLowerCase() === c.bridge.toLowerCase()
+      : chainId === cfg.wantos.id
+        ? functionName === "bridgeOut"
+        : functionName === "deposit";
+  if (!ok) throw new TargetNotAllowedError(chainId, to ?? undefined);
+}

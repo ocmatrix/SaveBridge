@@ -54,6 +54,8 @@ export async function readBridgeState(cfg: AppConfig, clients: Clients, user: Ad
     w.readContract({ ...W, functionName: "dailyUsed", args: [wDay] }),
   ]);
 
+  // amounts cross chains 1:1 in base units (B2W cap is compared with BSC amounts): decimals must match
+  if (wDec !== bDec) throw new Error(`USDT decimals differ: WANTOS ${wDec} vs BSC ${bDec}`);
   return {
     wl: whitelistState(wWl, bWl),
     wantos: {

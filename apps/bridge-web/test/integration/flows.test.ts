@@ -155,6 +155,16 @@ describe("B2W deposit (acceptance: 方向二 / 订单状态)", () => {
   });
 });
 
+describe("B2W preflight also checks the WANTOS side (review finding 7)", () => {
+  it("WANTOS paused → deposit refused before any tx", async () => {
+    await pause(env, env.wantos);
+    const before = await env.bsc.anvil.pc.getTransactionCount({ address: KEYS.alice.address });
+    const err = await depositFlow(ctxFor("bsc"), 100n * U, KEYS.alice.address, () => {}).catch((e) => e);
+    expect(translateError(err, { decimals: 18 }).key).toBe("err.paused");
+    expect(await env.bsc.anvil.pc.getTransactionCount({ address: KEYS.alice.address })).toBe(before);
+  });
+});
+
 describe("target allow-list is enforced before the wallet is asked", () => {
   it("sendGuarded refuses a non-allowed address and sends nothing", async () => {
     const ctx = ctxFor("wantos");

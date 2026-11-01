@@ -29,6 +29,7 @@ export interface StatusProvider {
 type Fetch = (url: string, init?: { signal?: AbortSignal; headers?: Record<string, string> }) => Promise<{ ok: boolean; json(): Promise<unknown> }>;
 
 const CHUNK = 5_000n;
+const MAX_API_IDS = 50;
 
 /**
  * Default provider. The chain is authoritative for every status: order ids come from the user's own events
@@ -92,7 +93,7 @@ export class ChainStatusProvider implements StatusProvider {
     for (const l of depLogs) {
       if (l.args.nonce !== undefined) b2w.set(l.args.nonce, { src: l.transactionHash, dst: null, recipient: l.args.wantosRecipient });
     }
-    for (const o of api) {
+    for (const o of api.slice(0, MAX_API_IDS)) {
       const m = o.direction === "W2B" ? w2b : b2w;
       const prev = m.get(o.nonce);
       m.set(o.nonce, { ...(prev ?? { src: null }), dst: o.dstTxHash ?? prev?.dst ?? null });
@@ -112,26 +113,36 @@ export class ChainStatusProvider implements StatusProvider {
 
     const w2bViews = await Promise.all(
       [...w2b].map(async ([id, meta]): Promise<OrderView | null> => {
+       try {
         const [owner, amount, , status] = await w.readContract({ ...W, functionName: "orders", args: [id] });
         if (status === 0 || owner.toLowerCase() !== lc) return null;
         const ps = await payoutStatus(b, () => b.readContract({ ...B, functionName: "eventKeyOf", args: [id] }), bscVaultV2Abi, B.address);
-        return { direction: "W2B", id, amount, status: w2bUserStatus(status, ps), srcTxHash: meta.src, dstTxHash: meta.dst };
+        const st = w2bUserStatus(status, ps);
+        return { direction: "W2B", id, amount, status: st, srcTxHash: meta.src, dstTxHash: st === "completed" ? meta.dst : null };
+       } catch {
+        return null; // one unreadable id must not hide the others
+       }
       }),
     );
     const b2wViews = await Promise.all(
       [...b2w].map(async ([id, meta]): Promise<OrderView | null> => {
+       try {
         const [from, amount, , refundStatus] = await b.readContract({ ...B, functionName: "deposits", args: [id] });
         if (amount === 0n || from.toLowerCase() !== lc) return null;
         const ps = await payoutStatus(w, () => w.readContract({ ...W, functionName: "eventKeyOf", args: [id] }), wantosBridgeV2Abi, W.address);
+        const st = b2wUserStatus(refundStatus, ps);
         return {
           direction: "B2W",
           id,
           amount,
-          status: b2wUserStatus(refundStatus, ps),
+          status: st,
           srcTxHash: meta.src,
-          dstTxHash: meta.dst,
+          dstTxHash: st === "completed" ? meta.dst : null,
           ...(meta.recipient ? { recipient: meta.recipient } : {}),
         };
+       } catch {
+        return null;
+       }
       }),
     );
     return [...w2bViews, ...b2wViews]

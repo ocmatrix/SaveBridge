@@ -2,7 +2,7 @@
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkCsp, checkFile, checkIndexHtml, MAX_APPROVE_PATTERNS } from "./distChecks.mjs";
+import { checkConnectSrc, checkCsp, checkFile, checkIndexHtml, MAX_APPROVE_PATTERNS } from "./distChecks.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const dist = join(root, "dist");
@@ -15,6 +15,7 @@ const files = walk(dist);
 errs.push(...checkCsp(existsSync(join(dist, "_headers")) ? readFileSync(join(dist, "_headers"), "utf8") : null));
 errs.push(...checkIndexHtml(readFileSync(join(dist, "index.html"), "utf8")));
 for (const f of files) errs.push(...checkFile(relative(dist, f), readFileSync(f, "utf8")));
+if (real) errs.push(...checkConnectSrc(readFileSync(join(dist, "_headers"), "utf8")));
 if (real && files.some((f) => readFileSync(f, "utf8").includes("00000000000000000000000000000000000000b1"))) {
   errs.push("real build contains placeholder addresses");
 }
