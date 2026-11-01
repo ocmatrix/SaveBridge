@@ -1,3 +1,7 @@
 packages:
   - "packages/*"
   - "apps/*"
+# Third-party install scripts are off by default (supply chain, DESIGN §8.4); esbuild is needed by Vite.
+allowBuilds:
+  "@reown/appkit": false
+  esbuild: true
