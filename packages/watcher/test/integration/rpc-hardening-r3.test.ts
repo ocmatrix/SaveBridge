@@ -148,4 +148,25 @@ describe("round-3 hardening", () => {
       expect(t.w.state.meta.alertKeys[a.key!]).toBeUndefined();
     });
   });
+
+  it("S-2 / POC-L: during catch-up, one RPC omitting topic-filtered logs does not turn an owner-acknowledged mismatch into a pause", async () => {
+    const omit = tamperedClient(H.bsc, (m, p) => {
+      const f = p[0] as { topics?: unknown[] } | undefined;
+      return m === "eth_getLogs" && f?.topics && f.topics.length > 0 ? { handled: true, result: [] } : { handled: false };
+    });
+    const t = await makeWatcher(H, { endpoints: { bsc: three(omit, "omit") }, config: (c) => void ((c.chains.bsc.maxBlockRange = 1), (c.maxRangesPerTick = 1)) });
+    const r = await forge(73n);
+    await H.settle();
+    t.clock.now = r.timestamp + 10;
+    await t.w.tick();
+    expect(t.w.state.derived.pending).toHaveLength(1);
+    await H.bsc.increaseTime(400);
+    await H.bsc.write(ACCOUNTS.admin, "pause", []);
+    await H.bsc.write(ACCOUNTS.wl, "unpause", []);
+    await H.settle();
+    t.clock.now = r.timestamp + 401;
+    await t.w.tick();
+    expect(t.codes()).toContain("MISMATCH_ACKNOWLEDGED");
+    expect(await H.isPaused("bsc")).toBe(false);
+  });
 });

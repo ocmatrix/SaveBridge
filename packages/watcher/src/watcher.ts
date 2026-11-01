@@ -822,13 +822,30 @@ export class Watcher {
     const fromBlock = der.cursor ? BigInt(der.cursor.number) + 1n : cfg.startBlock;
     if (head === undefined || fromBlock > head) return;
     const ev = getAbiItem({ abi: bridgeAbiOf(c), name: "Unpaused" }) as AbiEvent;
-    const r = await this.d.rpc[c].consensus(async (cl) => {
+    const r = await this.d.rpc[c].all(async (cl) => {
       const logs = await cl.getLogs({ address: cfg.bridge, event: ev, fromBlock, toBlock: head });
       const last = logs[logs.length - 1];
       if (!last) return null;
       return { block: last.blockNumber!, timestamp: Number((await cl.getBlock({ blockNumber: last.blockNumber! })).timestamp) };
     });
-    if (r.ok && r.value) this.noteUnpause(der, r.value.block, r.value.timestamp);
+    // S-2: "an Unpaused exists" is accepted when ≥ minAgree RPCs report the SAME one; an RPC that sees
+    // nothing is not a dissent (confirming an unpause can only prevent a pause, and blindAt still applies).
+    const groups = new Map<string, { v: { block: bigint; timestamp: number }; labels: string[] }>();
+    for (const x of r.ok) {
+      if (x.value === null) continue;
+      const k = stableStringify(x.value);
+      const g = groups.get(k) ?? { v: x.value, labels: [] };
+      g.labels.push(x.label);
+      groups.set(k, g);
+    }
+    const best = [...groups.values()].filter((g) => g.labels.length >= this.d.rpc[c].minAgree).sort((a, b) => (a.v.block > b.v.block ? -1 : 1))[0];
+    if (best) this.noteUnpause(der, best.v.block, best.v.timestamp);
+    else if (groups.size > 0)
+      await this.raise("RPC_DISAGREE", `${c} 向前补查 Unpaused：各 RPC 结果不一致，未采用`, {
+        chain: c,
+        detail: { range: `${fromBlock}-${head}`, answers: [...groups.values()].map((g) => ({ block: g.v.block.toString(), reportedBy: g.labels })), failed: r.failed },
+        key: `unpause-lookahead:${c}:${fromBlock}-${head}`,
+      });
   }
 
   private async autoPause(c: ChainName, report: TickReport, key: string, detail: Record<string, unknown>, failSince = 0): Promise<boolean> {
