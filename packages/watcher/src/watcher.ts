@@ -87,33 +87,58 @@ export class Watcher {
   }
 
   async init(): Promise<void> {
-    await this.assertWiring();
     this.state = await this.d.store.load();
+    if (this.d.store.restoredFromBackup)
+      await this.raise("STATE_RESTORED_FROM_BACKUP", "状态文件损坏，已从 .bak 恢复（可能少处理最后一轮，游标会补扫）");
+    await this.assertWiring();
     await this.refreshControlledSet(false);
   }
 
   /**
-   * B6: refuse to start if any RPC serves another chain, if fewer than minRpcAgreement RPCs per chain
-   * can be verified, or if the two USDT tokens differ in decimals (amounts are compared in raw units).
+   * B6 / B5: an RPC serving another chain is DROPPED with a level-1 alert; the watcher refuses to start
+   * only if fewer than minRpcAgreement verified RPCs remain on a chain. Token decimals: the value agreed
+   * by ≥ minRpcAgreement RPCs wins (dissenters dropped); the two chains' tokens must be equal.
    */
   private async assertWiring(): Promise<void> {
     for (const c of CHAINS) {
+      const verified = await this.checkChainIds(c);
       const rpc = this.d.rpc[c];
-      const want = this.cfg.chains[c].chainId;
-      const r = await rpc.all((cl) => cl.getChainId());
-      const wrong = r.ok.filter((x) => x.value !== want);
-      if (wrong.length > 0) throw new Error(`watcher: ${c} RPC(s) ${wrong.map((w) => `${w.label}→${w.value}`).join(", ")} do not serve chainId ${want}`);
-      if (r.ok.length < rpc.minAgree) throw new Error(`watcher: only ${r.ok.length} ${c} RPC(s) verified chainId ${want}; need ${rpc.minAgree}`);
+      if (verified < rpc.minAgree) throw new Error(`watcher: only ${verified} ${c} RPC(s) verified chainId ${this.cfg.chains[c].chainId}; need ${rpc.minAgree}`);
     }
     const dec = async (c: ChainName): Promise<number> => {
       const cfg = this.cfg.chains[c];
-      const r = await this.d.rpc[c].consensus(async (cl) => Number(await cl.readContract({ address: cfg.token, abi: erc20Abi, functionName: "decimals" })));
-      if (!r.ok) throw new Error(`watcher: ${c} token decimals not agreed by RPCs (${r.reason})`);
-      return r.value;
+      const rpc = this.d.rpc[c];
+      const r = await rpc.all(async (cl) => Number(await cl.readContract({ address: cfg.token, abi: erc20Abi, functionName: "decimals" })));
+      const counts = new Map<number, string[]>();
+      for (const x of r.ok) counts.set(x.value, [...(counts.get(x.value) ?? []), x.label]);
+      const best = [...counts.entries()].sort((a, b) => b[1].length - a[1].length)[0];
+      if (!best || best[1].length < rpc.minAgree) throw new Error(`watcher: ${c} token decimals not agreed by ≥${rpc.minAgree} RPCs (${JSON.stringify([...counts])})`);
+      for (const [v, labels] of counts)
+        if (v !== best[0])
+          for (const label of labels) {
+            rpc.drop(label);
+            await this.raise("RPC_MISCONFIGURED", `${c} RPC ${label} 报告的代币 decimals=${v} 与多数（${best[0]}）不符，已剔除`, { chain: c, detail: { label, decimals: v, majority: best[0] }, key: `misconf:${c}:${label}:decimals` });
+          }
+      return best[0];
     };
     const [b, w] = [await dec("bsc"), await dec("wantos")];
     if (b !== w) throw new Error(`watcher: token decimals differ (bsc ${b}, wantos ${w}); raw-amount comparison would be wrong`);
     this.decimals = { bsc: b, wantos: w };
+  }
+
+  /** Drops RPCs that serve another chain (level-1 alert); returns how many RPCs verified the chainId. */
+  private async checkChainIds(c: ChainName): Promise<number> {
+    const rpc = this.d.rpc[c];
+    const want = this.cfg.chains[c].chainId;
+    const r = await rpc.all((cl) => cl.getChainId());
+    for (const x of r.ok.filter((y) => y.value !== want)) {
+      rpc.drop(x.label);
+      await this.raise("RPC_MISCONFIGURED", `${c} RPC ${x.label} 服务的是 chainId ${x.value}（应为 ${want}），已剔除`, { chain: c, detail: { label: x.label, chainId: x.value, expected: want }, key: `misconf:${c}:${x.label}:chainId` });
+    }
+    const verified = r.ok.filter((y) => y.value === want).length;
+    if (verified < rpc.minAgree)
+      await this.raise("RPC_MISCONFIGURED", `${c} 通过 chainId 校验的 RPC 只有 ${verified} 个（需要 ${rpc.minAgree}）`, { chain: c, detail: { verified, failed: r.failed }, key: `misconf:${c}:quorum:${Math.floor(this.now() / 3600)}` });
+    return verified;
   }
 
   private now(): number {
@@ -784,6 +809,7 @@ export class Watcher {
     }
     if (now - m.lastGasCheckAt >= this.cfg.gasCheckIntervalSeconds) {
       m.lastGasCheckAt = now;
+      for (const c of CHAINS) await this.checkChainIds(c); // B5: runtime re-check
       await this.checkGas();
       await this.checkLegacyNonces();
       await this.refreshControlledSet(true);

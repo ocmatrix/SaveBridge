@@ -32,6 +32,12 @@ export class MultiRpc {
     readonly minAgree: number,
   ) {}
 
+  /** B5: remove a misconfigured endpoint (wrong chain / disagreeing static data). */
+  drop(label: string): void {
+    const i = this.endpoints.findIndex((e) => e.label === label);
+    if (i >= 0) this.endpoints.splice(i, 1);
+  }
+
   async primary<T>(fn: (c: PublicClient) => Promise<T>): Promise<T> {
     const errors: string[] = [];
     for (const e of this.endpoints) {

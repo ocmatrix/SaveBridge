@@ -45,6 +45,8 @@ export const clone = <T>(v: T): T => JSON.parse(toJson(v)) as T;
 
 export interface StateStore {
   load(): Promise<State>;
+  /** True when the last load() fell back to a backup copy (B6). */
+  readonly restoredFromBackup?: boolean;
   save(state: State): Promise<void>;
 }
 
@@ -65,6 +67,7 @@ export class MemoryStateStore implements StateStore {
  * (delete the file → full rescan); see PR7-NOTES §运维.
  */
 export class FileStateStore implements StateStore {
+  restoredFromBackup = false;
   constructor(readonly path: string) {}
 
   async load(): Promise<State> {
@@ -76,6 +79,7 @@ export class FileStateStore implements StateStore {
       // B8: a torn / corrupt main file → fall back to the previous good version
       if (!existsSync(`${this.path}.bak`)) throw e;
       parsed = JSON.parse(readFileSync(`${this.path}.bak`, "utf8")) as State;
+      this.restoredFromBackup = true;
     }
     if (parsed.version !== 1) throw new Error(`unsupported state file version ${String(parsed.version)}`);
     return parsed;

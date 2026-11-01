@@ -16,6 +16,7 @@ export const ALERT_LEVELS = {
   MINT_EXCESS: 1,
   CHECK_OVERDUE: 1,
   CURSOR_STUCK: 1,
+  RPC_MISCONFIGURED: 1,
   // level 2
   PAUSED: 2,
   UNPAUSED: 2,
@@ -48,6 +49,7 @@ export const ALERT_LEVELS = {
   HEARTBEAT_FAILED: 2,
   ALERT_BACKLOG: 2, // level is overridden with the most severe queued item
   CLOCK_SKEW: 2,
+  STATE_RESTORED_FROM_BACKUP: 2,
   // level 3
   DAILY_REPORT: 3,
 } as const satisfies Record<string, AlertLevel>;
