@@ -11,6 +11,7 @@ import { LogAlertSink, MultiAlertSink } from "./alerts.js";
 import { parseConfig, parseControlledSet } from "./config.js";
 import type { Heartbeat } from "./heartbeat.js";
 import { PauseExecutor, PauseOnlySigner, type RawTxSender } from "./pauser.js";
+import { redact } from "./redact.js";
 import { FileStateStore } from "./state.js";
 import { Watcher } from "./watcher.js";
 import { buildRpc, multiRpcPauseReader } from "./wiring.js";
@@ -58,7 +59,7 @@ do {
   try {
     await watcher.tick();
   } catch (e) {
-    process.stderr.write(`tick failed: ${e instanceof Error ? e.stack : String(e)}\n`);
+    process.stderr.write(`tick failed: ${redact(e instanceof Error ? (e.stack ?? e.message) : String(e))}\n`);
   }
   if (!once) await new Promise((r) => setTimeout(r, 5_000));
 } while (!once);

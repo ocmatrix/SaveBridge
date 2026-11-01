@@ -5,6 +5,7 @@ import type { ControlledEntry, WatcherConfig } from "./config.js";
 import { PAUSER_ROLE, bridgeAbiOf, computeEventKey, decodeLog, describeCall, erc20Abi, type DecodedLog } from "./events.js";
 import type { Heartbeat, RelayerProbe } from "./heartbeat.js";
 import type { PauseExecutor } from "./pauser.js";
+import { errText } from "./redact.js";
 import { stableStringify, type MultiRpc } from "./rpc.js";
 import { clone, initialDerived, type StateStore } from "./state.js";
 import {
@@ -59,7 +60,7 @@ const add = (s: Record<string, string>, k: string, v: unknown): void => {
 };
 const sumOf = (s: Record<string, string>, k: string): bigint => BigInt(s[k] ?? "0");
 const lc = (a: string): string => a.toLowerCase();
-const errMsg = (e: unknown): string => (e instanceof Error ? e.message.split("\n")[0]! : String(e));
+const errMsg = errText;
 
 /**
  * DESIGN §9 independent watcher. One `tick()` = verify WANTOS cursor hash (rollback) → advance both

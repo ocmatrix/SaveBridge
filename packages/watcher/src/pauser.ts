@@ -1,8 +1,7 @@
 import { getAddress, isAddress, type Address, type Hex } from "viem";
+import { redact } from "./redact.js";
 import type { ChainName } from "./types.js";
 
-/** Placeholder until B3 lands a real redactor. */
-const redact = (m: string): string => m;
 
 /** `pause()` — the ONLY call the PAUSER key may ever make (DESIGN §4.1, §9). */
 export const PAUSE_SELECTOR = "0x8456cb59" as const;

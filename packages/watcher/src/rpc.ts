@@ -1,4 +1,5 @@
 import type { PublicClient } from "viem";
+import { errText } from "./redact.js";
 import type { ChainName } from "./types.js";
 
 export const stableStringify = (v: unknown): string =>
@@ -37,7 +38,7 @@ export class MultiRpc {
       try {
         return await fn(e.client);
       } catch (err) {
-        errors.push(`${e.label}: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`);
+        errors.push(`${e.label}: ${errText(err)}`);
       }
     }
     throw new Error(`${this.chain}: all ${this.endpoints.length} RPCs failed: ${errors.join("; ")}`);
@@ -51,7 +52,7 @@ export class MultiRpc {
     settled.forEach((s, i) => {
       const label = this.endpoints[i]!.label;
       if (s.status === "fulfilled") ok.push({ label, value: s.value });
-      else failed.push({ label, error: s.reason instanceof Error ? s.reason.message.split("\n")[0]! : String(s.reason) });
+      else failed.push({ label, error: errText(s.reason) });
     });
     return { ok, failed };
   }
@@ -69,8 +70,7 @@ export class MultiRpc {
         else groups.set(k, { value: s.value, n: 1 });
         answers.push({ label, value: k });
       } else {
-        const reason: unknown = s.reason;
-        answers.push({ label, error: reason instanceof Error ? reason.message.split("\n")[0]! : String(reason) });
+        answers.push({ label, error: errText(s.reason) });
       }
     });
     if (groups.size > 1) return { ok: false, reason: "disagree", answers };
