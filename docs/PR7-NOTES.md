@@ -3,6 +3,26 @@
 > 依据：`docs/DESIGN.md` v0.9.4 §9（9.1 / 9.2 / 9.3）、§4.3 C、§5.3、§6.2、§11；`docs/PR1-NOTES.md` §5（以实际 ABI `@bridge/abi` 为准）。分支 `pr-7-watcher`。
 > 范围：只写代码与本地测试。**未连接任何真实网络 / 节点，未接入 Telegram / 短信 / 电话 / 心跳服务，未发送真实链上交易，未读写真实私钥。** 测试只用本机两个 `anvil`（随机端口，127.0.0.1）与 anvil 公开默认账户。17 条决定未改。
 
+## 0. GATE2 第 1 轮修复（v2）摘要
+
+| 项 | 修复 | 回归测试 |
+|---|---|---|
+| A1 | 每段日志在**全部** RPC 上各取一次，取并集（按 txHash:logIndex 去重，同位置不同内容取多数版本），≥ `minRpcAgreement` 个 RPC 成功且区段末块 hash 共识一致才推进游标；有 RPC 漏报 / 内容不一 → 二级 `RPC_DISAGREE`；安全高度 = 各 RPC 安全头的**最小值**（BSC finalized / WANTOS latest−6），回答的 RPC 不足 → 等待并告警 | `rpc-hardening > A1 …`（POC2 转化）×3 |
+| A2 | `paused()` 用多 RPC 共识读（未达成共识 = 未知，不当作已暂停）；「已暂停 / 交易已上链 / EnforcedPause 回滚」三条成功路径**都必须再经 ≥2 RPC 确认 `paused()==true`**，否则重试，最终 `PAUSE_FAILED`（一级） | `rpc-hardening > A2 …`（POC3 转化）×2；`pauser` 单元 ×3 |
+| A3 | `Unpaused` 只确认满足「事件区块 ≤ 解除区块」**且**「解除区块时间 ≥ 事件 `decideAt`」的事件；向前补查改为共识读、只到本轮安全头 | `pause-reorg-replay > POC1 …`（原 :70 测试反转）、`… an unpause not yet under the safe head …`；原「解除后旧事件不循环暂停」测试保留（链上解除时间已过宽限期） |
+| A4 | 退款核对的「已撤回」只认 `Locked`（订单）/ `None`（存款退款）；`Refunded`（已执行）继续做源链核对，不符暂停并一级告警 | `refund-hardening > A4 …` ×2 |
+| A5 | 补「源链为 Released / Queued」的退款与存款退款反例 | `refund-hardening > A5 …` ×4（杀死 M28 / M29） |
+| B1 | `PAUSE_FAILED` 按核对项每小时至多一条（从首次失败起算） | `pause-reorg-replay > a revoked PAUSER key …` |
+| B2 | 告警发送失败进入持久化 `outbox`、每轮重试，一级重复登记只在送达后；每段日志原子应用（出错整段回滚，不重复累加） | `state-alerts > B2 …`、`pause-reorg-replay > B2 …` |
+| B3 | `src/redact.ts`：错误文本统一脱敏（URL 的 userinfo / 路径 / query、Authorization / Bearer、64 位 hex），用于告警详情、`PAUSE_FAILED`、RPC 答复、`main.ts` 调用栈 | `redact` 单元 ×4 |
+| B4 | 待核对项到目标可执行时间（排队 eta / 退款可执行时间）仍暂缓或分歧 → 一级 `CHECK_OVERDUE`（不暂停）；每轮比对系统时钟与 BSC 最新块时间，偏差 > `maxClockSkewSeconds`（60）→ 二级 `CLOCK_SKEW` | `check-b2w-refund > deposit not yet finalized …`、`alerts > B4 …` |
+| B5 | 回滚恢复快照后，重新打开恢复点之后才判定的 W2B / 存款退款项（源在 WANTOS，可能已成孤块）；其他已判定项不重开 | `pause-reorg-replay > B5 …`、`… B5/M36 …` |
+| B6 | 启动断言：每个回答的 RPC `eth_chainId` 必须等于配置（且每链 ≥ `minRpcAgreement` 个已验证），两链 USDT `decimals` 必须相等，否则拒绝启动 | `startup` ×4 |
+| B7 | 测试：落在 `latest − 5` 内的 WANTOS 事件不摄取 | `check-w2b > B7 …`（杀死 M35） |
+| B8 | 删除 Telegram / 心跳草稿适配器；`main.ts` 未接签名器时拒绝启动（`--dry-run` 除外，`startupGuard`）；状态文件 fsync 后 rename，并保留 `.bak`、主文件损坏时回退 | `misc > B8 …`、`state-alerts > B8 …` |
+
+下文各节已按 v2 更新。
+
 ## 1. 文件
 
 | 文件 | 内容 |
@@ -10,22 +30,23 @@
 | `packages/watcher/src/watcher.ts` | 主循环 `tick()`：WANTOS 回滚检查 → 两链推进游标并处理事件 → §9.1 到期核对 → 时间锁提醒 → 周期任务（§9.2 对账、心跳、gas、旧地址 nonce、受控集合）→ 快照 + 落盘 |
 | `src/verifier.ts` | §9.1 四类核对的独立复核：目标事件存在、未被取消、源链事实成立，**每一步都在全部 RPC 上分别计算、要求 ≥2 一致且无矛盾** |
 | `src/pauser.ts` | PAUSER：`PauseOnlySigner`（类型 + 运行时双重限制只能发 `pause()`）、`PauseExecutor`（幂等、`EnforcedPause` = 成功、重试） |
-| `src/rpc.ts` | `MultiRpc`：`primary`（按序回退）与 `consensus`（条件 ②） |
-| `src/alerts.ts` | 三级告警码表、`AlertManager`（去重、一级 24h 重复直到 ack、三级日报）、`MemoryAlertSink` / `LogAlertSink` / `MultiAlertSink`、`TelegramDraftAdapter`（**只构造请求体，`send` 一律抛错**） |
-| `src/heartbeat.ts` | `Heartbeat` 接口、`MemoryHeartbeat`、`HttpHeartbeatDraft`（只构造请求）、`RelayerProbe` 接口 |
+| `src/rpc.ts` | `MultiRpc`：`all`（全部 RPC，用于并集摄取与最小安全头）、`consensus`（条件 ②）、`primary`（只用于无安全含义的读：gas、nonce、参数、时钟比对） |
+| `src/redact.ts` | 错误文本脱敏（B3） |
+| `src/alerts.ts` | 三级告警码表、`AlertManager`（去重、一级 24h 重复直到 ack、三级日报）、`MemoryAlertSink` / `LogAlertSink` / `MultiAlertSink`（真实通道 PR-10 实现） |
+| `src/heartbeat.ts` | `Heartbeat` 接口、`MemoryHeartbeat`、`RelayerProbe` 接口 |
 | `src/state.ts` / `src/types.ts` | 持久化状态（单 JSON 文件，临时文件 + rename 原子替换）与类型 |
 | `src/config.ts` | 配置解析与校验；受控集合 JSON 解析 |
 | `src/events.ts` | 事件解码、`computeEventKey`（与 PR1-NOTES §5.2 逐字一致，有测试对照合约）、时间锁调用解码 |
 | `src/wiring.ts` | 生产装配：每个 URL 一个独立 viem client、`multiRpcPauseReader`、`viemRawTxSender`（适配器，只能被 `PauseOnlySigner` 包裹） |
-| `src/main.ts` | 服务器 B 入口（测试不覆盖、本 PR 未运行）。**签名器 / 告警通道 / 心跳通道故意未接**：暂停会以 `PAUSE_FAILED`（一级）失败并输出到 stdout + `alerts.jsonl`，PR-10 接 KMS 签名器与真实通道 |
+| `src/main.ts` | 服务器 B 入口（测试不覆盖、本 PR 未运行）。**签名器 / 告警通道 / 心跳通道故意未接**：没有签名器时拒绝启动，`--dry-run` 才能运行（暂停会以 `PAUSE_FAILED` 一级失败），告警输出到 stdout + `alerts.jsonl`；PR-10 接 KMS 签名器与真实通道 |
 | `config/watcher.example.json` | 配置示例：RPC 全是 `*.example.invalid` 占位；桥 / 时间锁 / 钱包地址为占位；只出现 DESIGN 中的主网地址（USDT、旧金库、旧付款程序） |
 | `config/controlled-set.example.json` | 附录 A 受控集合（22 条），可加载 |
 | `test/helpers/harness.ts` | 两条本地 anvil（BSC 本地 chainId 5600、`--slots-in-an-epoch 1` 使 `finalized = latest − 2`；WANTOS 本地 13500）+ 用 `out/*.json` 字节码按 §5.1 nonce 0/1/2 部署两链（地址相同）+ EIP-712 白名单批次 |
-| `test/unit/*`、`test/integration/*` | 76 个测试，见 §8 |
+| `test/unit/*`、`test/integration/*` | 105 个测试，见 §0、§8 |
 
 依赖：只依赖 `@bridge/abi` 与 `viem`；**不依赖 `@bridge/relayer`，不读付款程序数据库**。
 
-另：cherry-pick 了 lane-3 的 `fix(abi): emit 'as const' on the same line`（382b76f，与 lane-3 的 8ad1069 内容相同）——原生成文件 `]` 与 `as const;` 分两行，vitest/oxc 无法导入 `@bridge/abi`。
+另：（总控统一并入基线时会丢弃本条）cherry-pick 了 lane-3 的 `fix(abi): emit 'as const' on the same line`（382b76f，与 lane-3 的 8ad1069 内容相同）——原生成文件 `]` 与 `as const;` 分两行，vitest/oxc 无法导入 `@bridge/abi`。
 
 ## 2. 运行模型
 
@@ -33,7 +54,7 @@
 
 1. **flushDaily**：跨 UTC 日时发出前一日的三级日报。
 2. **WANTOS 回滚检查（§9.1-5 / §6.2）**：在全部 RPC 上取游标区块的 hash；≥2 一致且与游标不同 → 一级 `WANTOS_REORG` + **暂停两条链** + 回退到最近一个仍在主链上的状态快照（找不到则从 `startBlock` 全量重放）。RPC 意见不一 → 二级 `RPC_DISAGREE`，本轮不推进 WANTOS、不暂停。
-3. **推进游标**：BSC 取 `finalized`（取不到 → 二级 `BSC_NO_FINALIZED`，等待）；WANTOS 取 `latest − confirmations`（默认 6）。按 `maxBlockRange` 分段 `eth_getLogs`（桥 + 时间锁全部事件；USDT `Transfer` 中 from=0x0 / 旧地址 / 受控地址；旧合约地址发出的任何日志），按 (区块, logIndex) 顺序处理，段尾写入游标 `{number, hash, timestamp}`。失败的段下轮按游标重试（断线补扫）。
+3. **推进游标**：安全头 = 各 RPC 的最小值——BSC 取 `finalized`（回答的 RPC 少于 `minRpcAgreement` → 二级 `BSC_NO_FINALIZED`，等待）；WANTOS 取 `latest − confirmations`（默认 6）。按 `maxBlockRange` 分段，**在每个 RPC 上**各做一次 `eth_getLogs` 并取并集（桥 + 时间锁全部事件；USDT `Transfer` 中 from=0x0 / 旧地址 / 受控地址；旧合约地址发出的任何日志），按 (区块, logIndex) 顺序处理，段尾写入游标 `{number, hash, timestamp}`。失败的段下轮按游标重试（断线补扫）。
 4. **§9.1 到期核对**（见 §3）。
 5. **时间锁提醒**：每个未执行未取消的提议在可执行前 24h、6h 各一次。
 6. **周期任务**：对账（默认每小时）、心跳（每 5 分钟）、gas / 旧地址 nonce / 受控集合（每 5 分钟）。
@@ -60,14 +81,14 @@
 
 ### 3.3 解除暂停与循环暂停
 
-- 摄取到 `Unpaused` → 记录 `lastUnpausedBlock[chain]`。判定不符时先**向前看**（从游标到 `latest`）补查 `Unpaused`，防止刚解除、尚未进入 finalized 的情况误再暂停。
-- 不符事件的区块 ≤ `lastUnpausedBlock` → 只发二级 `MISMATCH_ACKNOWLEDGED`，结案，不暂停；之后的新事件照常暂停。
+- 摄取到 `Unpaused` → 记录 `lastUnpaused[chain] = {区块, 区块时间}`。判定不符时先用**共识读**向前补查（从游标到本轮安全头，不读未 finalized / 未确认区块）。
+- 只有「事件区块 ≤ 解除区块」**且**「解除区块时间 ≥ 该事件 `decideAt`」（负责人解除时该事件已过宽限期、监控本可报警）→ 只发二级 `MISMATCH_ACKNOWLEDGED`，结案，不暂停；宽限期内发生的无关暂停 / 解除不再「确认」可疑事件（A3）；之后的新事件照常暂停。
 - 已判定的核对项记入 `meta.decided`（不随回滚快照回退），重放 / 回退不会重复判定。
 - 测试覆盖：同一状态文件的重放、停机前的旧状态文件重放、解除早于判定。
 
 ### 3.4 自动暂停
 
-- `PauseExecutor.pause(chain)`：先读 `paused()`，已暂停 → 成功不发交易；发送 `pause()` 回滚 `EnforcedPause()`（`0xd93c0665`）→ 成功（PR1-NOTES §5.11a-3）；回执失败但随后 `paused()` 为真 → 成功；其他失败按 `pauseRetry` 重试，仍失败 → 一级 `PAUSE_FAILED`，核对项保留待下轮重试。
+- `PauseExecutor.pause(chain)`：`paused()` 为多 RPC 共识读（不一致 = 未知）。共识为已暂停 → 成功不发交易；否则发送 `pause()`；之后无论交易上链、回执失败，还是 `EnforcedPause()`（`0xd93c0665`，PR1-NOTES §5.11a-3）回滚，**都要再经 ≥2 RPC 确认 `paused()==true` 才算成功**（A2）；其他失败按 `pauseRetry` 重试，仍失败 → 一级 `PAUSE_FAILED`，核对项保留待下轮重试。
 - 成功 → 一级 `AUTO_PAUSE`（含原因、观测值、处置建议）。
 - `PauseOnlySigner`：只接受 `pauseCall(bridge)` 产生的品牌类型；运行时再校验 calldata **严格等于** `0x8456cb59`、无额外字段（如 value）、目标是配置的桥地址。任何不符抛 `PauseGuardError`，交易不会到达底层发送器（测试验证 nonce 未变）。
 
@@ -110,7 +131,9 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 | 二 | `PARAMS_INCONSISTENT` / `PARAMS_UPDATED` / `SUPPLY_CEILING_UPDATED` | 跨链参数不一致 / 参数或时间锁延迟变更 / supplyCeiling 变更 |
 | 二 | `RESERVE_LOW` / `WANTOS_BALANCE_LOW` | 储备不足 1 天 / WANTOS 桥余额偏低 |
 | 二 | `INDEX_LAG` / `WANTOS_STALLED` / `BSC_NO_FINALIZED` / `RPC_UNREACHABLE` | 监控落后 / 出块停滞 / 取不到 finalized / RPC 不可达 |
-| 二 | `RPC_DISAGREE` / `CHECK_DEFERRED` / `MISMATCH_ACKNOWLEDGED` | 条件 ② 不满足 / 条件 ① 不满足 / 解除暂停前的旧事件不符 |
+| 二 | `RPC_DISAGREE` / `CHECK_DEFERRED` / `MISMATCH_ACKNOWLEDGED` | 条件 ② 不满足或各 RPC 返回的事件不一致 / 条件 ① 不满足 / 已被负责人解除暂停确认的旧事件不符 |
+| 一 | `CHECK_OVERDUE` | 待核对项到目标可执行时间仍暂缓或 RPC 分歧（B4，不暂停） |
+| 二 | `CLOCK_SKEW` | 系统时钟与 BSC 最新块时间偏差 > 60 s（B4） |
 | 二 | `RECONCILE_SHORTFALL` / `RECONCILE_FAILED` | 对账短缺 / 对账失败 |
 | 二 | `GAS_LOW` | 两个钱包或暂停钥匙 gas 不足（`gasWatch`，两链分别配置） |
 | 二 | `LEGACY_ACTIVITY` | 旧金库 `0x8dFd` / 旧付款程序 `0x9dab`（及其他配置的旧地址）：USDT 转入 / 转出、合约发出日志、EOA nonce 增加 |
@@ -131,7 +154,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 | `grace` | `w2bSeconds`=300、`b2wBeforeEtaSeconds`=180、`refundBeforeExecSeconds`=7200、`depositRefundBeforeExecSeconds`=7200 |
 | `mintAlertThreshold` | 增发一级阈值（wei；1 万 × 10^18） |
 | `reconcile` | `intervalSeconds`（3600）、`toleranceWei`（每链）、`wantosLowBalanceWei`（null = 用 `b2wDailyCap`） |
-| `heartbeatIntervalSeconds` / `gasCheckIntervalSeconds` / `wantosStallSeconds` | 300 / 300 / 60 |
+| `heartbeatIntervalSeconds` / `gasCheckIntervalSeconds` / `wantosStallSeconds` / `maxClockSkewSeconds` | 300 / 300 / 60 / 60 |
 | `pauseRetry` | `attempts` / `backoffMs` |
 | `timelockRemindersSeconds` | `[86400, 21600]` |
 | `dailyCapReportRatioBps` | 7000 |
@@ -157,15 +180,15 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 | P8 | 金额比较为原始 wei 相等（两链 USDT 都按 18 位小数假设）；跨链参数比较按 `decimals` 归一 | §5.5 | 若两链小数位不同，付款程序与监控需同时引入换算，见待决 Q3 |
 | P9 | `RoleAdminChanged`、时间锁 `MinDelayChange` 也推送（一级 / 二级） | §9.3 | 角色与治理参数变化宁可多报 |
 | P10 | WANTOS 侧 `Released`（B2W 执行）不单独核对（排队时已核对） | §9.1 只列 `ReleaseQueued` | 按规格；见风险 R3 |
-| P11 | 回滚处理：暂停两链后，自动回退到最近一个游标仍在主链上的状态快照并重新摄取（快照 16 个；都不在主链则从 `startBlock` 重放）；`meta.decided` 与告警去重不回退 | §6.2 | 保证孤块里的事件不被计入，且不重复判定 / 推送 |
+| P11 | 回滚处理：暂停两链后，自动回退到最近一个游标仍在主链上的状态快照并重新摄取（快照 16 个；都不在主链则从 `startBlock` 重放）；告警去重不回退；`meta.decided` 不回退，**但恢复点之后判定的 W2B / 存款退款项会重新打开**（其源在 WANTOS，可能已成孤块，B5） | §6.2 | 孤块事件不计入；源事件被回滚掉的付款会被重新核对 |
 | P12 | 受控地址资金动作只监控 WANTOS-USDT 的 `Transfer`；旧地址额外监控 nonce（EOA 发交易）和合约日志；原生币转账未监控 | §9.3 | 避免全块扫描；见风险 R5 |
 
 ### 7.2 待决
 
 | # | 问题 | 当前实现 |
 |---|---|---|
-| Q1 | `Unpaused` 视为"之前全部事件已确认"：若在某可疑事件的宽限期内恰好发生了一次无关的暂停 / 解除（例如维护），该可疑事件会只告警不暂停 | 严格按规格；可选收紧：只确认"解除前最后一次 `Paused` 之前"的事件。需负责人决定 |
-| Q2 | 告警通道（Telegram / 短信 / 电话）与心跳服务选型（§14-3） | 接口 + 草稿适配器（只构造请求体） |
+| ~~Q1~~ | 已按总控决定收紧（A3）：解除暂停只确认解除时已过宽限期的事件 | — |
+| Q2 | 告警通道（Telegram / 短信 / 电话）与心跳服务选型（§14-3） | 只有接口（`AlertSink` / `Heartbeat`）+ 内存 / 日志实现；草稿适配器已删（B8），真实实现在 PR-10 |
 | Q3 | 两链 USDT 小数位是否都为 18 | 原始值相等比较 |
 | Q4 | 付款程序存活探测的方式（HTTP 健康端点？） | `RelayerProbe` 接口，未接 |
 | Q5 | WANTOS `confirmations` 是否沿用付款程序的 6 | 默认 6，可配 |
@@ -196,7 +219,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 
 ## 8. 测试（DH L2）
 
-`pnpm -r typecheck` 通过；`pnpm -r test`：**10 个文件 / 76 个测试全部通过**（约 3 秒，两条本地 anvil）。
+`pnpm -r typecheck` 通过；`pnpm -r test`：**14 个文件 / 105 个测试全部通过**（约 4 秒，两条本地 anvil）。v2 变异重跑结果见 GATE2 第 2 次报告。
 
 覆盖率（`vitest run --coverage`，`src/main.ts`、`src/index.ts` 除外）：语句 94.98%、分支 85.6%、函数 99.41%、行 96.55%。核心逻辑：`watcher.ts` 行 95.1% / 语句 94.3%，`verifier.ts` 行 98.6% / 语句 92.4%，`pauser.ts` 行 100% / 语句 93.9%，`rpc.ts` 100%，`alerts.ts` 100%。
 
@@ -217,7 +240,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 | eventKey 推导与合约一致 | `check-b2w-refund > local eventKey derivation equals the contracts'` |
 | §9.1-5 回滚 → 暂停两链（一级） | `pause-reorg-replay > WANTOS block-hash change → level-1 alert and both chains paused; state rewound and re-ingested` |
 | §9.1-6 增发小额二级 / 超阈值一级 / 不暂停 / 持久化 | `mint-reconcile > mint: small → level-2 …`、`mint over the threshold with bridges running → still no pause`、`state-alerts > levels follow DESIGN §9.3` |
-| 解除暂停后不循环暂停；旧事件只告警；新事件才暂停 | `pause-reorg-replay > after the owner unpauses, the old event never re-pauses (even on replay from a stale state); a new one does`、`… an unpause that lands before the decision …` |
+| 解除暂停后不循环暂停（旧事件 = 解除时已过宽限期）；宽限期内的无关解除不确认可疑事件；新事件才暂停 | `pause-reorg-replay > after the owner unpauses, the old event never re-pauses …`、`… POC1: an unrelated pause + unpause INSIDE the grace window …`、`… an unpause not yet under the safe head …` |
 | 已暂停再 `pause()` 回滚 `EnforcedPause` = 成功 | `pause-reorg-replay > PAUSER key on a local chain > pause() on an already-paused bridge reverts EnforcedPause on chain …`、`pauser > treats an EnforcedPause revert … / is idempotent …` |
 | PAUSER 只能发 `pause()` | `pauser > rejects any other function, extra calldata, value-bearing shapes, or another target`、`pause-reorg-replay > can send pause() and nothing else; a rejected call never reaches the chain` |
 | 暂停失败重试 + 升级告警 | `pauser > retries transient failures …`、`pause-reorg-replay > a revoked PAUSER key fails to pause → PAUSE_FAILED level 1 …` |
@@ -228,7 +251,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 | 一级：时间锁提议（含批量）、角色 / 交接 / 恢复、失联、重复 24h | `alerts > timelock: new proposal …`、`alerts > timelock batch proposal …`、`alerts > key / handover / recovery changes …`、`alerts > heartbeat every 5 minutes …`、`alerts > level-1 alerts repeat after 24h until acknowledged` |
 | 二级：暂停 / 解除、吊销暂停钥匙、升级、提取、参数不一致、作废未来编号、冻结、gas、旧地址、受控地址、受控集合变更、落后 / 停滞、心跳失败 | `alerts > pause / unpause / freeze / params …`、`alerts > key / handover …`（PAUSER_REVOKED）、`alerts > timelock batch …`（UPGRADE_EXECUTED / WITHDRAWN）、`alerts > gas below threshold …`、`alerts > legacy vault / relayer activity …`、`alerts > WANTOS block production stall and index lag …` |
 | 三级日报（白名单批次两链哈希、紧急移除、70%、排队 / 退款 / 作废、旧单补付） | `alerts > whitelist batches, emergency removals and queue/void summaries go to the level-3 daily report`、`mint-reconcile > daily report: BSC used ≥ 70% …`、`alerts > timelock batch …`（LEGACY_PAID）、`state-alerts > collects level-3 entries …` |
-| 告警 / 心跳草稿适配器不发送 | `state-alerts > log sink writes JSON lines; Telegram draft adapter only builds a request and never sends`、`misc > heartbeat draft …` |
+| 入口无签名器拒绝启动；状态文件 .bak 回退；告警失败入 outbox；错误脱敏 | `misc > B8 …`、`state-alerts > B8 … / B2 …`、`redact > …` |
 
 ## 9. 运维手册草稿（服务器 B）
 
@@ -239,7 +262,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 4. 填 `startBlock` = 两链桥代理的部署区块；`legacyAddresses`、`controlledSetFile` 按负责人确认的清单。
 5. 外部心跳服务：超时（建议 10 分钟）直接电话 / 短信负责人。告警通道接一级电话 + 短信、二级即时消息、三级日报。
 
-**启动**：`tsx src/main.ts --config <path>`（建议 systemd，`Restart=always`）。状态文件：`<dataDir>/state.json`；告警流水：`<dataDir>/alerts.jsonl`。
+**启动**：`tsx src/main.ts --config <path>`（建议 systemd，`Restart=always`）；本 PR 中只能 `--dry-run`。启动时校验每个 RPC 的 chainId 与两链代币 decimals，不符拒绝启动。状态文件：`<dataDir>/state.json`（上一版本 `state.json.bak`，主文件损坏时自动回退）；告警流水：`<dataDir>/alerts.jsonl`（错误信息已脱敏）。
 
 **重放 / 重建**：状态中的累计值、待核对项、时间锁提议都可从链上重建。停服务 → 备份并删除 `state.json` → 启动，会从 `startBlock` 全量重放（已判定集合也会清空：重放到的旧不符事件若早于最近一次 `Unpaused` 只告警；若晚于则会再次暂停，属预期——说明确有未处理的可疑事件）。不要手改 `state.json`。
 
@@ -259,11 +282,13 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 
 | # | 风险 | 说明 / 建议 |
 |---|---|---|
-| R1 | Q1：宽限期内的一次无关暂停 / 解除会让可疑事件只告警不暂停 | 规格如此；建议负责人决定是否收紧（只确认最后一次 `Paused` 之前的事件） |
-| R2 | 源链进度落后（条件 ①）或 RPC 分歧（条件 ②）持续到 B2W `eta` 时，可疑入账可能被执行 | 三条件缺一不暂停是规格要求；此时有二级 `CHECK_DEFERRED` / `RPC_DISAGREE` + `INDEX_LAG`，负责人需人工判断；B2W 损失受 `b2wDailyCap` 约束 |
+| ~~R1~~ | 已修（A3） | — |
+| R2 | 源链进度落后（条件 ①）或 RPC 分歧（条件 ②）持续到 B2W `eta` 时，可疑入账可能被执行 | 三条件缺一不暂停是规格要求；此时有二级 `CHECK_DEFERRED` / `RPC_DISAGREE` + `INDEX_LAG`，到 eta 时升级为一级 `CHECK_OVERDUE`（B4），负责人需人工判断；B2W 损失受 `b2wDailyCap` 约束 |
 | R3 | 被确认后放过的 WANTOS 可疑排队项被执行时（`Released`），WANTOS 侧不再核对（P10） | 按规格；若要加，WANTOS `Released` 也可建核对项 |
 | R4 | `meta.decided`、`meta.alertKeys` 只增不减；快照每份含完整累计状态 | 桥的业务量下增长很慢；后续可按时间修剪 |
 | R5 | 受控 / 旧地址的原生币转账、BSC 侧受控地址未监控（P12） | 需要逐块扫交易或第三方索引；与 PR-3/PR-4 的自建索引共享会违背"完全独立"，建议另行决定 |
 | R6 | 宽限期判断依赖服务器 B 系统时钟 | 部署时启用 NTP；时钟大幅偏快只会提前判定（仍需条件 ①②），偏慢会推迟 |
-| R7 | `main.ts` 未接签名器与通道，直接运行时暂停一定失败（一级 `PAUSE_FAILED`） | 有意为之（本 PR 禁止接真实服务）；PR-10 接入前不得作为生产监控 |
+| R7 | `main.ts` 未接签名器与通道：没有 `--dry-run` 时拒绝启动；dry-run 下暂停一定失败（一级 `PAUSE_FAILED`） | 有意为之（本 PR 禁止接真实服务）；PR-10 接入前不得作为生产监控 |
+| R9 | 并集摄取：单个 RPC 伪造的事件会进入累计值（对账表现为短缺告警）并建核对项（由逐笔存在性共识过滤，不会误暂停）；单个 RPC 漏报会触发 `RPC_DISAGREE` | 宁可多报；累计值偏差会在对账中暴露 |
+| R10 | 时钟偏差只告警（`CLOCK_SKEW`），不自动校正 | 部署启用 NTP |
 | R8 | 对账在游标区块读状态，要求 RPC 保留近期状态（非归档节点一般 128 块以内够用）；BSC 公共节点对 `eth_getLogs` 区间有限制 | `maxBlockRange` 可调小；`startBlock` 远早于当前高度的首次同步需要支持历史日志的节点 |
