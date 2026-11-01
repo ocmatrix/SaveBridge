@@ -128,6 +128,8 @@ export interface MetaState {
   /** (alert, channel) pairs whose delivery failed; retried per channel every tick (B2 / A-3). */
   /** B1: last time each chain's cursor moved (or was caught up). */
   cursorProgress: Partial<Record<ChainName, { number: string | null; at: number }>>;
+  /** A-2 (r3): last time each chain's safe head changed. */
+  headProgress: Partial<Record<ChainName, { head: string; at: number }>>;
   outbox: Array<{ id: string; channel: number; alert: Alert }>;
   /** Per channel: items dropped because the outbox hit its cap (B3). */
   outboxDropped: Record<string, number>;

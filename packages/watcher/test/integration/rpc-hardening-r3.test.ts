@@ -77,4 +77,48 @@ describe("round-3 hardening", () => {
       expect(JSON.stringify(d.detail)).toContain("unconfirmed");
     });
   });
+
+  describe("A-2: liveness reads use the minAgree-th largest head; a frozen head is 'stuck'", () => {
+    it("POC-E: one of 3 BSC nodes stopped syncing → the cursor keeps moving, RPC_LAGGING is raised, and the forged payout is escalated", async () => {
+      let frozen: bigint | null = null;
+      const t = await makeWatcher(H, {
+        endpoints: { bsc: [{ label: "a", client: H.bsc.pub }, { label: "b", client: honest(H.bsc) }, { label: "stalled", client: stalledNode(H.bsc, () => frozen) }] },
+        config: (c) => void (c.chains.bsc.maxLagBlocks = 5),
+      });
+      await H.settle();
+      await t.w.tick();
+      frozen = (await H.bsc.pub.getBlock({ blockTag: "finalized" })).number;
+      const r = await forge(71n);
+      await H.settle();
+      t.clock.now = r.timestamp + 400;
+      await t.w.tick();
+      for (let i = 0; i < 3; i++) {
+        await H.bsc.mine(2);
+        t.clock.now += 700;
+        await t.w.tick();
+      }
+      expect(BigInt(t.w.state.derived.bsc.cursor!.number)).toBeGreaterThan(frozen);
+      expect(t.codes()).toContain("RPC_LAGGING");
+      const level1 = t.sink.alerts.filter((a) => a.level === 1).map((a) => a.code);
+      expect((await H.isPaused("bsc")) || level1.some((c) => ["CURSOR_STUCK", "CHECK_OVERDUE", "RPC_DISSENTING"].includes(c))).toBe(true);
+    });
+
+    it("a head that does not move for > cursorStallSeconds is stuck even when the cursor is caught up", async () => {
+      const t = await makeWatcher(H);
+      await H.settle();
+      await t.w.tick();
+      t.clock.now += 601;
+      await t.w.tick(); // no new BSC / WANTOS blocks at all
+      expect(t.sink.alerts.find((a) => a.code === "CURSOR_STUCK")?.level).toBe(1);
+    });
+
+    it("MA19: CURSOR_STUCK also fires while the head itself is unavailable", async () => {
+      const noFinal = () => tamperedClient(H.bsc, (m, p) => (m === "eth_getBlockByNumber" && p[0] === "finalized" ? { handled: true, result: new Error("no finalized") } : { handled: false }));
+      const t = await makeWatcher(H, { endpoints: { bsc: [{ label: "a", client: noFinal() }, { label: "b", client: noFinal() }] } });
+      await t.w.tick();
+      t.clock.now += 601;
+      await t.w.tick();
+      expect(t.sink.alerts.find((a) => a.code === "CURSOR_STUCK" && a.chain === "bsc")?.level).toBe(1);
+    });
+  });
 });

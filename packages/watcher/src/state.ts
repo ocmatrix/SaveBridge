@@ -32,6 +32,7 @@ export const initialState = (): State => ({
     controlledSet: [],
     snapshots: [],
     cursorProgress: {},
+    headProgress: {},
     outbox: [],
     outboxDropped: {},
     pendingLevel1: {},

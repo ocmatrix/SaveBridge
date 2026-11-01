@@ -248,13 +248,22 @@ export class Watcher {
 
   // ------------------------------------------------------------------ heads & ingestion
   /**
-   * Safe head = MIN over the RPCs that answered (BSC `finalized`, WANTOS latest − confirmations);
-   * at least `minRpcAgreement` RPCs must answer, otherwise wait and alert.
+   * Liveness read (r3 compromise): safe head = the minAgree-th LARGEST value among the RPCs that
+   * answered (BSC `finalized`, WANTOS latest − confirmations): at least minAgree RPCs vouch for it, so a
+   * single lagging node cannot pin it and a single runaway node cannot pull it ahead. Fewer answers
+   * than minAgree → wait and alert. A spread larger than maxLagBlocks → RPC_LAGGING (level 2).
    */
   private async safeHead(c: ChainName): Promise<bigint | null> {
     const cfg = this.cfg.chains[c];
     const rpc = this.d.rpc[c];
-    const min = (xs: bigint[]): bigint => xs.reduce((a, b) => (b < a ? b : a));
+    const kth = (xs: bigint[]): bigint => [...xs].sort((a, b) => (a > b ? -1 : a < b ? 1 : 0))[rpc.minAgree - 1]!;
+    const lagging = async (r: { ok: Array<{ label: string; value: bigint }> }) => {
+      const vals = r.ok.map((x) => x.value);
+      const spread = vals.reduce((a, b) => (b > a ? b : a)) - vals.reduce((a, b) => (b < a ? b : a));
+      if (spread > BigInt(cfg.maxLagBlocks))
+        await this.raise("RPC_LAGGING", `${c} 各 RPC 的区块高度相差 ${spread} 块`, { chain: c, detail: { heads: Object.fromEntries(r.ok.map((x) => [x.label, x.value.toString()])) }, key: `rpclag:${c}` });
+      else this.alerts.clearKey(`rpclag:${c}`);
+    };
     if (cfg.head.kind === "finalized") {
       const r = await rpc.all(async (cl) => (await cl.getBlock({ blockTag: "finalized" })).number);
       if (r.ok.length < rpc.minAgree) {
@@ -262,7 +271,8 @@ export class Watcher {
         return null;
       }
       this.alerts.clearKey(`nofinal:${c}`);
-      return min(r.ok.map((x) => x.value));
+      await lagging(r);
+      return kth(r.ok.map((x) => x.value));
     }
     const r = await rpc.all((cl) => cl.getBlockNumber({ cacheTime: 0 }));
     if (r.ok.length < rpc.minAgree) {
@@ -270,7 +280,8 @@ export class Watcher {
       return null;
     }
     this.alerts.clearKey(`unreach:${c}`);
-    const latest = min(r.ok.map((x) => x.value));
+    await lagging(r);
+    const latest = kth(r.ok.map((x) => x.value));
     const m = this.state.meta;
     const now = this.now();
     if (!m.wantosHead || BigInt(m.wantosHead.number) !== latest) {
@@ -311,23 +322,32 @@ export class Watcher {
     await this.checkStuck(c, head);
   }
 
-  /** B1: the cursor neither moved nor is caught up for longer than `cursorStallSeconds` → level 1. */
+  /**
+   * B1 / A-2 (r3): level-1 CURSOR_STUCK when (a) the cursor has neither moved nor been caught up for
+   * longer than cursorStallSeconds, or (b) the safe head itself has not advanced for that long (a frozen
+   * head would otherwise look "caught up" forever).
+   */
   private async checkStuck(c: ChainName, head: bigint | null): Promise<void> {
     const m = this.state.meta;
     const now = this.now();
+    const stall = this.cfg.cursorStallSeconds;
     const cur = this.state.derived[c].cursor?.number ?? null;
-    const prev = m.cursorProgress[c];
     const caughtUp = head !== null && cur !== null && BigInt(cur) >= head;
-    if (!prev || prev.number !== cur || caughtUp) {
-      m.cursorProgress[c] = { number: cur, at: now };
-      return;
-    }
-    if (now - prev.at > this.cfg.cursorStallSeconds)
-      await this.raise("CURSOR_STUCK", `${c} 监控游标已 ${Math.round((now - prev.at) / 60)} 分钟未前进（RPC 不足 / 不一致 / 取不到安全高度），监控处于失明状态`, {
-        chain: c,
-        detail: { cursor: cur, since: prev.at, head: head?.toString() ?? null },
-        key: `stuck:${c}:${prev.at}`,
-      });
+    const prev = m.cursorProgress[c];
+    if (!prev || prev.number !== cur || caughtUp) m.cursorProgress[c] = { number: cur, at: now };
+    const hp = m.headProgress[c];
+    if (head !== null && (!hp || hp.head !== head.toString())) m.headProgress[c] = { head: head.toString(), at: now };
+    const cp = m.cursorProgress[c]!;
+    const hp2 = m.headProgress[c];
+    const cursorStalled = now - cp.at > stall;
+    const headStalled = head !== null && hp2 !== undefined && now - hp2.at > stall;
+    if (!cursorStalled && !headStalled) return;
+    const since = Math.min(cursorStalled ? cp.at : now, headStalled ? hp2!.at : now);
+    await this.raise("CURSOR_STUCK", `${c} 监控已 ${Math.round((now - since) / 60)} 分钟无进展（${headStalled ? "安全高度不再前进" : "游标不前进"}），监控处于失明状态`, {
+      chain: c,
+      detail: { cursor: cur, head: head?.toString() ?? null, cursorSince: cp.at, headSince: hp2?.at ?? null },
+      key: `stuck:${c}:${since}`,
+    });
   }
 
   private legacyOn(c: ChainName): Address[] {

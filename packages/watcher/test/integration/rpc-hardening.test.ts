@@ -50,10 +50,10 @@ describe("RPC hardening", () => {
       await t.w.tick();
       t.clock.now += 599;
       await t.w.tick();
-      expect(t.codes()).not.toContain("CURSOR_STUCK");
+      expect(t.sink.alerts.filter((x) => x.code === "CURSOR_STUCK" && x.chain === "bsc")).toHaveLength(0);
       t.clock.now += 2;
       await t.w.tick();
-      const a = t.sink.alerts.find((x) => x.code === "CURSOR_STUCK")!;
+      const a = t.sink.alerts.find((x) => x.code === "CURSOR_STUCK" && x.chain === "bsc")!;
       expect(a.level).toBe(1);
       expect(a.chain).toBe("bsc");
     });
