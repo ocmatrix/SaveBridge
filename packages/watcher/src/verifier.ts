@@ -81,10 +81,12 @@ export class Verifier {
     }
     if (p.kind === "refund") {
       const o = (await c.readContract({ address: t.bridge, abi, functionName: "orders", args: [BigInt(p.nonce)], blockNumber: at })) as readonly [Address, bigint, bigint, number, bigint];
-      return Number(o[3]) !== ORDER_STATUS.Refunding;
+      // withdrawn = back to Locked. Refunded (already executed) is NOT benign: keep checking the source (A4).
+      return Number(o[3]) === ORDER_STATUS.Locked;
     }
     const d = (await c.readContract({ address: t.bridge, abi, functionName: "deposits", args: [BigInt(p.nonce)], blockNumber: at })) as readonly [Address, bigint, bigint, number];
-    return Number(d[3]) !== DEPOSIT_REFUND.Refunding;
+    // withdrawn = back to None. Refunded (already executed) is NOT benign (A4).
+    return Number(d[3]) === DEPOSIT_REFUND.None;
   }
 
   private async sourceHolds(c: PublicClient, p: PendingCheck, at: bigint): Promise<SourceAnswer> {
