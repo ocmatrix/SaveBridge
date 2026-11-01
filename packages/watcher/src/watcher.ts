@@ -566,12 +566,10 @@ export class Watcher {
     switch (l.name) {
       case "BridgeOut":
         add(der.sums, "bridgeOut", a["amount"]);
-        if (l.confirmed && BigInt(String(a["orderId"])) > BigInt(this.state.derived.maxOrderId)) this.state.derived.maxOrderId = String(a["orderId"]);
         return;
       case "Deposited":
         add(der.sums, "deposited", a["amount"]);
         if (l.confirmed) this.state.derived.depositBlocks[String(a["nonce"])] ??= l.block.toString(); // first confirmed write wins
-        if (l.confirmed && BigInt(String(a["nonce"])) > BigInt(this.state.derived.maxDepositNonce)) this.state.derived.maxDepositNonce = String(a["nonce"]);
         return;
       case "Funded":
         add(der.sums, "funded", a["amount"]);

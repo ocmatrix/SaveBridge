@@ -11,8 +11,6 @@ export const initialDerived = (): DerivedState => ({
   pending: [],
   timelockOps: {},
   depositBlocks: {},
-  maxOrderId: "0",
-  maxDepositNonce: "0",
 });
 
 export const initialState = (): State => ({

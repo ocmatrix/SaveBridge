@@ -108,8 +108,6 @@ export interface DerivedState {
   timelockOps: Record<string, TimelockOp>;
   /** BSC Deposited nonce -> block number (to fetch the recipient from the right block). */
   depositBlocks: Record<string, string>;
-  maxOrderId: string;
-  maxDepositNonce: string;
 }
 
 export interface MetaState {
