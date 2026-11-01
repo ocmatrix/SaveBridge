@@ -168,8 +168,8 @@ interface RiskEngine { evaluate(order: Order, ctx: { outstandingWei: bigint }): 
 ## 5. 测试与覆盖率
 
 - 运行：`cd packages/relayer && npx vitest run`（或在仓库根用 pnpm 10：`pnpm -r typecheck`、`pnpm -r test`，见 Q8）。测试会在本机起 anvil 并在缺少 `out/` 时执行一次 `forge build`；不访问外部网络。
-- 结果：**18 个文件 / 196 个测试全部通过**；`tsc --noEmit` 通过。
-- 覆盖率（v8，`src/**`，不含 `main.ts`）：总计 语句 94.25% / 分支 86.53% / 函数 96.25% / 行 97.99%。核心：`stateMachine.ts` 100/89.2/100/100、`classify.ts` 100/100/100/100、`eventKey.ts` 100%、`chain/cursor.ts` 100%、`db/migrations.ts` 100%、`chain/sender.ts`（恢复）96.6/85.3/100/100、`chain/wantosScanner.ts` 94.6/92.3/100/98.7、`chain/bscScanner.ts` 93.4/77.5/93.8/98.3、`processor.ts` 89.8/84.0/100/93.9。
+- 结果（Gate2 第 1 轮后）：**20 个文件 / 233 个测试全部通过**；`pnpm -r typecheck` 通过。
+- 覆盖率（v8，`src/**`，不含 `main.ts`）：总计 语句 95.13% / 分支 87.82% / 函数 96.59% / 行 98.33%。核心：`classify.ts`、`eventKey.ts`、`chain/cursor.ts`、`db/migrations.ts`、`redact.ts` 100%；`stateMachine.ts` 100/89.2/100/100；`chain/sender.ts` 96.7/86.5/100/100；`chain/wantosScanner.ts` 94.6/92.3/100/98.7；`chain/bscScanner.ts` 93.4/77.5/93.8/98.3；`processor.ts` 90.3/83.1/100/94.7；`timelockExecutor.ts` 98.8/85.7/100/98.6。
 
 ### 5.1 DESIGN §13 PR-3 验收故障注入 ↔ 测试
 
@@ -195,6 +195,24 @@ interface RiskEngine { evaluate(order: Order, ctx: { outstandingWei: bigint }): 
 | E2E：W2B 大额排队到期执行 | `e2e.test.ts › W2B large amount: queueRelease → QUEUED → executeRelease after 12h → RELEASED` |
 | E2E：B2W 排队 15 分钟 | `e2e.test.ts › B2W: Deposited → finalized → queueRelease → QUEUED 15 min → executeRelease → RELEASED` |
 | 其他（规格要求、非 §13 列举） | 只处理本链桥地址：`scanners.test.ts › ignores logs whose address is not this chain's bridge …`、`ignores foreign-address Deposited logs`；receipt 两源一致：`scanners.test.ts › requires the cross-check receipt to agree …` 等 3 例；放款前重读 WANTOS 订单：`faults.test.ts › WANTOS order no longer Locked …`；审核验签：`faults.test.ts › REVIEW: owner approval …`；提交服务：`timelockExecutor.test.ts`（6 例）；API：`api.test.ts`（8 例）；告警出口：`alerts.test.ts`；心跳：`timeouts.test.ts › heartbeat`；KMS/gas/nonce 告警：`sender.test.ts`；配置拒绝密钥：`config.test.ts` |
+
+### 5.2 Gate2 第 1 轮回归（`test/gate2r1.test.ts` 等）
+
+| 项 | 回归测试 | 修复前（红证据） |
+|---|---|---|
+| A1 / 探针 P1 | `gate2r1 › A1/P1: approved REVIEW, then WANTOS refund requested → nothing is sent`；`A1: the source-order check is a hard precondition even with a permissive risk engine`；`A1: an approval only covers the level+reason it was given for`；`A1: approval for the same level+reason still proceeds` | 发出 `[queueRelease]` / `[release]` / `[queueRelease]` |
+| A2 / 探针 P2 | `gate2r1 › A2/P2: QUEUED, then WANTOS refund requested → executeRelease is never sent`；`A2 (B2W): deposit refund requested on BSC → …not sent` | 发出 `[queueRelease, executeRelease]`，BSC payouts.status=2；B2W 存款 1 被排队 |
+| A3 / 探针 P3 | `gate2r1 › A3/P3: bump race — the ORIGINAL tx is mined after a bump` | 订单变 FAILED |
+| E1 | `api › E1: GET /v1/orders matches PR-5's contract`、`E1: at most 50 orders`、`E1: CORS only for configured origins` | 字段为旧集合（含 status）、100 条、无 CORS 头 |
+| B1 | `gate2r1 › B1: owner reject is refused when the payout is already Released…` | `decide(reject)` 成功 |
+| B2 | `gate2r1 › B2: an RPC hiccup during simulation…`；`sender › B2: simulation failing without revert data…`、`B2: a receipt read error is not 'not found'…` | DETECTED → FAILED；tick 走 dropped 路径 |
+| B3 | `redact.test.ts`（含反例）；`config › B3: refuses RPC URLs written into the config file` | 告警原样带 `…/v2/<key>?key=…` |
+| B4 | `timelockExecutor › B4: scans with a persisted cursor in bounded ranges…`、`B4: executor failures are alerted` | 5 块 getLogs 限制下整段扫描报错、无提醒；错误被吞 |
+| B5 | `api › B5: /v1/quota is cached per address and globally rate-limited` | 每次请求都读链 |
+| B6 | `gate2r1 › B6/B7: startup self-checks`（eventKey / peer / 钥匙互异） | `start()` 照常通过 |
+| B7 | `gate2r1 › B7: …`（暂停、额度、在途、outstanding、重放 payload）；`timelockExecutor › expired … without even simulating`、`B7: proposals from a previous admin epoch…`；`gate2r1 › B7: token decimals must match` | 原存活变异 M13 M14 M20 M25 M26 M27 M29 M30 |
+
+变异重跑（独立副本 `scratchpad/mut-r2`，脚本 `scratchpad/mutr2/run2.py`）：aligner 原 30 个变异（M05 随代码移到 processor，模式已更新）+ 本轮 28 个新变异，共 58 个，**全部被杀死**；aligner 探针 P1/P2/P3 在新代码上 3/3 通过。
 
 ## 6. 上线门槛（Gate2 B9）
 
