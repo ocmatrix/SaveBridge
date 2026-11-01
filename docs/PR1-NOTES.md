@@ -2,7 +2,7 @@
 
 > 依据：`docs/DESIGN.md` v0.9.3（唯一权威）、`docs/PR0-FINDINGS.md`。分支 `pr-1-contracts`。
 > 范围：只写代码与本地测试。**未部署、未广播、未接触任何节点或真实私钥。**
-> 工具链：solc 0.8.28，`evm_version = cancun`，optimizer 200 runs，OpenZeppelin Contracts / Contracts-Upgradeable v5.1.0。
+> 工具链：solc 0.8.28，`evm_version = cancun`，optimizer **1 run**（B1，原 200），OpenZeppelin Contracts / Contracts-Upgradeable v5.1.0。
 
 ## 1. 文件
 
@@ -141,7 +141,7 @@
 
 **自查发现但未修的风险**（见 §8 报告）：
 1. ~~治理活性依赖桥的视图函数~~ → **已修（A1）**：执行后自检让坏升级整笔回滚。剩余风险：新实现视图"语义上错误但看起来合理"（例如 `isKeyHolder` 永远返回 true）不在自检能识别的范围内，靠上面的升级检查清单与审计。
-2. **BscVaultV2 运行时字节码 23,659 B，余量仅 917 B**（上限 24,576）。审计修复若增加代码可能超限；备选：把白名单批次逻辑移入外部 library（会改变部署笔数和 nonce 表，需同步改 §5.1）、或降低 optimizer runs。
+2. ~~BscVaultV2 余量仅 917 B~~ → **B1 已缓解**：optimizer_runs 200 → 1 后余量 2,093 B，并有 ≥ 1,500 B 的测试门槛。代价：运行时 gas 略升（对低频桥操作可忽略）。
 3. 付款钥匙可提前把任意 nonce 的放款排进队列（受白名单与额度约束），这是规格接受的风险（§5.2 最后一条），由监控兜底。
 
 ## 5. 下游接口清单（PR-3 付款程序 / PR-5 用户页 / PR-6 管理后台 / PR-7 监控 / PR-8 迁移的契约）
@@ -383,7 +383,16 @@ Refunded(uint256 indexed orderId, address indexed user, uint256 amount)
 
 ## 6. 验证结果（本地）
 
-- `forge build --sizes`：BridgeTimelock 11,250 B；BscVaultV2 23,659 B（余量 917 B）；WantosBridgeV2 22,581 B（余量 1,995 B）。
+- `forge build --sizes`（optimizer_runs = 1）：
+
+| 合约 | 运行时 | 余量 | initcode keccak256（与地址无关） |
+|---|---|---|---|
+| BridgeTimelock | 11,581 B | 12,995 B | `0x498a425cf63b31a127c7fd6676bfb57d89193cc6d6ae445eaa85c4b616fd677e` |
+| BscVaultV2 | 22,483 B | 2,093 B | `0x5a452ec9e84081f509586c655f5bac7b615d2647bf4a144d0b5b669603fc19ed` |
+| WantosBridgeV2 | 21,661 B | 2,915 B | `0x69d0b764fcc310e0972b9293a00e6bc15405ffd72f5e30b0a15327355fb62adc` |
+
+- **CI 门槛**：任何核心合约运行时余量必须 ≥ 1,500 B；由 `SizeGateTest.test_runtimeSizeMargins` 强制（`forge test` 不过即红）。
+- **codehash 说明**：实现合约含 UUPS 的 `__self` immutable（= 实现自身地址），时间锁含 `bridge`/`MIN_DELAY` immutable，所以**运行时 codehash 取决于部署地址与构造参数**，不能离线写死。验收脚本 `Verify.s.sol` 的 `IMPLEMENTATION_CODEHASH` 取法：用同一提交、同一 `foundry.toml`（runs = 1）在本地以 `PredictAddresses` 预测出的实现地址重放部署（或 fork 演练），读取 `extcodehash`；构建可复现性用上表 initcode 哈希核对。任何编译设置变化（含 optimizer_runs）都会改变这些哈希。
 - `forge test`：203 通过 / 0 失败（9 个测试套件；fuzz 512 轮）。
 - `forge coverage --report summary --no-match-coverage "(test|script)/"`：四个核心合约行、语句、分支、函数**均 100%**。
 - `forge fmt --check`：通过。
