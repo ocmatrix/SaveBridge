@@ -157,6 +157,55 @@ describe("WANTOS scanner (DESIGN §6.2)", () => {
     expect(getLogs.fromBlock).toBe(cur.block - 100n + 1n);
   });
 
+  it("primary not knowing the cursor block → waits", async () => {
+    chain.mine(10);
+    const s = mk();
+    await s.scanOnce();
+    const cur = (await new CursorRepo(db).get(WANTOS_ID))!;
+    chain.blocks.length = Number(cur.block); // primary "lost" the cursor block (resynced node)
+    expect((await mk().scanOnce()).status).toBe("waiting");
+  });
+
+  it("operator recovery after a reorg halt: rewind the cursor to a re-verified block, clear, resume", async () => {
+    chain.mine(10);
+    const s = mk();
+    await s.scanOnce();
+    const cur = (await new CursorRepo(db).get(WANTOS_ID))!;
+    chain.reorgFrom(cur.block - 1n);
+    expect((await s.scanOnce()).status).toBe("halted");
+    const safe = cur.block - 2n;
+    await new CursorRepo(db).rewind(WANTOS_ID, safe, chain.blocks[Number(safe)]!.hash);
+    safety.clear("wantos");
+    const { topics, data } = bridgeOutLog(1n, USER, 100n);
+    chain.addEvent(WANTOS_BRIDGE, topics, data);
+    chain.mine(6);
+    expect((await mk().scanOnce()).status).toBe("ok");
+    expect(await new OrderRepo(db).count()).toBe(1);
+  });
+
+  it("rejects bad construction", () => {
+    expect(() => new WantosScanner({ chainId: 1, bridge: WANTOS_BRIDGE, primary, crossChecks: [], confirmations: 6, db, alerts, safety, rescanBlocks: 100, maxBlockRange: 10, startBlock: 0n })).toThrow(/cross-check/);
+    expect(() => new WantosScanner({ chainId: 1, bridge: WANTOS_BRIDGE, primary, crossChecks: [cross], confirmations: 5, db, alerts, safety, rescanBlocks: 100, maxBlockRange: 10, startBlock: 0n })).toThrow(/confirmations/);
+  });
+
+  it("a second cross-check that disagrees is a mismatch even if the first agrees", async () => {
+    const cross2 = chain.reader("cross2");
+    cross2.receiptOverride = () => null;
+    const { topics, data } = bridgeOutLog(1n, USER, 100n);
+    chain.addEvent(WANTOS_BRIDGE, topics, data);
+    chain.mine(6);
+    const s = new WantosScanner({ chainId: WANTOS_ID, bridge: WANTOS_BRIDGE, primary, crossChecks: [cross, cross2], confirmations: 6, db, alerts, safety, rescanBlocks: 100, maxBlockRange: 2000, startBlock: 0n });
+    expect((await s.scanOnce()).status).toBe("waiting");
+    expect(alerts.byKind("RPC_MISMATCH")).toHaveLength(1);
+  });
+
+  it("cross-check disagreeing on the range end block hash → waits", async () => {
+    chain.mine(10);
+    cross.blockHashOverride = () => ("0x" + "cd".repeat(32)) as `0x${string}`;
+    expect((await mk().scanOnce()).status).toBe("waiting");
+    expect(alerts.byKind("RPC_MISMATCH")).toHaveLength(1);
+  });
+
   it("scans in bounded ranges", async () => {
     chain.mine(30);
     const s = new WantosScanner({ chainId: WANTOS_ID, bridge: WANTOS_BRIDGE, primary, crossChecks: [cross], confirmations: 6, db, alerts, safety, rescanBlocks: 100, maxBlockRange: 10, startBlock: 0n });
@@ -250,6 +299,23 @@ describe("BSC scanner (DESIGN §6.2: >=2 RPCs, finalized only)", () => {
     expect((await s.scanOnce()).status).toBe("halted");
     expect(alerts.byKind("BSC_REORG")).toHaveLength(1);
     expect(safety.isHalted("bsc")).toBe(true);
+  });
+
+  it("cursor block unavailable on one RPC → waits; getLogs failure → RPC_UNAVAILABLE", async () => {
+    chain.mine(100);
+    const s = mk();
+    await s.scanOnce();
+    b.blockHashOverride = undefined;
+    const orig = b.getBlock.bind(b);
+    b.getBlock = async (arg) => ("blockNumber" in arg ? null : orig(arg));
+    expect((await s.scanOnce()).status).toBe("waiting");
+    b.getBlock = orig;
+    chain.mine(5);
+    a.getLogs = async () => {
+      throw new Error("boom");
+    };
+    expect((await s.scanOnce()).status).toBe("waiting");
+    expect(alerts.byKind("RPC_UNAVAILABLE").length).toBeGreaterThan(0);
   });
 
   it("ignores foreign-address Deposited logs", async () => {

@@ -194,6 +194,31 @@ describe("TxSender (DESIGN §6.4) against local anvil", () => {
     expect(await s1b.send(mintCall())).toMatchObject({ kind: "sent", nonce: 1 });
   });
 
+  it("broadcast failure keeps the signed raw tx; a later tick re-broadcasts it unchanged", async () => {
+    await a.testClient.setBalance({ address: signer.address, value: 0n });
+    const s = mk();
+    await s.recover();
+    const r = await s.send(mintCall());
+    expect(r.kind).toBe("broadcast-error");
+    expect((await attempts())[0]!.state).toBe("signed");
+    expect(await s.send(mintCall())).toEqual({ kind: "busy" });
+    await a.testClient.setBalance({ address: signer.address, value: parseEther("10") });
+    expect((await s.tick()).rebroadcast).toBe(1);
+    const t = await s.tick();
+    expect(t.resolved?.txHash).toBe((r as { txHash: Hex }).txHash);
+  });
+
+  it("signed-but-unsent tx whose nonce gets consumed elsewhere → dropped + NONCE_MISMATCH", async () => {
+    const s = mk({ hooks: { afterSign: () => { throw new Error("crash"); } } });
+    await s.recover();
+    await expect(s.send(mintCall())).rejects.toThrow();
+    const acct = privateKeyToAccount(key);
+    await a.publicClient.waitForTransactionReceipt({ hash: await a.walletClient.sendTransaction({ account: acct, chain: a.chain, to: actors().user.address, value: 1n }) });
+    await mk().tick();
+    expect((await attempts())[0]!.state).toBe("dropped");
+    expect(alerts.byKind("NONCE_MISMATCH")).toHaveLength(1);
+  });
+
   it("KmsSigner placeholder refuses to sign (production impl is TODO)", async () => {
     const k = new KmsSigner({ keyId: "placeholder", address: signer.address });
     await expect(k.signTransaction({} as any)).rejects.toThrow(/not implemented/);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BaseError, encodeErrorResult, parseAbi } from "viem";
+import { BaseError, ContractFunctionRevertedError, encodeErrorResult, parseAbi } from "viem";
 import { bscVaultV2Abi } from "@bridge/abi";
 import { decodeRevert, decodeRevertData } from "../src/chain/revert";
 
@@ -21,6 +21,14 @@ describe("revert decoding", () => {
   it("unknown selector keeps raw data", () => {
     expect(decodeRevertData("0xdeadbeef")).toEqual({ raw: "0xdeadbeef" });
   });
+  it("uses an already-decoded ContractFunctionRevertedError", () => {
+    const data = encodeErrorResult({ abi: bscVaultV2Abi, errorName: "NotWhitelisted", args: ["0x0000000000000000000000000000000000000001"] });
+    const e = new ContractFunctionRevertedError({ abi: bscVaultV2Abi, data, functionName: "release" });
+    expect(decodeRevert(e).errorName).toBe("NotWhitelisted");
+    expect(decodeRevert(new BaseError("no data")).message).toBe("no data");
+    expect(decodeRevert("weird").message).toBe("weird");
+  });
+
   it("walks viem error chains for revert data", () => {
     const data = encodeErrorResult({ abi: bscVaultV2Abi, errorName: "EnforcedPause" });
     const inner = Object.assign(new BaseError("inner"), { data });

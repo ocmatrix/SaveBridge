@@ -263,7 +263,10 @@ export class Processor {
     await this.moveIfChanged(o, "FAILED", { lastError: `tx ${att.txHash} ${att.state}` });
   }
 
-  /** Re-execute the reverted call at the parent block to recover the revert reason. */
+  /**
+   * Re-execute the reverted call against the state AFTER its block to recover a revert reason
+   * (the parent-block state would not include a same-block pause/void that made it revert).
+   */
   private async revertReasonOf(o: Order, att: AttemptInfo): Promise<RevertInfo> {
     const side = this.side(o);
     try {
@@ -272,7 +275,7 @@ export class Processor {
         account: side.sender.address,
         to: side.view.address,
         data: this.calldata(side, o, (att.action as PayoutAction) ?? "release"),
-        blockNumber: rc.blockNumber - 1n,
+        blockNumber: rc.blockNumber,
       });
       return { message: "revert reason unavailable" };
     } catch (e) {

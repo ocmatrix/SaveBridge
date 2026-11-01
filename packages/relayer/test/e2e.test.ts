@@ -93,4 +93,24 @@ describe("E2E (anvil, real PR-1 contracts)", () => {
     expect((await repo.get(key))!.status).toBe("RELEASED");
     expect(await balanceOf(world.wantos, world.w.token, recipient)).toBe(before + 50n * U);
   });
+
+  it("run loop: ticks until aborted, alerts and continues when a tick throws", async () => {
+    const sys = await buildRelayer(world);
+    let n = 0;
+    const orig = sys.relayer.tick.bind(sys.relayer);
+    sys.relayer.tick = async () => {
+      n++;
+      if (n === 1) throw new Error("transient");
+      return orig();
+    };
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 400);
+    await sys.relayer.run({ intervalMs: 50, signal: ac.signal });
+    expect(n).toBeGreaterThan(1);
+    expect(sys.alerts.byKind("LOOP_ERROR")).toHaveLength(1);
+  });
+
+  it("refuses to start against the wrong chain", async () => {
+    await expect(buildRelayer(world, { wantos: { ...(await buildRelayer(world)).relayer.deps.wantos, chainId: 13555 } })).rejects.toThrow(/chain id/);
+  });
 });

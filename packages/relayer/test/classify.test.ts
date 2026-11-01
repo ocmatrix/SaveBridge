@@ -65,6 +65,17 @@ describe("revert / outcome classification (DESIGN §6.3, PR1-NOTES §5.11)", () 
       reason: "whitelist",
     });
   });
+  it("edge inputs: missing / out-of-range BadPayoutStatus arg, unrelated Error(string), B2W execute NotWhitelisted", () => {
+    expect(classifyOutcome({ ...base, errorName: "BadPayoutStatus" })).toMatchObject({ status: "FAILED" });
+    expect(classifyOutcome({ ...base, errorName: "BadPayoutStatus", errorArgs: ["0x", 9] })).toMatchObject({ status: "FAILED" });
+    expect(classifyOutcome({ ...base, errorName: "Error", errorMessage: "something else" })).toMatchObject({ status: "FAILED" });
+    expect(classifyOutcome({ direction: "B2W", action: "executeRelease", payoutStatus: PayoutStatus.Queued, errorName: "NotWhitelisted" })).toMatchObject({ status: "FAILED" });
+    expect(classifyOutcome({ ...base, action: "executeRelease", payoutStatus: PayoutStatus.Queued, errorName: "AccessControlUnauthorizedAccount" })).toMatchObject({
+      status: "FAILED",
+      alert: "RELAYER_KEY_REVOKED",
+    });
+  });
+
   it("BadPayoutStatus with status arg is honoured when no separate read is available", () => {
     expect(classifyOutcome({ ...base, errorName: "BadPayoutStatus", errorArgs: ["0x00", 2] })).toMatchObject({ status: "RELEASED" });
     expect(classifyOutcome({ ...base, errorName: "BadPayoutStatus", errorArgs: ["0x00", 3n] })).toMatchObject({ status: "REJECTED" });
