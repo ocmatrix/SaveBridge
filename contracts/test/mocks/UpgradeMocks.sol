@@ -88,3 +88,31 @@ contract LostNamespaceImpl is UUPSUpgradeable {
         return false;
     }
 }
+
+/// @dev B5: next version that APPENDS a field at the end of the BscVaultV2 namespace struct
+///      (the only allowed kind of layout change).
+contract BscVaultV2Appended is BscVaultV2 {
+    struct VaultStorageNext {
+        Params params;
+        uint256 depositNonce;
+        mapping(uint256 nonce => Deposit) deposits;
+        mapping(bytes32 oldKey => bool) legacyPaid;
+        uint256 appendedField; // new
+    }
+
+    bytes32 private constant VAULT_STORAGE_NEXT = 0x3bd3aa2096e9f4b3aa0d653c2fcdf8cde24fb7f30fa893e85a7f630b4e747000;
+
+    function _vn() private pure returns (VaultStorageNext storage $) {
+        assembly {
+            $.slot := VAULT_STORAGE_NEXT
+        }
+    }
+
+    function appendedField() external view returns (uint256) {
+        return _vn().appendedField;
+    }
+
+    function setAppendedField(uint256 v) external {
+        _vn().appendedField = v;
+    }
+}

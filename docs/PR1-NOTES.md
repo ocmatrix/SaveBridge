@@ -97,7 +97,7 @@
 | Q2 | `oldKey = keccak256(oldTxHash, logIndex)` 的**确切编码**（`abi.encode` 还是 `abi.encodePacked`、logIndex 位宽） | §10 | 合约不计算 oldKey，只做去重；**PR-8 必须定稿并在补付清单公布**。建议 `keccak256(abi.encode(bytes32 txHash, uint256 logIndex))` |
 | Q3 | 恢复期间是否应允许白名单钱包的**移除**批次（D4） | §4.4 vs §4.5 | 当前禁止；如要允许，改一行条件 |
 | Q4 | `pendingAdmin`（已执行、待接收）没有单独的取消函数；只能等 7 天过期、被下一次 `transferAdmin` 覆盖，或由白名单钱包启动恢复作废 | §4.6 | 规格未要求；若要加"白名单钱包可撤销 pendingAdmin"属新机制，未加 |
-| Q5 | 存储布局检查：未安装 `openzeppelin-foundry-upgrades`，用 ERC-7201 命名空间 + 测试固定命名空间槽位（`test_inv06_pos_upgradePreservesState`）代替 | §5.6 #6 | 建议 PR-2 审计时用 OZ Upgrades 插件做 `validateUpgrade` |
+| Q5 | 存储布局检查：已提交快照并由测试核对（B5，§4.1 第 2 条）；仍未使用 `openzeppelin-foundry-upgrades` | §5.6 #6 | 建议 PR-2 审计时再用 OZ Upgrades 插件做 `validateUpgrade` 交叉核对 |
 | Q6 | ~~slither 未运行~~ → **已完成（A2）**：High 0 / Medium 0，见 §4.0 | §13 PR-1 | — |
 | Q7 | 两条链的实际 fork 部署演练（PR-0 ⑧）未做；`Deploy.s.sol` 只在内存演练 | §5.1 | 需负责人授权后在 fork / 测试网做 |
 
@@ -135,7 +135,11 @@
 
 1. **新实现必须保留 `IBridgeForTimelock` 的五个视图且语义不变**：`timelock()`、`whitelistManager()`、`paused()`、`whitelistRecoveryActive()`、`isKeyHolder(address)`。
    时间锁在每次 `execute/executeBatch`（含升级本身）之后做自检 `_checkBridgeSane()`：`paused()` 可调用；任一恢复都不在进行中；`whitelistManager() != 0` 且 `isKeyHolder(whitelistManager())`；`timelock() == 时间锁地址`。任一项回滚或不成立 → `BridgeCheckFailed()`，整笔执行（含升级）回滚，治理不会被坏升级锁死（A1，测试 `TimelockSelfCheckTest`）。
-2. 存储只能在各命名空间 struct **末尾追加**字段；不得改动、删除、重排已有字段；不得改命名空间字符串。对比 `contracts/test/layout/*.json` 快照（B5）。
+2. 存储只能在各命名空间 struct **末尾追加**字段；不得改动、删除、重排已有字段；不得改命名空间字符串。对比 `contracts/test/layout/*.json` 快照（B5）：
+   - `*.storageLayout.json` = `forge inspect <C> storageLayout --json` 的提交快照。两个桥必须为空（全部状态在 ERC-7201 命名空间里），时间锁是普通顺序存储。CI 命令：`for c in BridgeTimelock BscVaultV2 WantosBridgeV2; do diff <(forge inspect $c storageLayout --json) contracts/test/layout/$c.storageLayout.json; done`。
+   - `*.namespace.json` = 每个命名空间的字段表（slot / 字节偏移 / 字节数）。solc 不输出命名空间布局，所以由 `StorageLayout.t.sol` 用 `vm.load` 逐字段核对（含映射与结构体打包：`Payout`、`Order`、`Deposit`）。字段被重排时测试变红（已用"交换 `unit` 与 `peerChainId`"变异验证）。
+   - 追加字段的升级由 `test_upgradeWithAppendedFieldKeepsDataAndZeroesNewField`（mock `BscVaultV2Appended`）覆盖：旧数据不变，新字段为零，写新字段不影响旧数据。
+   - 打包细节（下游直接读槽时注意）：`Order.refundRequestedAt` 不在 `amount/createdAt/status` 那个槽，而在结构体第 3 个槽。
 3. 新实现先开源验证，codehash 与可复现构建一致（`Verify.s.sol`）。
 4. 先在测试网走一次"时间锁升级 → 再升级回旧实现"的演练。
 
@@ -407,7 +411,7 @@ Refunded(uint256 indexed orderId, address indexed user, uint256 amount)
 | 3 | UTC 日额度（含排队、入账退款、退款执行） | `test_inv03_pos_upToCapsAllowed`、`WantosInvariantsTest.test_inv03_pos_b2wUpToCap`、`testFuzz_inv03_quotaAccounting`、`testFuzz_inv03_b2wCap` | `test_inv03_neg_globalPerAddrAndDepositRefundCounted`、`WantosInvariantsTest.test_inv03_neg_b2wIncludingRefundExecutionCapped`、`test_cap_resetsAtUtcMidnight`（跨零点 2 倍照实） |
 | 4 | A 类只经时间锁；48h；14 天过期；暂停期间不能提取/放宽；恢复期间不执行；交接后旧地址 cancel 被拒 | `test_inv04_pos_executesAfter48h`、`test_inv04_mixed_pausedUpgradeOkButWithdrawAndLoosenNot`（升级、换钥匙在暂停期间可执行） | `test_inv04_neg_directCallsRejected`、`test_inv04_neg_before48hAndAfterExpiry`、`test_inv04_neg_nothingExecutesDuringRecovery`、`test_inv04_neg_oldHolderCancelRejected` |
 | 5 | 钥匙两两不同；提议人恰好一个；WL 只经交接/恢复；DEFAULT_ADMIN 只是时间锁 | `test_inv05_pos_distinctKeysAccepted` | `test_inv05_neg_duplicateKeysAndExtraProposerAndDefaultAdmin`、`test_init_keysMustBePairwiseDistinct`、`test_keys_defaultAdminLockedToTimelock` |
-| 6 | 升级后数据不变；存储布局 | `test_inv06_pos_upgradePreservesState`、`WantosInvariantsTest.test_inv06_pos_ordersSurviveUpgrade` | `test_inv06_neg_nonUupsImplementationRejected` |
+| 6 | 升级后数据不变；存储布局 | `test_inv06_pos_upgradePreservesState`、`WantosInvariantsTest.test_inv06_pos_ordersSurviveUpgrade`、`BscLayoutTest.test_upgradeWithAppendedFieldKeepsDataAndZeroesNewField`、`BscLayoutTest.test_*NamespaceFieldsMatchSnapshot`、`WantosLayoutTest.test_wantosNamespaceFieldsMatchSnapshot` | `test_inv06_neg_nonUupsImplementationRejected` |
 | 7 | 暂停矩阵 | `test_inv07_pos_pausedStillAllowsDefensiveOps` | `test_inv07_neg_pausedBlocksMoneyPaths`、`test_pause_blocksMoneyPaths` |
 | 8 | 批次：当前 WL 签名、nonce 不重放、不跨链、24h、冻结/恢复不能加、严格递增 | `test_inv08_pos_validBatch` | `test_inv08_neg_replayExpiredFrozenUnsorted`、`test_wl_crossChainRejected`、`test_wl_crossContractRejected`、`test_wl_outOfOrderNonceRejected`、`test_wl_unsortedAndDuplicateRejected` |
 | 9 | 交接/恢复：等待期、指定地址、过期、零地址、钥匙重复、否决、对称取消、一次一个、完成/取消后自动可写 | `test_inv09_pos_recoveryCompletesWhenNobodyCancels`、`test_recovery_happyPathAndAutoUnblock` | `test_inv09_neg_symmetricCancelOneAtATime`、`test_handover_expires`、`test_handover_cancelAndVeto`、`test_handover_rejectsBadCandidates` |
