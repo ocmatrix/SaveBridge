@@ -118,6 +118,41 @@ describe("PauseExecutor", () => {
     expect(await ex.pause("bsc")).toMatchObject({ ok: true, status: "already-paused" });
   });
 
+  it("B2: after our own pause tx is mined but cannot be confirmed (RPC quorum down), it is NOT re-sent during the cooldown", async () => {
+    let now = 1_000_000;
+    const reader = new FakeReader(false);
+    reader.paused = async () => null; // second RPC down → never agreed
+    reader.waitReceipt = async () => "success";
+    const sender = new FakeSender();
+    const ex = new PauseExecutor(
+      { bsc: new PauseOnlySigner(sender, [BRIDGE]), wantos: new PauseOnlySigner(sender, [OTHER]) },
+      { bsc: reader, wantos: reader },
+      { bsc: BRIDGE, wantos: OTHER },
+      { attempts: 3, backoffMs: 0, now: () => now, minedCooldownMs: 60_000 },
+    );
+    const r1 = await ex.pause("bsc");
+    expect(r1).toMatchObject({ ok: false, ownTxMined: true });
+    expect(r1.txHash).toMatch(/^0x(ab){32}$/);
+    expect(sender.sent).toHaveLength(1);
+    now += 30_000;
+    expect(await ex.pause("bsc")).toMatchObject({ ok: false, ownTxMined: true });
+    expect(sender.sent).toHaveLength(1);
+    now += 31_000;
+    await ex.pause("bsc");
+    expect(sender.sent).toHaveLength(2);
+  });
+
+  it("B2: a receipt wait that times out keeps the tx hash in the outcome (not redacted away)", async () => {
+    const reader = new FakeReader(false);
+    reader.waitReceipt = async () => {
+      throw new Error("timed out waiting for receipt");
+    };
+    const { ex } = mk(reader);
+    const r = await ex.pause("bsc");
+    expect(r.ok).toBe(false);
+    expect(r.txHash).toBe(`0x${"ab".repeat(32)}`);
+  });
+
   it("R09: a mined pause tx is not success until the RPCs confirm paused()", async () => {
     const reader = new FakeReader(false);
     reader.waitReceipt = async () => "success"; // mined, but paused() never confirmed

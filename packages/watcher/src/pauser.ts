@@ -89,6 +89,8 @@ export interface PauseOutcome {
   attempts: number;
   txHash?: Hex;
   error?: string;
+  /** B2: our own pause tx was mined; waiting for a second RPC to confirm paused()==true. */
+  ownTxMined?: boolean;
 }
 
 export class PauseExecutor {
@@ -96,8 +98,11 @@ export class PauseExecutor {
     private readonly signers: Record<ChainName, PauseOnlySigner>,
     private readonly readers: Record<ChainName, PauseChainReader>,
     private readonly bridges: Record<ChainName, Address>,
-    private readonly opts: { attempts: number; backoffMs: number; sleep?: (ms: number) => Promise<void> },
+    private readonly opts: { attempts: number; backoffMs: number; sleep?: (ms: number) => Promise<void>; now?: () => number; minedCooldownMs?: number },
   ) {}
+
+  /** B2: per chain, when our last pause tx was mined (in-memory; a restart re-sends at most once). */
+  private readonly mined: Partial<Record<ChainName, { at: number; txHash: Hex }>> = {};
 
   /**
    * Idempotent. Every success path — already paused, our tx mined, or an `EnforcedPause` revert — is
@@ -106,29 +111,45 @@ export class PauseExecutor {
   async pause(chain: ChainName): Promise<PauseOutcome> {
     const reader = this.readers[chain];
     const sleep = this.opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const now = this.opts.now ?? (() => Date.now());
+    const cooldown = this.opts.minedCooldownMs ?? 60_000;
     let lastErr = "";
+    let lastTx: Hex | undefined;
     for (let attempt = 1; attempt <= this.opts.attempts; attempt++) {
       let txHash: Hex | undefined;
       let mined = false;
       try {
-        if ((await reader.paused()) === true) return { ok: true, status: "already-paused", attempts: attempt };
+        if ((await reader.paused()) === true) {
+          delete this.mined[chain];
+          return { ok: true, status: "already-paused", attempts: attempt };
+        }
+        const prev = this.mined[chain];
+        if (prev && now() - prev.at < cooldown) {
+          // B2: our pause is already on chain; only re-read, do not re-send while a second RPC catches up
+          return { ok: false, status: "failed", attempts: attempt, txHash: prev.txHash, ownTxMined: true, error: "own pause tx mined; waiting for ≥2 RPCs to confirm paused()==true" };
+        }
         try {
           txHash = await this.signers[chain].sendPause(pauseCall(this.bridges[chain]));
+          lastTx = txHash;
           mined = (await reader.waitReceipt(txHash)) === "success";
         } catch (e) {
           if (e instanceof PauseGuardError) throw e;
           if (!isEnforcedPause(e)) throw e;
           // EnforcedPause claimed — only believed if the RPCs confirm below
         }
-        if ((await reader.paused()) === true)
+        if ((await reader.paused()) === true) {
+          delete this.mined[chain];
           return { ok: true, status: mined ? "paused" : "already-paused", attempts: attempt, ...(txHash ? { txHash } : {}) };
-        lastErr = txHash ? `pause tx ${txHash} ${mined ? "mined" : "failed"} but paused()==true not confirmed by ≥2 RPCs` : "EnforcedPause reported but paused()==true not confirmed by ≥2 RPCs";
+        }
+        if (mined) this.mined[chain] = { at: now(), txHash: txHash! };
+        if (mined) return { ok: false, status: "failed", attempts: attempt, txHash: txHash!, ownTxMined: true, error: "own pause tx mined; waiting for ≥2 RPCs to confirm paused()==true" };
+        lastErr = txHash ? `pause tx ${txHash} failed and paused()==true not confirmed by ≥2 RPCs` : "EnforcedPause reported but paused()==true not confirmed by ≥2 RPCs";
       } catch (e) {
         if (e instanceof PauseGuardError) throw e;
         lastErr = redact(e instanceof Error ? e.message : String(e));
       }
       if (attempt < this.opts.attempts) await sleep(this.opts.backoffMs * attempt);
     }
-    return { ok: false, status: "failed", attempts: this.opts.attempts, error: lastErr };
+    return { ok: false, status: "failed", attempts: this.opts.attempts, error: lastErr, ...(lastTx ? { txHash: lastTx } : {}) };
   }
 }

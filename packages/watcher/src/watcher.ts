@@ -750,7 +750,7 @@ export class Watcher {
       });
       return true;
     }
-    await this.raise("PAUSE_FAILED", `自动暂停 ${c} 失败（已重试 ${out.attempts} 次），请手动暂停`, { chain: c, detail: { ...detail, outcome: out }, key: `${key}:failed:${Math.floor((this.now() - failSince) / 3600)}` }); // B1: at most one per hour
+    await this.raise("PAUSE_FAILED", out.ownTxMined ? `自动暂停 ${c}：自己的暂停交易已上链成功（${out.txHash}），等待第二个 RPC 确认；请核对链上 paused()` : `自动暂停 ${c} 失败（已重试 ${out.attempts} 次），请手动暂停`, { chain: c, detail: { ...detail, outcome: out }, key: `${key}:failed:${Math.floor((this.now() - failSince) / 3600)}` }); // B1: at most one per hour
     return false;
   }
 
