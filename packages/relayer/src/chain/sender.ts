@@ -94,8 +94,8 @@ export class TxSender {
 
   private async openAttempts(): Promise<AttemptRow[]> {
     const r = await this.o.db.query<AttemptRow>(
-      "select * from tx_attempts where chain_id = $1 and state = any($2::text[]) order by nonce, id",
-      [this.o.chainId, OPEN_STATES],
+      "select * from tx_attempts where chain_id = $1 and from_addr = $2 and state = any($3::text[]) order by nonce, id",
+      [this.o.chainId, toBytes(this.address), OPEN_STATES],
     );
     return r.rows;
   }
@@ -127,7 +127,10 @@ export class TxSender {
     const addr = this.address;
     const latest = await this.o.client.getTransactionCount({ address: addr, blockTag: "latest" });
     const pending = await this.o.client.getTransactionCount({ address: addr, blockTag: "pending" });
-    const mx = await this.o.db.query<{ m: string | null }>("select max(nonce)::text as m from tx_attempts where chain_id = $1", [this.o.chainId]);
+    const mx = await this.o.db.query<{ m: string | null }>(
+      "select max(nonce)::text as m from tx_attempts where chain_id = $1 and from_addr = $2",
+      [this.o.chainId, toBytes(addr)],
+    );
     const dbMax = mx.rows[0]?.m === null || mx.rows[0]?.m === undefined ? -1 : Number(mx.rows[0].m);
     if (dbMax + 1 < latest || pending > Math.max(dbMax + 1, latest)) {
       await this.o.alerts.emit({
@@ -161,8 +164,8 @@ export class TxSender {
         await this.o.db.tx(async (t) => {
           await t.query("update tx_attempts set state = $2, updated_at = $3 where id = $1", [row.id, rc.status === "success" ? "mined" : "reverted", this.now()]);
           await t.query(
-            "update tx_attempts set state = 'replaced', updated_at = $3 where chain_id = $1 and nonce = $2 and state = any($4::text[])",
-            [this.o.chainId, nonce, this.now(), OPEN_STATES],
+            "update tx_attempts set state = 'replaced', updated_at = $3 where chain_id = $1 and nonce = $2 and state = any($4::text[]) and from_addr = $5",
+            [this.o.chainId, nonce, this.now(), OPEN_STATES, toBytes(this.address)],
           );
         });
         return {
@@ -233,9 +236,9 @@ export class TxSender {
     if (!raw) return;
     const hash = keccak256(raw);
     const ins = await this.o.db.query<{ id: string }>(
-      `insert into tx_attempts (event_key, chain_id, nonce, tx_hash, gas_price, raw_tx, state, action, created_at, updated_at)
-       values ($1,$2,$3,$4,$5,$6,'signed',$7,$8,$8) returning id`,
-      [prev.event_key, this.o.chainId, prev.nonce, toBytes(hash), price.toString(), toBytes(raw), prev.action, this.now()],
+      `insert into tx_attempts (event_key, chain_id, nonce, tx_hash, gas_price, raw_tx, state, action, created_at, updated_at, from_addr)
+       values ($1,$2,$3,$4,$5,$6,'signed',$7,$8,$8,$9) returning id`,
+      [prev.event_key, this.o.chainId, prev.nonce, toBytes(hash), price.toString(), toBytes(raw), prev.action, this.now(), toBytes(this.address)],
     );
     await this.broadcast({ id: ins.rows[0]!.id, raw_tx: toBytes(raw), tx_hash: toBytes(hash) });
   }
@@ -275,9 +278,9 @@ export class TxSender {
     const txHash = keccak256(raw);
     const ins = await this.o.db.tx(async (t) => {
       const r = await t.query<{ id: string }>(
-        `insert into tx_attempts (event_key, chain_id, nonce, tx_hash, gas_price, raw_tx, state, action, created_at, updated_at)
-         values ($1,$2,$3,$4,$5,$6,'signed',$7,$8,$8) returning id`,
-        [req.eventKey ? toBytes(req.eventKey) : null, this.o.chainId, nonce, toBytes(txHash), gasPrice.toString(), toBytes(raw), req.action, this.now()],
+        `insert into tx_attempts (event_key, chain_id, nonce, tx_hash, gas_price, raw_tx, state, action, created_at, updated_at, from_addr)
+         values ($1,$2,$3,$4,$5,$6,'signed',$7,$8,$8,$9) returning id`,
+        [req.eventKey ? toBytes(req.eventKey) : null, this.o.chainId, nonce, toBytes(txHash), gasPrice.toString(), toBytes(raw), req.action, this.now(), toBytes(this.address)],
       );
       if (onSigned) await onSigned(t, txHash);
       return r.rows[0]!;

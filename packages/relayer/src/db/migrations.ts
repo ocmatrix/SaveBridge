@@ -62,6 +62,14 @@ create table if not exists timelock_notices (chain_id int not null, op_id bytea 
   at timestamptz default now(), primary key (chain_id, op_id, kind));
 `,
   },
+  {
+    version: 5,
+    name: "tx_attempts_from_addr",
+    sql: `
+alter table tx_attempts add column if not exists from_addr bytea;
+create index if not exists tx_attempts_chain_from_nonce_idx on tx_attempts (chain_id, from_addr, nonce);
+`,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {

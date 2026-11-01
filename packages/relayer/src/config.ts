@@ -8,6 +8,8 @@ import type { Address } from "./types";
 export interface RelayerConfig {
   wantos: {
     chainId: number;
+    /** Block the bridge was deployed at (first scan). */
+    startBlock: number;
     /** Self-hosted non-validator full node (primary). */
     primaryRpcUrl: string;
     /** At least one of rpc/rpc2/rpc3 for receipt cross-check (§6.2). */
@@ -21,9 +23,12 @@ export interface RelayerConfig {
     /** >= 2 independent RPCs; only `finalized` blocks are processed (§6.2). */
     rpcUrls: string[];
     bridgeAddress: Address;
+    startBlock: number;
   };
-  signer: { kind: "kms"; wantosKeyId: string; bscKeyId: string };
-  submitter: { kind: "kms"; keyId: string };
+  /** KMS key ids plus the (public) addresses they control; checked at startup. */
+  signer: { kind: "kms"; wantosKeyId: string; wantosAddress: Address; bscKeyId: string; bscAddress: Address };
+  /** Submission-service hot key (no contract role): timelock execution. */
+  submitter: { kind: "kms"; keyId: string; address: Address };
   db: { urlEnv: string };
   api: { host: string; port: number };
   poll: { intervalMs: number; rescanBlocks: number; maxBlockRange: number };
@@ -41,6 +46,7 @@ export interface RelayerConfig {
 export const EXAMPLE_CONFIG: RelayerConfig = {
   wantos: {
     chainId: 13555,
+    startBlock: 0,
     primaryRpcUrl: "http://wantos-fullnode.example.invalid:8545",
     crossCheckRpcUrls: ["http://wantos-crosscheck.example.invalid:8545"],
     bridgeAddress: "0x000000000000000000000000000000000000dEaD",
@@ -50,9 +56,16 @@ export const EXAMPLE_CONFIG: RelayerConfig = {
     chainId: 56,
     rpcUrls: ["http://bsc-rpc-a.example.invalid", "http://bsc-rpc-b.example.invalid"],
     bridgeAddress: "0x000000000000000000000000000000000000dEaD",
+    startBlock: 0,
   },
-  signer: { kind: "kms", wantosKeyId: "kms-key-id-placeholder-wantos", bscKeyId: "kms-key-id-placeholder-bsc" },
-  submitter: { kind: "kms", keyId: "kms-key-id-placeholder-submitter" },
+  signer: {
+    kind: "kms",
+    wantosKeyId: "kms-key-id-placeholder-wantos",
+    wantosAddress: "0x000000000000000000000000000000000000dEaD",
+    bscKeyId: "kms-key-id-placeholder-bsc",
+    bscAddress: "0x000000000000000000000000000000000000dEaD",
+  },
+  submitter: { kind: "kms", keyId: "kms-key-id-placeholder-submitter", address: "0x000000000000000000000000000000000000dEaD" },
   db: { urlEnv: "RELAYER_DATABASE_URL" },
   api: { host: "127.0.0.1", port: 8080 },
   poll: { intervalMs: 3000, rescanBlocks: 100, maxBlockRange: 2000 },

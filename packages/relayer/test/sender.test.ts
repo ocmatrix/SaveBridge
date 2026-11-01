@@ -174,6 +174,26 @@ describe("TxSender (DESIGN §6.4) against local anvil", () => {
     expect(alerts.byKind("GAS_LOW")).toHaveLength(0);
   });
 
+  it("two keys on the same chain (payout + submitter) share the table without interfering", async () => {
+    await a.testClient.setAutomine(false);
+    const other = new LocalTestSigner(newKey());
+    await a.testClient.setBalance({ address: other.address, value: parseEther("10") });
+    const s1 = mk();
+    const s2 = mk({ signer: other });
+    await s1.recover();
+    await s2.recover();
+    expect(await s1.send(mintCall())).toMatchObject({ kind: "sent", nonce: 0 });
+    expect(await s2.send(mintCall())).toMatchObject({ kind: "sent", nonce: 0 }); // not "busy"
+    await a.testClient.mine({ blocks: 1 });
+    expect((await s1.tick()).resolved?.success).toBe(true);
+    expect((await s2.tick()).resolved?.success).toBe(true);
+    await a.testClient.setAutomine(true);
+    const s1b = mk();
+    await s1b.recover();
+    expect(alerts.byKind("NONCE_MISMATCH")).toHaveLength(0);
+    expect(await s1b.send(mintCall())).toMatchObject({ kind: "sent", nonce: 1 });
+  });
+
   it("KmsSigner placeholder refuses to sign (production impl is TODO)", async () => {
     const k = new KmsSigner({ keyId: "placeholder", address: signer.address });
     await expect(k.signTransaction({} as any)).rejects.toThrow(/not implemented/);
