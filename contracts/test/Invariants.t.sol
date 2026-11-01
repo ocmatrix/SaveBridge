@@ -279,6 +279,25 @@ contract BscInvariantsTest is BscFixture {
         _execute(address(vault), up, s1);
     }
 
+    /// B4: the target is the timelock itself (transferAdmin has no bridge-side recovery guard), so only the
+    /// timelock's own pre-execution recovery check can produce RecoveryInProgress here. With that check removed
+    /// the call would instead fail later with BridgeCheckFailed (A1 self-check) - a different error.
+    function test_inv04_neg_timelockLayerRejectsDuringWhitelistRecovery() public {
+        bytes memory data = abi.encodeCall(BridgeTimelock.transferAdmin, (makeAddr("admin2")));
+        bytes32 salt = _propose(address(tl), data);
+        vm.warp(block.timestamp + 48 hours);
+        vm.prank(admin);
+        vault.startWhitelistRecovery(makeAddr("wl2"));
+        vm.expectRevert(BridgeTimelock.RecoveryInProgress.selector);
+        _execute(address(tl), data, salt);
+        assertEq(tl.pendingAdmin(), address(0));
+        // after the recovery is cancelled the same proposal executes
+        vm.prank(wl);
+        vault.cancelWhitelistRecovery();
+        _execute(address(tl), data, salt);
+        assertEq(tl.pendingAdmin(), makeAddr("admin2"));
+    }
+
     function test_inv04_neg_oldHolderCancelRejected() public {
         bytes memory data = abi.encodeCall(BridgeBase.withdraw, (bob, 1 * U));
         bytes32 salt = _propose(address(vault), data);
