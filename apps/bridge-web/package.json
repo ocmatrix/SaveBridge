@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "build:prod": "vite build --mode production && node scripts/check-dist.mjs --real",
-    "build:testnet": "vite build --mode testnet && node scripts/check-dist.mjs --real --testnet --mode=testnet"
+    "build:testnet": "vite build --mode testnet --outDir dist-testnet && node scripts/check-dist.mjs --real --testnet --mode=testnet --dist=dist-testnet"
   },
   "dependencies": {
     "@bridge/abi": "workspace:*",

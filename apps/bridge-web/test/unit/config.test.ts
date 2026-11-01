@@ -60,3 +60,11 @@ describe("bridge address identical on both chains (B3, DESIGN §5.1)", () => {
     expect(() => parseConfig({ ...testEnv, VITE_BSC_BRIDGE: "0x4444444444444444444444444444444444444444" })).toThrow(ConfigError);
   });
 });
+
+describe("network kind (round-3 B3)", () => {
+  it("defaults to mainnet; VITE_NETWORK=testnet marks a testnet build; anything else is rejected", () => {
+    expect(parseConfig(testEnv).network).toBe("mainnet");
+    expect(parseConfig({ ...testEnv, VITE_NETWORK: "testnet" }).network).toBe("testnet");
+    expect(() => parseConfig({ ...testEnv, VITE_NETWORK: "devnet" })).toThrow(ConfigError);
+  });
+});

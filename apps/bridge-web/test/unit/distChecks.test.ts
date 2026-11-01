@@ -60,6 +60,49 @@ describe("real-build config pinning (B3)", () => {
     expect(checkRealConfig({ ...good, VITE_BSC_CHAIN_ID: "97" }, { testnet: false })).not.toEqual([]);
     expect(checkRealConfig({ ...good, VITE_BSC_USDT: "0x4444444444444444444444444444444444444444" }, { testnet: false })).not.toEqual([]);
     expect(checkRealConfig({ ...good, VITE_WANTOS_USDT: "0x4444444444444444444444444444444444444444" }, { testnet: false })).not.toEqual([]);
-    expect(checkRealConfig({ ...good, VITE_WANTOS_CHAIN_ID: "1345", VITE_BSC_CHAIN_ID: "97", VITE_BSC_USDT: "0x4444444444444444444444444444444444444444" }, { testnet: true })).toEqual([]);
+    expect(checkRealConfig({ ...good, VITE_WANTOS_CHAIN_ID: "1345", VITE_BSC_CHAIN_ID: "97", VITE_BSC_USDT: "0x4444444444444444444444444444444444444444", VITE_NETWORK: "testnet" }, { testnet: true })).toEqual([]);
+  });
+});
+
+describe("testnet builds are separate and marked (round-3 B3)", () => {
+  it("argv parsing: --testnet is off unless passed; dist dir and mode are read", async () => {
+    // @ts-expect-error plain .mjs
+    const { parseArgs } = await import("../../scripts/distChecks.mjs");
+    expect(parseArgs([])).toEqual({ real: false, testnet: false, mode: "production", dist: "dist" });
+    expect(parseArgs(["--real"])).toEqual({ real: true, testnet: false, mode: "production", dist: "dist" });
+    expect(parseArgs(["--real", "--testnet", "--mode=testnet", "--dist=dist-testnet"])).toEqual({ real: true, testnet: true, mode: "testnet", dist: "dist-testnet" });
+  });
+
+  it("package scripts: build:prod never passes --testnet; build:testnet builds into dist-testnet and checks that dir", async () => {
+    const { readFileSync } = await import("node:fs");
+    const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { scripts: Record<string, string> };
+    expect(pkg.scripts["build:prod"]).not.toContain("--testnet");
+    expect(pkg.scripts["build:prod"]).toContain("--real");
+    expect(pkg.scripts["build:testnet"]).toContain("--outDir dist-testnet");
+    expect(pkg.scripts["build:testnet"]).toContain("--dist=dist-testnet");
+    expect(pkg.scripts["build:testnet"]).toContain("--testnet");
+  });
+
+  it("VITE_NETWORK must match the build kind", async () => {
+    // @ts-expect-error plain .mjs
+    const { checkRealConfig } = await import("../../scripts/distChecks.mjs");
+    const main = {
+      VITE_WANTOS_CHAIN_ID: "13555",
+      VITE_BSC_CHAIN_ID: "56",
+      VITE_WANTOS_USDT: "0xc74F2e7fBdA2af9D1fc26b85E341229063Dc0873",
+      VITE_BSC_USDT: "0x55d398326f99059fF775485246999027B3197955",
+    };
+    expect(checkRealConfig({ ...main, VITE_NETWORK: "testnet" }, { testnet: false })).not.toEqual([]);
+    expect(checkRealConfig({ ...main }, { testnet: true })).not.toEqual([]); // a testnet build must declare itself
+    expect(checkRealConfig({ ...main, VITE_NETWORK: "testnet" }, { testnet: true })).toEqual([]);
+  });
+
+  it("the bundle must actually contain the configured USDT addresses", async () => {
+    // @ts-expect-error plain .mjs
+    const { checkInlined } = await import("../../scripts/distChecks.mjs");
+    const a = "0xc74F2e7fBdA2af9D1fc26b85E341229063Dc0873";
+    const b = "0x55d398326f99059fF775485246999027B3197955";
+    expect(checkInlined(`x="${a.toLowerCase()}";y="${b}"`, [a, b])).toEqual([]);
+    expect(checkInlined(`x="${a}"`, [a, b])).not.toEqual([]);
   });
 });

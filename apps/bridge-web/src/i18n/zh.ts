@@ -2,6 +2,8 @@ export const zh = {
   "app.title": "WANTOS ⇄ BSC USDT 跨链",
   "app.subtitle": "白名单跨链桥",
   "lang.toggle": "English",
+  "testnet.label": "测试网",
+  "testnet.banner": "测试网 · 仅供测试，资产无真实价值，请勿转入真实资金",
   "config.error": "站点配置错误：{msg}",
 
   "wallet.connect": "连接钱包",

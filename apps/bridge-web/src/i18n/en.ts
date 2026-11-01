@@ -4,6 +4,8 @@ export const en: Dict = {
   "app.title": "WANTOS ⇄ BSC USDT Bridge",
   "app.subtitle": "Whitelisted bridge",
   "lang.toggle": "中文",
+  "testnet.label": "Testnet",
+  "testnet.banner": "TESTNET · for testing only — assets have no real value; never send real funds",
   "config.error": "Site configuration error: {msg}",
 
   "wallet.connect": "Connect wallet",

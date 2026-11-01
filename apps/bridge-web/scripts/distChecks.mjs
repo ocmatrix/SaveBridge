@@ -83,11 +83,25 @@ export const MAINNET = {
 };
 
 export function checkRealConfig(env, { testnet }) {
-  if (testnet) return [];
+  const net = String(env.VITE_NETWORK ?? "").trim() || "mainnet";
+  if (testnet) return net === "testnet" ? [] : ["a testnet build must set VITE_NETWORK=testnet (shows the testnet banner)"];
   const errs = [];
+  if (net !== "mainnet") errs.push(`VITE_NETWORK=${net} in a mainnet build`);
   for (const [k, want] of Object.entries(MAINNET)) {
     const got = String(env[k] ?? "").trim().toLowerCase();
     if (got !== want) errs.push(`${k} must be ${want} for a mainnet build (got ${got || "(empty)"}); use --testnet for test networks`);
   }
   return errs;
+}
+
+/** Pure argv parsing for check-dist (no flag means: not testnet, mode production, dir dist). */
+export function parseArgs(argv) {
+  const val = (name, d) => (argv.find((a) => a.startsWith(`--${name}=`)) ?? `--${name}=${d}`).slice(name.length + 3);
+  return { real: argv.includes("--real"), testnet: argv.includes("--testnet"), mode: val("mode", "production"), dist: val("dist", "dist") };
+}
+
+/** The configured token addresses must really be inlined in the built bundle (not just present in env). */
+export function checkInlined(bundle, addrs) {
+  const text = bundle.toLowerCase();
+  return addrs.filter((a) => !text.includes(String(a).toLowerCase())).map((a) => `bundle does not contain configured address ${a}`);
 }

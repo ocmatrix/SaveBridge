@@ -65,6 +65,11 @@ function Page() {
 
   return (
     <div className="page">
+      {cfg.network === "testnet" && (
+        <div className="testnet-banner" role="alert" aria-label={t("testnet.label")}>
+          {t("testnet.banner")}
+        </div>
+      )}
       <header>
         <div>
           <h1>{t("app.title")}</h1>

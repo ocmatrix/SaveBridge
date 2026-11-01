@@ -23,6 +23,8 @@ export interface AppConfig {
   logLookback: bigint;
   /** Built from `.env.placeholder` (CI/build check only): the app renders an error and never connects a wallet. */
   placeholder: boolean;
+  /** `VITE_NETWORK=testnet` → testnet build (permanent banner, built into dist-testnet/). */
+  network: "mainnet" | "testnet";
 }
 
 export class ConfigError extends Error {
@@ -84,6 +86,12 @@ function chain(env: Env, p: "WANTOS" | "BSC"): ChainConf {
   return c;
 }
 
+function networkKind(v: string | undefined): "mainnet" | "testnet" {
+  const n = v?.trim() || "mainnet";
+  if (n !== "mainnet" && n !== "testnet") throw new ConfigError("VITE_NETWORK must be mainnet or testnet");
+  return n;
+}
+
 export function parseConfig(env: Env): AppConfig {
   const wantos = chain(env, "WANTOS");
   const bsc = chain(env, "BSC");
@@ -97,6 +105,7 @@ export function parseConfig(env: Env): AppConfig {
     walletConnectProjectId: env.VITE_WC_PROJECT_ID?.trim() || null,
     logLookback: uint(env, "VITE_LOG_LOOKBACK_BLOCKS", "50000"),
     placeholder: env.VITE_CONFIG_PLACEHOLDER === "1",
+    network: networkKind(env.VITE_NETWORK),
   };
 }
 

@@ -55,3 +55,4 @@ h3 { font-size: 0.9rem; margin: 0 0 8px; }
 a { color: var(--accent); }
 .confirm { font-family: ui-monospace, monospace; font-size: 0.85rem; word-break: break-all; }
 .hash { word-break: break-all; }
+.testnet-banner { position: sticky; top: 0; z-index: 20; background: #b42318; color: #fff; text-align: center; padding: 8px; font-weight: 700; margin: -16px -16px 12px; }
