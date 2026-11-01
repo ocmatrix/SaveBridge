@@ -55,6 +55,28 @@ export class UnconfirmedTxError extends Error {
   }
 }
 
+/**
+ * The wallet gave up (timeout / request expired) without returning a hash. We cannot know whether it broadcast:
+ * shown as a failure, but warning not to resubmit if the wallet already lists the transaction (B2).
+ */
+export class WalletTimeoutError extends Error {
+  constructor(override readonly cause: unknown) {
+    super("wallet request timed out");
+    this.name = "WalletTimeoutError";
+  }
+}
+
+const TIMEOUT_TEXT = /time(d)?\s*out|timeout|expired/i;
+
+function isWalletTimeout(e: unknown): boolean {
+  for (let cur: unknown = e, i = 0; cur && typeof cur === "object" && i < 10; cur = (cur as { cause?: unknown }).cause, i++) {
+    const o = cur as { name?: string; code?: number; message?: string };
+    if (o.code === 4001 || o.name === "UserRejectedRequestError") return false;
+    if (o.name === "TimeoutError" || (typeof o.message === "string" && TIMEOUT_TEXT.test(o.message))) return true;
+  }
+  return false;
+}
+
 export class TxRevertedError extends Error {
   constructor(readonly hash: Hex) {
     super(`transaction ${hash} reverted`);
@@ -86,7 +108,11 @@ export async function sendGuarded(ctx: TxContext, chainId: number, req: GuardedR
   const { request } = await pc.simulateContract({ ...req, account: account(ctx) } as never);
   const to = (request as { address: Address }).address;
   assertAllowedTarget(ctx.cfg, chainId, to);
-  return ctx.wallet.writeContract({ ...(request as object), account: account(ctx), chain: pc.chain } as never);
+  try {
+    return await ctx.wallet.writeContract({ ...(request as object), account: account(ctx), chain: pc.chain } as never);
+  } catch (e) {
+    throw isWalletTimeout(e) ? new WalletTimeoutError(e) : e;
+  }
 }
 
 async function confirm(ctx: TxContext, chainId: number, hash: Hex, kind: "approve" | "send") {

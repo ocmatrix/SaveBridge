@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createWalletClient, http, HttpRequestError, WaitForTransactionReceiptTimeoutError, type Hex, type PublicClient } from "viem";
+import { createWalletClient, http, HttpRequestError, TimeoutError, UserRejectedRequestError, WaitForTransactionReceiptTimeoutError, type Hex, type PublicClient } from "viem";
 import { KEYS, U, startEnv, whitelist, snapshot, type Env } from "../support/anvil";
 import { makeClients, type Clients } from "../../src/lib/clients";
 import { bridgeOutFlow, depositFlow } from "../../src/lib/flows";
@@ -76,5 +76,33 @@ describe("errors after broadcast are never shown as 'failed' (B1)", () => {
     const err = await bridgeOutFlow({ cfg: env.cfg, clients, wallet }, 100n * U, () => {}).catch((e) => e);
     expect(translateError(err, { decimals: 18 }).key).toBe("err.unconfirmed");
     expect(await s.anvil.pc.getTransactionCount({ address: KEYS.alice.address })).toBe(before + 1);
+  });
+});
+
+describe("wallet times out with no hash (B2)", () => {
+  it.each([
+    ["viem TimeoutError", () => new TimeoutError({ body: {}, url: "wc" })],
+    ["WalletConnect 'Request expired'", () => new Error("Request expired. Please try again.")],
+  ])("%s → failure text that warns not to resubmit if the wallet already has the tx", async (_n, mk) => {
+    await whitelist(env, env.wantos, [KEYS.alice.address]);
+    await whitelist(env, env.bsc, [KEYS.alice.address]);
+    const s = env.wantos;
+    const real = createWalletClient({ chain: s.anvil.chain, transport: http(s.anvil.url), account: KEYS.alice });
+    const wallet = { ...real, writeContract: async () => { throw mk(); } } as unknown as typeof real;
+    const err = await bridgeOutFlow({ cfg: env.cfg, clients: makeClients(env.cfg), wallet }, 100n * U, () => {}).catch((e) => e);
+    const tr = translateError(err, { decimals: 18 });
+    expect(tr.key).toBe("err.walletTimeout");
+    expect(describeError(tr, "zh")).toContain("如钱包中已有该交易，请勿重复提交");
+    expect(describeError(tr, "en")).toMatch(/already shows this transaction, do not submit it again/);
+  });
+
+  it("a user rejection is still a rejection, not a timeout", async () => {
+    await whitelist(env, env.wantos, [KEYS.alice.address]);
+    await whitelist(env, env.bsc, [KEYS.alice.address]);
+    const s = env.wantos;
+    const real = createWalletClient({ chain: s.anvil.chain, transport: http(s.anvil.url), account: KEYS.alice });
+    const wallet = { ...real, writeContract: async () => { throw new UserRejectedRequestError(new Error("User rejected")); } } as unknown as typeof real;
+    const err = await bridgeOutFlow({ cfg: env.cfg, clients: makeClients(env.cfg), wallet }, 100n * U, () => {}).catch((e) => e);
+    expect(translateError(err, { decimals: 18 }).key).toBe("err.userRejected");
   });
 });

@@ -111,6 +111,7 @@ export const zh = {
   "pending.unlockYes": "确认解除",
   "pending.reverted": "该交易已上链但被合约拒绝，资金未转出，可以重新提交",
   "pending.notYet": "还没有查到这笔交易的结果，请稍后再检查",
+  "err.walletTimeout": "交易提交失败：钱包响应超时。如钱包中已有该交易，请勿重复提交，请先在钱包或区块浏览器中核对。",
   "err.userRejected": "已在钱包中取消",
   "err.targetNotAllowed": "已拦截：交易目标不是本站的桥合约或 USDT 合约",
   "err.wrongNetwork": "钱包网络不对，请切换后再试",

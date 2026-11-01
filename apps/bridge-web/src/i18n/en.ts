@@ -113,6 +113,7 @@ export const en: Dict = {
   "pending.unlockYes": "Confirm release",
   "pending.reverted": "The transaction is on chain but the contract rejected it; no funds moved. You can submit again.",
   "pending.notYet": "No result for this transaction yet; please check again later.",
+  "err.walletTimeout": "Submission failed: the wallet timed out. If your wallet already shows this transaction, do not submit it again; check it in the wallet or block explorer first.",
   "err.userRejected": "Cancelled in wallet",
   "err.targetNotAllowed": "Blocked: the transaction target is not this site's bridge or USDT contract",
   "err.wrongNetwork": "Wrong wallet network. Please switch and retry.",
