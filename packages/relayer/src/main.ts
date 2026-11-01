@@ -65,6 +65,7 @@ async function main(): Promise<void> {
     sender: cfg.tx,
     poll: { rescanBlocks: cfg.poll.rescanBlocks, maxBlockRange: cfg.poll.maxBlockRange },
     heartbeat: { staleAfterMs: cfg.heartbeat.staleAfterMs },
+    submitterAddress: cfg.submitter.address,
   });
   await relayer.start();
 

@@ -9,6 +9,7 @@ import { OrderRepo } from "../src/orders";
 import { reviewMessage } from "../src/review";
 import { DefaultRiskEngine, type RiskEngine } from "../src/risk";
 import { fromBytes } from "../src/bytes";
+import { Relayer } from "../src/relayer";
 import type { Hex } from "../src/types";
 
 const auto: RiskEngine = { evaluate: async () => ({ kind: "AUTO" }) };
@@ -226,5 +227,46 @@ describe("Gate2 r1: source-order hard preconditions, approvals, bump race", () =
     fail = false;
     await sys.relayer.tick();
     expect((await new OrderRepo(sys.db).get(wKey(1n)))!.status).toBe("SUBMITTED");
+  });
+
+  describe("B6/B7: startup self-checks", () => {
+    const fresh = async (over: Record<string, unknown> = {}) => {
+      const base = await buildRelayer(world);
+      return new Relayer({ ...base.relayer.deps, ...over } as any);
+    };
+    it("passes on a correct deployment (with a distinct submitter)", async () => {
+      const r = await fresh({ submitterAddress: world.act.funder.address });
+      await expect(r.start()).resolves.toBeUndefined();
+    });
+    it("eventKey derivation must match the contracts on both chains", async () => {
+      const r1 = await fresh();
+      const orig = r1.bscView.read.bind(r1.bscView);
+      r1.bscView.read = (async (fn: string, args?: unknown[], at?: object) => (fn === "eventKeyOf" ? ("0x" + "00".repeat(32)) : orig(fn, args, at))) as any;
+      await expect(r1.start()).rejects.toThrow(/eventKey/);
+      const r2 = await fresh();
+      const orig2 = r2.wantosView.read.bind(r2.wantosView);
+      r2.wantosView.read = (async (fn: string, args?: unknown[], at?: object) => (fn === "eventKeyOf" ? ("0x" + "00".repeat(32)) : orig2(fn, args, at))) as any;
+      await expect(r2.start()).rejects.toThrow(/eventKey/);
+    });
+    it("peerChainId / peerBridge must match the configured other side", async () => {
+      const r = await fresh();
+      const orig = r.wantosView.read.bind(r.wantosView);
+      r.wantosView.read = (async (fn: string, args?: unknown[], at?: object) => (fn === "peerChainId" ? 56n : orig(fn, args, at))) as any;
+      await expect(r.start()).rejects.toThrow(/peer/);
+      const r2 = await fresh();
+      const o2 = r2.bscView.read.bind(r2.bscView);
+      r2.bscView.read = (async (fn: string, args?: unknown[], at?: object) => (fn === "peerBridge" ? "0x000000000000000000000000000000000000dEaD" : o2(fn, args, at))) as any;
+      await expect(r2.start()).rejects.toThrow(/peer/);
+    });
+    it("submitter key must differ from both payout keys, and the payout keys from each other", async () => {
+      const base = await buildRelayer(world);
+      await expect(new Relayer({ ...base.relayer.deps, submitterAddress: base.relayer.deps.bsc.signer.address }).start()).rejects.toThrow(/distinct/);
+      await expect(new Relayer({ ...base.relayer.deps, bsc: { ...base.relayer.deps.bsc, signer: base.relayer.deps.wantos.signer } }).start()).rejects.toThrow(/distinct/);
+    });
+    it("B7: token decimals must match", async () => {
+      const r = await fresh();
+      r.wantosView.tokenDecimals = async () => 6;
+      await expect(r.start()).rejects.toThrow(/decimals/);
+    });
   });
 });

@@ -4,7 +4,8 @@ import type { AlertSink } from "./alerts";
 import type { Db } from "./db/types";
 import type { SafetyState } from "./safety";
 import type { TxSigner } from "./signer";
-import type { Address } from "./types";
+import type { Address, Hex } from "./types";
+import { b2wEventKey, w2bEventKey } from "./eventKey";
 import type { ChainReader } from "./chain/reader";
 import { BridgeView } from "./chain/bridges";
 import { WantosScanner } from "./chain/wantosScanner";
@@ -48,6 +49,8 @@ export interface RelayerDeps {
   risk?: RiskEngine;
   timeouts?: Timeouts;
   heartbeat?: { sink?: HeartbeatSink; staleAfterMs: number };
+  /** Submission-service hot key address (must differ from both payout keys). */
+  submitterAddress?: Address;
   /** Test-only fault injection. */
   senderHooks?: { wantos?: TxSenderOpts["hooks"]; bsc?: TxSenderOpts["hooks"] };
 }
@@ -153,8 +156,33 @@ export class Relayer {
     if (wid !== d.wantos.chainId || bid !== d.bsc.chainId) throw new Error(`chain id mismatch: wantos ${wid}/${d.wantos.chainId}, bsc ${bid}/${d.bsc.chainId}`);
     const [wd, bd] = await Promise.all([this.wantosView.tokenDecimals(), this.bscView.tokenDecimals()]);
     if (wd !== bd) throw new Error(`token decimals differ (wantos ${wd}, bsc ${bd}); refusing to start`);
+    await this.selfCheck();
     await this.wantosSender.recover();
     await this.bscSender.recover();
+  }
+
+  /**
+   * Gate2 B6: the relayer's own eventKey derivation and the bridge pairing must agree with what the
+   * contracts compute, and the three hot keys must be distinct. Any mismatch refuses to start.
+   */
+  private async selfCheck(): Promise<void> {
+    const d = this.deps;
+    const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+    const keys = [d.wantos.signer.address, d.bsc.signer.address, ...(d.submitterAddress ? [d.submitterAddress] : [])].map((k) => k.toLowerCase());
+    if (new Set(keys).size !== keys.length) throw new Error("payout keys and submitter key must be pairwise distinct");
+    const [bk, wk] = await Promise.all([this.bscView.read<Hex>("eventKeyOf", [1n]), this.wantosView.read<Hex>("eventKeyOf", [1n])]);
+    const expW2b = w2bEventKey({ wantosChainId: BigInt(d.wantos.chainId), wantosBridge: d.wantos.bridge, orderId: 1n });
+    const expB2w = b2wEventKey({ bscChainId: BigInt(d.bsc.chainId), bscVault: d.bsc.vault, depositNonce: 1n });
+    if (!same(bk, expW2b)) throw new Error(`W2B eventKey mismatch: BSC vault computes ${bk}, relayer ${expW2b}`);
+    if (!same(wk, expB2w)) throw new Error(`B2W eventKey mismatch: WANTOS bridge computes ${wk}, relayer ${expB2w}`);
+    const [bpc, bpb, wpc, wpb] = await Promise.all([
+      this.bscView.read<bigint>("peerChainId"),
+      this.bscView.read<Address>("peerBridge"),
+      this.wantosView.read<bigint>("peerChainId"),
+      this.wantosView.read<Address>("peerBridge"),
+    ]);
+    if (BigInt(bpc) !== BigInt(d.wantos.chainId) || !same(bpb, d.wantos.bridge)) throw new Error(`BSC vault peer (${bpc}/${bpb}) does not match WANTOS config`);
+    if (BigInt(wpc) !== BigInt(d.bsc.chainId) || !same(wpb, d.bsc.vault)) throw new Error(`WANTOS bridge peer (${wpc}/${wpb}) does not match BSC config`);
   }
 
   /** One serial iteration: ingest both chains, process orders, gas checks, heartbeat. */
