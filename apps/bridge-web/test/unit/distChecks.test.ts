@@ -39,3 +39,27 @@ describe("real-build connect-src gate (review finding 2)", () => {
     expect(checkConnectSrc(ok.replace("https://b.io", "http://127.0.0.1:8545"))).not.toEqual([]);
   });
 });
+
+describe("real-build config pinning (B3)", () => {
+  const good = {
+    VITE_WANTOS_CHAIN_ID: "13555",
+    VITE_BSC_CHAIN_ID: "56",
+    VITE_WANTOS_USDT: "0xc74F2e7fBdA2af9D1fc26b85E341229063Dc0873",
+    VITE_BSC_USDT: "0x55d398326f99059fF775485246999027B3197955",
+  };
+  it("accepts mainnet ids and the USDT addresses written in DESIGN", async () => {
+    // @ts-expect-error plain .mjs
+    const { checkRealConfig } = await import("../../scripts/distChecks.mjs");
+    expect(checkRealConfig(good, { testnet: false })).toEqual([]);
+    expect(checkRealConfig({ ...good, VITE_BSC_USDT: good.VITE_BSC_USDT.toLowerCase() }, { testnet: false })).toEqual([]);
+  });
+  it("rejects other chain ids / USDT addresses unless built as testnet", async () => {
+    // @ts-expect-error plain .mjs
+    const { checkRealConfig } = await import("../../scripts/distChecks.mjs");
+    expect(checkRealConfig({ ...good, VITE_WANTOS_CHAIN_ID: "1345" }, { testnet: false })).not.toEqual([]);
+    expect(checkRealConfig({ ...good, VITE_BSC_CHAIN_ID: "97" }, { testnet: false })).not.toEqual([]);
+    expect(checkRealConfig({ ...good, VITE_BSC_USDT: "0x4444444444444444444444444444444444444444" }, { testnet: false })).not.toEqual([]);
+    expect(checkRealConfig({ ...good, VITE_WANTOS_USDT: "0x4444444444444444444444444444444444444444" }, { testnet: false })).not.toEqual([]);
+    expect(checkRealConfig({ ...good, VITE_WANTOS_CHAIN_ID: "1345", VITE_BSC_CHAIN_ID: "97", VITE_BSC_USDT: "0x4444444444444444444444444444444444444444" }, { testnet: true })).toEqual([]);
+  });
+});

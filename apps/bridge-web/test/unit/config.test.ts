@@ -54,3 +54,9 @@ describe("placeholder builds are inert", () => {
     expect(isPlaceholder(p(testEnv))).toBe(false);
   });
 });
+
+describe("bridge address identical on both chains (B3, DESIGN §5.1)", () => {
+  it("rejects different bridge addresses", () => {
+    expect(() => parseConfig({ ...testEnv, VITE_BSC_BRIDGE: "0x4444444444444444444444444444444444444444" })).toThrow(ConfigError);
+  });
+});

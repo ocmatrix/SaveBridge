@@ -73,3 +73,21 @@ export function checkConnectSrc(headers) {
   if (!/frame-ancestors 'none'/.test(line)) errs.push("frame-ancestors is not 'none'");
   return errs;
 }
+
+/** Mainnet values written in DESIGN (§1.1 WANTOS-USDT, §5.2 BSC-USDT). Testnet builds pass `testnet: true`. */
+export const MAINNET = {
+  VITE_WANTOS_CHAIN_ID: "13555",
+  VITE_BSC_CHAIN_ID: "56",
+  VITE_WANTOS_USDT: "0xc74f2e7fbda2af9d1fc26b85e341229063dc0873",
+  VITE_BSC_USDT: "0x55d398326f99059ff775485246999027b3197955",
+};
+
+export function checkRealConfig(env, { testnet }) {
+  if (testnet) return [];
+  const errs = [];
+  for (const [k, want] of Object.entries(MAINNET)) {
+    const got = String(env[k] ?? "").trim().toLowerCase();
+    if (got !== want) errs.push(`${k} must be ${want} for a mainnet build (got ${got || "(empty)"}); use --testnet for test networks`);
+  }
+  return errs;
+}

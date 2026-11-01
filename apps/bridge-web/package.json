@@ -8,7 +8,8 @@
     "build": "vite build --mode placeholder && node scripts/check-dist.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "build:prod": "vite build --mode production && node scripts/check-dist.mjs --real"
+    "build:prod": "vite build --mode production && node scripts/check-dist.mjs --real",
+    "build:testnet": "vite build --mode testnet && node scripts/check-dist.mjs --real --testnet --mode=testnet"
   },
   "dependencies": {
     "@bridge/abi": "workspace:*",

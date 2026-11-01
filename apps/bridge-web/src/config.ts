@@ -88,6 +88,8 @@ export function parseConfig(env: Env): AppConfig {
   const wantos = chain(env, "WANTOS");
   const bsc = chain(env, "BSC");
   if (wantos.id === bsc.id) throw new ConfigError("WANTOS and BSC chain ids must differ");
+  // DESIGN §5.1: deterministic deployment gives the bridge proxy the same address on both chains
+  if (wantos.bridge !== bsc.bridge) throw new ConfigError("VITE_WANTOS_BRIDGE and VITE_BSC_BRIDGE must be the same address");
   return {
     wantos,
     bsc,

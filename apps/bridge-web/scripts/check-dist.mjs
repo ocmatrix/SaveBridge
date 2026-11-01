@@ -2,11 +2,14 @@
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkConnectSrc, checkCsp, checkFile, checkIndexHtml, MAX_APPROVE_PATTERNS } from "./distChecks.mjs";
+import { loadEnv } from "vite";
+import { checkConnectSrc, checkCsp, checkFile, checkIndexHtml, checkRealConfig, MAX_APPROVE_PATTERNS } from "./distChecks.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const dist = join(root, "dist");
 const real = process.argv.includes("--real");
+const testnet = process.argv.includes("--testnet");
+const mode = (process.argv.find((a) => a.startsWith("--mode=")) ?? "--mode=production").slice(7);
 const errs = [];
 
 const walk = (d) => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]));
@@ -15,6 +18,7 @@ const files = walk(dist);
 errs.push(...checkCsp(existsSync(join(dist, "_headers")) ? readFileSync(join(dist, "_headers"), "utf8") : null));
 errs.push(...checkIndexHtml(readFileSync(join(dist, "index.html"), "utf8")));
 for (const f of files) errs.push(...checkFile(relative(dist, f), readFileSync(f, "utf8")));
+if (real) errs.push(...checkRealConfig(loadEnv(mode, root, "VITE_"), { testnet }));
 if (real) errs.push(...checkConnectSrc(readFileSync(join(dist, "_headers"), "utf8")));
 if (real && files.some((f) => readFileSync(f, "utf8").includes("00000000000000000000000000000000000000b1"))) {
   errs.push("real build contains placeholder addresses");
