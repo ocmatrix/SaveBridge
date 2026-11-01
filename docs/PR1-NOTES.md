@@ -380,6 +380,13 @@ Refunded(uint256 indexed orderId, address indexed user, uint256 amount)
 
 其余：`ZeroAddress()`、`ZeroAmount()`、`InvalidInit()`、`NotAdmin(address)`、`NotWhitelistManager(address)`、`NotAdminOrWhitelistManager(address)`、`NotTimelock(address)`、`NotAuthorized(address)`、`RecoveryInProgress()`、`KeyConflict(address)`、`InvalidRole(bytes32)`、`BadBatchSize(uint256)`、`AddressesNotSorted(uint256)`、`BadNonce(uint256 expected, uint256 provided)`、`SignatureExpired(uint256)`、`DeadlineTooFar(uint256)`、`InvalidSigner(address)`、`WhitelistWritesBlocked()`、`Expired()`、`NotCandidate(address)`、`NothingPending()`、`NoRecovery()`、`RecoveryCooldown(uint256 until)`、`AmountBelowMinimum(uint256, uint256)`、`LengthMismatch()`、`NotTightening(uint256 index)`、`ParamOutOfRange(uint256 index)`、`ParamConstraint()`；BSC：`UnknownDeposit(uint256)`、`BadDepositStatus(uint256 nonce, uint8 status)`、`LegacyAlreadyPaid(bytes32)`；WANTOS：`ContractCaller(address)`、`SupplyCeilingExceeded(uint256 totalSupply, uint256 ceiling)`、`CeilingBelowSupply(uint256 ceiling, uint256 totalSupply)`、`BadOrderStatus(uint256 orderId, uint8 status)`。
 
+### 5.11a 运维与监控注意事项（PR-3 / PR-6 / PR-7 必读）
+
+1. **紧急移除前先冻结**（PR-6 紧急页）：`emergencyRemove` 不推进 `whitelistNonce`，已签未提交的添加批次仍能把地址加回来。管理后台的"紧急移除"按钮必须先发 `freezeWhitelist()`（或确认已冻结）再发 `emergencyRemove`。测试：`test_runbook_emergencyRemoveWithoutFreezeCanBeUndoneByPresignedAdd`。
+2. **未来 orderId 可被作废**（PR-3 / PR-7）：`voidSource(n)` 对尚未出现的 `n` 也成立（None→Voided）。付款程序遇到 `BadPayoutStatus(key, 3)` 直接把订单转 REJECTED → 退款；监控对"作废了尚不存在的 orderId"的 `SourceVoided` 应告警（可能是白名单钱包被盗）。测试：`test_runbook_wlCanVoidFutureOrderIds`。
+3. **重复暂停**（PR-7）：桥已暂停时再 `pause()` 回滚 `EnforcedPause()`；监控应先读 `paused()`，或把这个回滚当作成功。测试：`test_runbook_doublePauseRevertsEnforcedPause`。
+4. **时间锁自检**（PR-6 时间锁面板）：任何执行（含升级）后若桥的视图异常，整笔回滚 `BridgeCheckFailed()`；面板应把它显示为"新实现不合格"，而不是"执行失败重试"。
+
 ### 5.12 部署
 
 - 顺序（同一全新部署者，nonce 0/1/2）：`new BridgeTimelock(adminWallet, predictedProxy)` → `new BscVaultV2()` / `new WantosBridgeV2()` → `new ERC1967Proxy(impl, abi.encodeCall(initialize, (InitArgs)))`，其中 `InitArgs.timelock = nonce0 地址`、`peerBridge = nonce2 地址`。

@@ -1,6 +1,6 @@
 # PR 规划：白名单跨链桥 v2（WANTOS ↔ BSC USDT）设计开发文档
 
-> 版本 **v0.9.3**（2026-11-02）｜状态：待确认，**未开工**（负责人指示：先不开工）
+> 版本 **v0.9.4**（2026-11-02，仅与 PR-1 合约实现同步描述，见文末「v0.9.4 同步说明」；17 条决定未变）｜状态：待确认，**未开工**（负责人指示：先不开工）
 >
 > v0.9.3 按"**简洁、安全、壮硕**"三原则复审后修订：安全上补了 3 处漏洞；简洁上砍掉了旧单 Merkle 机制、CancelProxy 合约、小时桶额度、多余参数和重复状态；壮硕上堵住了监控误暂停、暂停期间无法修复升级、链回滚等故障点。旧版本存档在 `docs/archive/`（v0.7～v0.9.2）。
 >
@@ -113,7 +113,7 @@
 
 **`BridgeTimelock`**（继承 OZ v5 `TimelockController`，不可升级）规格：
 
-1. 延迟 48h，`MIN_DELAY = 48h` 为 immutable，`updateDelay` 不得低于它。
+1. 延迟 48h，`MIN_DELAY = 48h` 为 immutable，`updateDelay` 的新值必须在 48h ～ 7 天之间（防止误填超大延迟冻结治理）。
 2. `admin = address(0)`。构造函数里一次性完成全部授权（提议人 = 管理钱包，执行人 = 任何人），并记下桥地址（预计算，immutable）；**构造期间跳过互斥检查**。
 3. **提议人恰好一个**：覆盖 `_grantRole/_revokeRole/renounceRole`，禁止直接增删；换管理钱包时提议权一起迁移。
 4. **`cancel` 覆盖为直接判断**：允许 `msg.sender == adminWallet()` 或 `msg.sender == bridge.whitelistManager()`（运行时读取）。白名单钱包交接或恢复后，取消权自动跟随，不需要任何额外合约或角色变更。
@@ -173,6 +173,8 @@
 |---|---|
 | `release` / `queueRelease` / `executeRelease`（BSC） | 只付白名单地址；扣额度 |
 | `queueRelease` / `executeRelease`（WANTOS，B2W 入账） | 一律排队 `b2wDelay`；单独的 `b2wDailyCap` |
+
+`executeRelease`（两条链）**只限付款钥匙**调用，不是任何人。
 
 **F. 任何人**
 
@@ -240,7 +242,7 @@ event WhitelistUpdated(address indexed addr, bool allowed, bytes32 indexed listH
 
 ## 5. 桥合约
 
-基于 OpenZeppelin Contracts Upgradeable v5：`AccessControl` + `Pausable` + `ReentrancyGuard` + `UUPS` + `EIP712` + `SafeERC20`；存储用 ERC-7201 命名空间。`evm_version` 按 PR-0 确认的 WANTOS EVM 版本设置。合约不做 ERC-1271 验证（链上唯一的签名者白名单钱包是 EOA）。
+基于 OpenZeppelin Contracts Upgradeable v5：`AccessControl` + `Pausable` + `ReentrancyGuard` + `UUPS` + `EIP712` + `SafeERC20`；存储用 ERC-7201 命名空间。`evm_version` 按 PR-0 确认的 WANTOS EVM 版本设置（`cancun`）；编译器 solc 0.8.28，optimizer **runs = 1**（为字节码上限留余量，CI 要求每个核心合约余量 ≥ 1,500 B）。合约不做 ERC-1271 验证（链上唯一的签名者白名单钱包是 EOA）。
 
 ### 5.1 部署与初始化
 
@@ -290,8 +292,9 @@ None/Queued ──voidSource() / cancelRelease()──▶ Voided   （永久不�
 **跨出** `bridgeOut(amount)`，链上检查：`whitelisted[msg.sender]`；`msg.sender.code.length == 0`（不支持合约钱包和 EIP-7702 委托地址）；`w2bMinAmount ≤ amount`；该地址当日额度（`w2bPerAddrDailyCap`，同时也是单笔上限）；`totalSupply ≤ supplyCeiling`；按余额差额记账。收款地址固定为 `msg.sender`。
 
 ```solidity
-struct Order { address user; uint128 amount; uint64 createdAt; uint8 status; } // Locked / Refunding / Refunded
-mapping(uint256 => Order) public orders;   // orderId = 合约递增 nonce
+struct Order { address user; uint128 amount; uint64 createdAt; uint8 status; uint64 refundRequestedAt; }
+// status: None=0（不存在）/ Locked=1 / Refunding=2 / Refunded=3
+mapping(uint256 => Order) public orders;   // orderId = 合约递增 nonce，从 1 开始
 event BridgeOut(uint256 indexed orderId, address indexed user, uint256 amount);
 ```
 
@@ -307,7 +310,7 @@ event BridgeOut(uint256 indexed orderId, address indexed user, uint256 amount);
 
 ### 5.4 状态取值
 
-BSC 放款：`None / Queued / Released / Voided`（撤销排队 = 作废）。WANTOS 订单：`Locked / Refunding / Refunded`。B2W 记录同 BSC 放款。BSC 存款退款：`None / Refunding / Refunded`。
+BSC 放款：`None / Queued / Released / Voided`（撤销排队 = 作废）。WANTOS 订单：`None / Locked / Refunding / Refunded` = 0/1/2/3（`None` 表示订单不存在）。orderId 与 BSC 存款 nonce 都从 1 开始。B2W 记录同 BSC 放款。BSC 存款退款：`None / Refunding / Refunded`。
 
 ### 5.5 参数（两条链各一套；额度均按 UTC 自然日）
 
@@ -547,6 +550,12 @@ BSC 金库余额  ≥ ΣFunded + ΣDeposited − ΣReleased − ΣexecuteDeposit
 | **有人增发 WANTOS-USDT** | 接收地址不在白名单，无法直接跨出；超过 `supplyCeiling` 后新的跨出被合约拒绝 | 只告警；若增发超过上限导致跨出停摆，负责人经时间锁提高上限（48h）；PR-0 争取让该 owner 放弃增发权 | 小额增发不影响业务；大额增发会让跨出暂停至负责人处理 |
 | **云账户 / KMS 丢失** | — | 经时间锁补发付款钥匙（48h） | 桥只停不丢钱 |
 
+**合约实现带来的三条处置注意事项（v0.9.4 补充）**
+
+1. **紧急移除前先冻结**：`emergencyRemove` 不推进白名单批次 nonce，已签名未提交的「添加」批次之后仍能把地址加回来。紧急处置顺序必须是**先 `freezeWhitelist`，再移除**（冻结后添加批次一律被拒）。
+2. **被盗的白名单钱包能作废未来的 orderId**：`voidSource` 可作用于还没出现的 orderId，这些订单在 BSC 上永久无法放款，只能在 WANTOS 走退款；资金不丢，但要人工处理退款。
+3. **重复暂停会回滚**：对已暂停的桥再次 `pause()` 会以 `EnforcedPause` 回滚，监控（PR-7）必须把它当作"已处于暂停"的成功结果处理，不能当成暂停失败而反复重试或告警升级。
+
 **无链上"最后手段"（决定 15）**：钥匙被盗且双方互相取消时，只能靠链下处理（沟通、部署新桥另行安排用户资金）。预防靠钥匙保管：两个钱包助记词分开、离线、异地备份，每季度演练一次恢复。
 
 ---
@@ -627,3 +636,18 @@ BSC 金库余额  ≥ ΣFunded + ΣDeposited − ΣReleased − ΣexecuteDeposit
 - `10月MG卖出套现明细_含可疑标注.csv`：1,284 个
 - `10月直接跨出超1000_孤立地址.csv`：3 个
 - `WANTOS_USDT_散户持仓_ge1.csv`
+
+---
+
+## v0.9.4 同步说明（2026-11-02，PR-1 合约实现后同步）
+
+只改与合约实现不一致的描述，**17 条已拍板的决定未改**：
+
+1. §5.3 / §5.4：WANTOS 订单状态为 `None / Locked / Refunding / Refunded` = 0/1/2/3（加 `None` 以区分"不存在的订单"）；`Order` 为 5 个字段，增加 `refundRequestedAt`（24h 退款计时）。
+2. §5.2 / §5.3：`orderId` 与 BSC 存款 `nonce` 都从 1 开始。
+3. §4.3 E：`executeRelease`（两条链）只限付款钥匙调用。
+4. §4.2 规格 1：`updateDelay` 新值上限 7 天（区间 48h ～ 7 天）。
+5. §5：optimizer runs 由 200 改为 1，CI 要求核心合约字节码余量 ≥ 1,500 B。
+6. §11：补充三条处置注意事项（先冻结再紧急移除；被盗白名单钱包可作废未来 orderId；重复 `pause()` 回滚 `EnforcedPause` 应视为成功）。
+
+合约细节、偏差与待决以 `docs/PR1-NOTES.md` 为准。

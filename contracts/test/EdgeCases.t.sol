@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {BscFixture} from "./utils/Fixtures.sol";
 import {WantosFixture} from "./utils/WantosFixture.sol";
@@ -114,6 +115,49 @@ contract BscEdgeCasesTest is BscFixture {
         vm.prank(address(tl));
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.BadBatchSize.selector, 0));
         vault.payLegacyBatch(new bytes32[](0), new address[](0), new uint256[](0));
+    }
+
+    /// B6 runbook item 1: emergencyRemove does not advance the batch nonce, so an already-signed, unsubmitted
+    /// ADD batch can put the address back. Correct order: freezeWhitelist first, then remove.
+    function test_runbook_emergencyRemoveWithoutFreezeCanBeUndoneByPresignedAdd() public {
+        _applyBatch(vault, _one(alice), true); // nonce 0 used
+        uint256 dl = block.timestamp + 1 hours;
+        bytes memory presigned = _signBatch(vault, wlKey, _one(alice), true, 1, dl); // stolen / pending signature
+        vm.prank(admin);
+        vault.emergencyRemove(_one(alice));
+        assertEq(vault.whitelistNonce(), 1); // not advanced
+        vault.applyWhitelistBatch(_one(alice), true, 1, dl, presigned);
+        assertTrue(vault.whitelisted(alice)); // re-added
+        // the safe order: freeze, then remove -> the same kind of pre-signed add is rejected
+        bytes memory presigned2 = _signBatch(vault, wlKey, _one(alice), true, 2, dl);
+        vm.startPrank(admin);
+        vault.freezeWhitelist();
+        vault.emergencyRemove(_one(alice));
+        vm.stopPrank();
+        vm.expectRevert(BridgeBase.WhitelistWritesBlocked.selector);
+        vault.applyWhitelistBatch(_one(alice), true, 2, dl, presigned2);
+        assertFalse(vault.whitelisted(alice));
+    }
+
+    /// B6 runbook item 2: a stolen WL key can void FUTURE orderIds on BSC; those orders can never be paid there
+    /// (refund path on WANTOS only) - funds are not lost.
+    function test_runbook_wlCanVoidFutureOrderIds() public {
+        _applyBatch(vault, _one(alice), true);
+        vm.prank(wl);
+        vault.voidSource(1_000);
+        bytes32 k = vault.eventKeyOf(1_000);
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(BridgeBase.BadPayoutStatus.selector, k, uint8(3)));
+        vault.release(1_000, alice, 1 * U);
+    }
+
+    /// B6 runbook item 3: pause() on an already paused bridge reverts EnforcedPause (monitor must treat as success).
+    function test_runbook_doublePauseRevertsEnforcedPause() public {
+        vm.prank(pauser);
+        vault.pause();
+        vm.prank(pauser);
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+        vault.pause();
     }
 
     function test_paramsMaxDepositZero() public {
