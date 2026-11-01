@@ -83,7 +83,7 @@ async function main(): Promise<void> {
   const tl = await Promise.all(executors);
   setInterval(() => void Promise.all(tl.map((t) => t.tick().catch(() => undefined))), 60_000);
 
-  const api = createApi({ orders: relayer.orders, quota: new ChainQuotaReader(relayer.wantosView, relayer.bscView), admin: DenyAllAdminSessions });
+  const api = createApi({ orders: relayer.orders, quota: new ChainQuotaReader(relayer.wantosView, relayer.bscView), admin: DenyAllAdminSessions, corsOrigins: cfg.api.corsOrigins ?? [] });
   await api.listen(cfg.api.port, cfg.api.host);
   await relayer.run({ intervalMs: cfg.poll.intervalMs });
 }

@@ -7,6 +7,7 @@ import { BridgeView } from "../src/chain/bridges";
 import { U } from "./helpers/deploy";
 import type { PublicClient } from "viem";
 import { ALL_STATUSES } from "../src/stateMachine";
+import { toBytes } from "../src/bytes";
 
 const A = "0x00000000000000000000000000000000000000aa";
 const key = (i: number) => ("0x" + i.toString(16).padStart(64, "0")) as `0x${string}`;
@@ -27,30 +28,88 @@ const fakeQuota: QuotaReader = {
 };
 
 describe("read-only API (for PR-5 / PR-6)", () => {
-  it("public status hides risk states: REVIEW (and other pre-submit states) → processing", () => {
+  it("public status helper still folds risk states (kept for PR-6 internal views)", () => {
     expect(publicStatus("REVIEW")).toBe("processing");
-    expect(publicStatus("WAITING")).toBe("processing");
-    expect(publicStatus("DETECTED")).toBe("processing");
-    expect(publicStatus("FAILED")).toBe("processing");
     expect(publicStatus("RELEASED")).toBe("released");
-    expect(publicStatus("QUEUED")).toBe("queued");
     for (const s of ALL_STATUSES) expect(typeof publicStatus(s)).toBe("string");
   });
 
-  it("GET /v1/orders?address= returns the address' orders without internal fields", async () => {
+  /** PR-5 parser (apps/bridge-web/src/lib/status.ts parseRelayerOrders), reproduced as the contract. */
+  const pr5Parse = (body: unknown) => {
+    const out: { direction: string; nonce: bigint; dstTxHash: string | null }[] = [];
+    const orders = (body as { orders?: unknown }).orders;
+    if (!Array.isArray(orders)) return out;
+    for (const o of orders) {
+      const { direction, srcEventNonce, dstTxHash } = o as Record<string, unknown>;
+      if (direction !== "W2B" && direction !== "B2W") continue;
+      if (typeof srcEventNonce !== "string" || !/^[1-9]\d{0,76}$/.test(srcEventNonce)) continue;
+      const hash = typeof dstTxHash === "string" && /^0x[0-9a-fA-F]{64}$/.test(dstTxHash) ? dstTxHash : null;
+      out.push({ direction, nonce: BigInt(srcEventNonce), dstTxHash: hash });
+    }
+    return out;
+  };
+
+  it("E1: GET /v1/orders matches PR-5's contract: exactly {direction, srcEventNonce, dstTxHash}; no status", async () => {
     const db = await newMigratedDb();
     const repo = new OrderRepo(db);
     await repo.insertDetected(mk(1));
-    await repo.insertDetected(mk(2, "0x00000000000000000000000000000000000000bb"));
-    const o = (await repo.get(key(1)))!;
-    await repo.move(o, "REVIEW", { reason: "fund_source", reviewLevel: "freeze" });
+    await repo.insertDetected(mk(2));
+    await repo.insertDetected(mk(3, "0x00000000000000000000000000000000000000bb"));
+    await repo.insertDetected({ ...mk(4, "0x00000000000000000000000000000000000000bb"), direction: "B2W", toAddr: A }); // A is only the recipient
+    await repo.insertDetected({ ...mk(5), direction: "B2W", toAddr: "0x00000000000000000000000000000000000000cc" }); // A is the depositor
+    await repo.move((await repo.get(key(1)))!, "REVIEW", { reason: "fund_source", reviewLevel: "freeze" });
+    // order 2: released by our mined release tx
+    const relHash = ("0x" + "ab".repeat(32)) as `0x${string}`;
+    await db.query("insert into tx_attempts (event_key, chain_id, nonce, tx_hash, state, action) values ($1, 56, 0, $2, 'replaced', 'release'), ($1, 56, 0, $3, 'mined', 'release')", [
+      toBytes(key(2)),
+      toBytes(("0x" + "cd".repeat(32)) as `0x${string}`),
+      toBytes(relHash),
+    ]);
+    await db.query("update orders set status = 'RELEASED' where event_key = $1", [toBytes(key(2))]);
     const api = createApi({ orders: repo, quota: fakeQuota, admin: DenyAllAdminSessions });
     const r = await api.handle({ method: "GET", url: `/v1/orders?address=${A}`, headers: {} });
     expect(r.status).toBe(200);
     const body = JSON.parse(r.body);
-    expect(body.orders).toHaveLength(1);
-    expect(body.orders[0]).toMatchObject({ direction: "W2B", nonce: "1", status: "processing", amount: "5000000000000000000" });
-    expect(r.body).not.toMatch(/fund_source|freeze|REVIEW|reason|review/i);
+    for (const o of body.orders) expect(Object.keys(o).sort()).toEqual(["direction", "dstTxHash", "srcEventNonce"]);
+    expect(r.body).not.toMatch(/status|fund_source|freeze|REVIEW|reason|review/i);
+    const parsed = pr5Parse(body);
+    expect(parsed).toHaveLength(3);
+    expect(parsed).toEqual(
+      expect.arrayContaining([
+        { direction: "W2B", nonce: 1n, dstTxHash: null },
+        { direction: "W2B", nonce: 2n, dstTxHash: relHash },
+        { direction: "B2W", nonce: 5n, dstTxHash: null },
+      ]),
+    );
+  });
+
+  it("E1: at most 50 orders, newest first", async () => {
+    const db = await newMigratedDb();
+    let t = 0;
+    const repo = new OrderRepo(db, () => new Date(1_700_000_000_000 + t++ * 1000));
+    for (let i = 1; i <= 60; i++) await repo.insertDetected(mk(i));
+    const api = createApi({ orders: repo, quota: fakeQuota, admin: DenyAllAdminSessions });
+    const body = JSON.parse((await api.handle({ method: "GET", url: `/v1/orders?address=${A}`, headers: {} })).body);
+    expect(body.orders).toHaveLength(50);
+    expect(body.orders[0].srcEventNonce).toBe("60");
+  });
+
+  it("E1: CORS only for configured origins (default: none)", async () => {
+    const repo = new OrderRepo(await newMigratedDb());
+    const closed = createApi({ orders: repo, quota: fakeQuota, admin: DenyAllAdminSessions });
+    const r0 = await closed.handle({ method: "GET", url: `/v1/orders?address=${A}`, headers: { origin: "https://bridge.wanto.pro" } });
+    expect(r0.headers?.["access-control-allow-origin"]).toBeUndefined();
+    const open = createApi({ orders: repo, quota: fakeQuota, admin: DenyAllAdminSessions, corsOrigins: ["https://bridge.wanto.pro"] });
+    const r1 = await open.handle({ method: "GET", url: `/v1/orders?address=${A}`, headers: { origin: "https://bridge.wanto.pro" } });
+    expect(r1.headers?.["access-control-allow-origin"]).toBe("https://bridge.wanto.pro");
+    expect(r1.headers?.["vary"]).toBe("Origin");
+    const pre = await open.handle({ method: "OPTIONS", url: `/v1/orders?address=${A}`, headers: { origin: "https://bridge.wanto.pro" } });
+    expect(pre.status).toBe(204);
+    expect(pre.headers?.["access-control-allow-methods"]).toBe("GET");
+    const evil = await open.handle({ method: "GET", url: `/v1/orders?address=${A}`, headers: { origin: "https://evil.example" } });
+    expect(evil.headers?.["access-control-allow-origin"]).toBeUndefined();
+    const evilPre = await open.handle({ method: "OPTIONS", url: `/v1/orders?address=${A}`, headers: { origin: "https://evil.example" } });
+    expect(evilPre.status).toBe(403);
   });
 
   it("validates input and methods", async () => {

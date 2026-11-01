@@ -142,6 +142,24 @@ export class OrderRepo {
     return r.rows.map(rowToOrder);
   }
 
+  /** Orders created by `addr` (W2B: the bridging user; B2W: the depositor), newest first. */
+  async listForUser(addr: Address, limit = 50): Promise<Order[]> {
+    const r = await this.db.query<Row>(
+      "select * from orders where user_addr = $1 order by created_at desc, src_event_nonce desc limit $2",
+      [toBytes(addr), limit],
+    );
+    return r.rows.map(rowToOrder);
+  }
+
+  /** Hash of the relayer tx that released the payout (mined release / executeRelease), if any. */
+  async releaseTxHash(eventKey: Hex): Promise<Hex | null> {
+    const r = await this.db.query<{ tx_hash: Uint8Array }>(
+      "select tx_hash from tx_attempts where event_key = $1 and state = 'mined' and action in ('release','executeRelease') order by id desc limit 1",
+      [toBytes(eventKey)],
+    );
+    return r.rows[0] ? fromBytes(r.rows[0].tx_hash) : null;
+  }
+
   /**
    * Compare-and-set transition validated against the §6.3 table (direction-aware reason rules).
    * Returns false if the row was no longer in `o.status` (stale read). Same-state updates (e.g. a

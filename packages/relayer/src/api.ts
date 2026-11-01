@@ -1,7 +1,7 @@
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import { isAddress, getAddress } from "viem";
 import type { BridgeView } from "./chain/bridges";
-import type { OrderRepo, Order } from "./orders";
+import type { OrderRepo } from "./orders";
 import type { OrderStatus } from "./stateMachine";
 import type { Address } from "./types";
 
@@ -31,34 +31,15 @@ export function publicStatus(s: OrderStatus): PublicStatus {
   }
 }
 
+/**
+ * PR-5 contract (docs/PR5-NOTES §4, apps/bridge-web parseRelayerOrders): exactly these three fields.
+ * No status of any kind is returned (decision 16: disclose less; REVIEW can never leak); the page
+ * derives status from chain state. `dstTxHash` is set only once the order is RELEASED.
+ */
 export interface PublicOrder {
   direction: "W2B" | "B2W";
-  srcChainId: number;
-  nonce: string;
-  eventKey: string;
-  srcTxHash: string;
-  from: Address;
-  to: Address;
-  amount: string;
-  status: PublicStatus;
-  executableAt: string | null;
-  createdAt: string;
-}
-
-function toPublic(o: Order): PublicOrder {
-  return {
-    direction: o.direction,
-    srcChainId: o.srcChain,
-    nonce: o.srcEventNonce.toString(),
-    eventKey: o.eventKey,
-    srcTxHash: o.srcTxHash,
-    from: o.userAddr,
-    to: o.toAddr,
-    amount: o.amountWei.toString(),
-    status: publicStatus(o.status),
-    executableAt: o.status === "QUEUED" && o.executableAt ? o.executableAt.toISOString() : null,
-    createdAt: o.createdAt.toISOString(),
-  };
+  srcEventNonce: string;
+  dstTxHash: string | null;
 }
 
 export interface QuotaView {
@@ -119,11 +100,30 @@ export interface ApiRequest {
 export interface ApiResponse {
   status: number;
   body: string;
+  headers?: Record<string, string>;
 }
 
 const json = (status: number, v: unknown): ApiResponse => ({ status, body: JSON.stringify(v) });
 
-export function createApi(o: { orders: OrderRepo; quota: QuotaReader; admin: AdminSessionVerifier }) {
+export const ORDERS_LIMIT = 50;
+
+export function createApi(o: {
+  orders: OrderRepo;
+  quota: QuotaReader;
+  admin: AdminSessionVerifier;
+  /** Exact origins allowed by CORS on /v1/* (default none; production: ["https://bridge.wanto.pro"]). */
+  corsOrigins?: string[];
+}) {
+  const cors = new Set(o.corsOrigins ?? []);
+  const headerOf = (h: ApiRequest["headers"], name: string): string | undefined => {
+    const v = (h as Record<string, string | string[] | undefined>)[name];
+    return Array.isArray(v) ? v[0] : v;
+  };
+  const withCors = (req: ApiRequest, r: ApiResponse): ApiResponse => {
+    const origin = headerOf(req.headers, "origin");
+    if (!origin || !cors.has(origin)) return r;
+    return { ...r, headers: { ...(r.headers ?? {}), "access-control-allow-origin": origin, vary: "Origin" } };
+  };
   const addrParam = (u: URL): Address | null => {
     const a = u.searchParams.get("address");
     return a && isAddress(a, { strict: false }) ? getAddress(a) : null;
@@ -131,6 +131,15 @@ export function createApi(o: { orders: OrderRepo; quota: QuotaReader; admin: Adm
 
   async function handle(req: ApiRequest): Promise<ApiResponse> {
     const u = new URL(req.url, "http://localhost");
+    if (req.method === "OPTIONS" && u.pathname.startsWith("/v1/")) {
+      const origin = headerOf(req.headers, "origin");
+      if (!origin || !cors.has(origin)) return { status: 403, body: "" };
+      return withCors(req, { status: 204, body: "", headers: { "access-control-allow-methods": "GET", "access-control-max-age": "600" } });
+    }
+    return withCors(req, await route(req, u));
+  }
+
+  async function route(req: ApiRequest, u: URL): Promise<ApiResponse> {
     if (u.pathname.startsWith("/admin/")) {
       const s = await o.admin.verify(req.headers).catch(() => null);
       if (!s) return json(401, { error: "unauthorized" });
@@ -141,8 +150,16 @@ export function createApi(o: { orders: OrderRepo; quota: QuotaReader; admin: Adm
     const addr = addrParam(u);
     if (!addr) return json(400, { error: "address required" });
     if (u.pathname === "/v1/orders") {
-      const list = await o.orders.listByAddress(addr, 100);
-      return json(200, { address: addr, orders: list.map(toPublic) });
+      const list = await o.orders.listForUser(addr, ORDERS_LIMIT);
+      const orders: PublicOrder[] = [];
+      for (const ord of list) {
+        orders.push({
+          direction: ord.direction,
+          srcEventNonce: ord.srcEventNonce.toString(),
+          dstTxHash: ord.status === "RELEASED" ? await o.orders.releaseTxHash(ord.eventKey) : null,
+        });
+      }
+      return json(200, { orders });
     }
     try {
       return json(200, await o.quota.quota(addr));
@@ -156,7 +173,7 @@ export function createApi(o: { orders: OrderRepo; quota: QuotaReader; admin: Adm
       handle({ method: req.method ?? "GET", url: req.url ?? "/", headers: req.headers })
         .catch(() => json(500, { error: "internal error" }))
         .then((r) => {
-          res.writeHead(r.status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" });
+          res.writeHead(r.status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", ...(r.headers ?? {}) });
           res.end(r.body);
         });
     });

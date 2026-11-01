@@ -30,7 +30,8 @@ export interface RelayerConfig {
   /** Submission-service hot key (no contract role): timelock execution. */
   submitter: { kind: "kms"; keyId: string; address: Address };
   db: { urlEnv: string };
-  api: { host: string; port: number };
+  /** corsOrigins: exact origins allowed to call /v1/* from a browser; absent = none. */
+  api: { host: string; port: number; corsOrigins?: string[] };
   poll: { intervalMs: number; rescanBlocks: number; maxBlockRange: number };
   tx: {
     /** PR-0 ⑥ unverified on WANTOS: configurable, default on (PR3-NOTES 待决). */
@@ -67,7 +68,7 @@ export const EXAMPLE_CONFIG: RelayerConfig = {
   },
   submitter: { kind: "kms", keyId: "kms-key-id-placeholder-submitter", address: "0x000000000000000000000000000000000000dEaD" },
   db: { urlEnv: "RELAYER_DATABASE_URL" },
-  api: { host: "127.0.0.1", port: 8080 },
+  api: { host: "127.0.0.1", port: 8080, corsOrigins: ["https://bridge.wanto.pro"] },
   poll: { intervalMs: 3000, rescanBlocks: 100, maxBlockRange: 2000 },
   tx: { replaceByFee: true, stuckAfterMs: 120_000, feeBumpPercent: 15, maxFeeBumps: 5 },
   gas: { wantosMinBalanceWei: "1000000000000000000", bscMinBalanceWei: "50000000000000000" },
