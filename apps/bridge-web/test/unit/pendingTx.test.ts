@@ -44,6 +44,30 @@ describe("pending-transaction locks (round-2 A1)", () => {
     }
     expect(JSON.stringify(got)).not.toMatch(/confirmed|success/);
   });
+  it.each([
+    ["account not an address", { account: "0x12" }],
+    ["account missing", { account: undefined }],
+    ["chainId a string", { chainId: "13555" }],
+    ["chainId fractional", { chainId: 1.5 }],
+    ["kind invalid", { kind: "confirmed" }],
+    ["hash too short", { hash: "0xabc" }],
+    ["hash not hex", { hash: `0x${"zz".repeat(32)}` }],
+    ["action invalid", { action: "admin" }],
+  ])("drops a stored lock with %s (D3)", (_n, bad) => {
+    const s = new Mem();
+    s.setItem("bridge.pending", JSON.stringify({ x: { ...p, ...bad } }));
+    expect(loadPending(s)).toEqual({});
+  });
+
+  it("a lock is filed under its own account/chain, whatever key it was stored under (D3)", () => {
+    const s = new Mem();
+    const B = "0x6666666666666666666666666666666666666666";
+    s.setItem("bridge.pending", JSON.stringify({ [pendingKey(A, 13555, "w2b")]: { ...p, account: B, chainId: 56 } }));
+    const got = loadPending(s);
+    expect(got[pendingKey(A, 13555, "w2b")]).toBeUndefined();
+    expect(got[pendingKey(B, 56, "w2b")]).toEqual({ ...p, account: B, chainId: 56 });
+  });
+
   it("never throws without storage", () => {
     const broken = {
       getItem(): string | null {
