@@ -16,7 +16,7 @@ import { SafetyState } from "./safety";
 import { KmsSigner } from "./signer";
 import { ViemChainReader } from "./chain/reader";
 import { Relayer } from "./relayer";
-import { createApi, ChainQuotaReader, DenyAllAdminSessions } from "./api";
+import { createApi, CachedQuotaReader, ChainQuotaReader, DenyAllAdminSessions } from "./api";
 import { TxSender } from "./chain/sender";
 import { TimelockExecutor, runTimelockTicks } from "./timelockExecutor";
 
@@ -84,7 +84,7 @@ async function main(): Promise<void> {
   const tl = await Promise.all(executors);
   setInterval(() => void runTimelockTicks(tl, alerts), 60_000);
 
-  const api = createApi({ orders: relayer.orders, quota: new ChainQuotaReader(relayer.wantosView, relayer.bscView), admin: DenyAllAdminSessions, corsOrigins: cfg.api.corsOrigins ?? [] });
+  const api = createApi({ orders: relayer.orders, quota: new CachedQuotaReader(new ChainQuotaReader(relayer.wantosView, relayer.bscView), { ttlMs: 15_000, maxPerSecond: 20 }), admin: DenyAllAdminSessions, corsOrigins: cfg.api.corsOrigins ?? [] });
   await api.listen(cfg.api.port, cfg.api.host);
   await relayer.run({ intervalMs: cfg.poll.intervalMs });
 }

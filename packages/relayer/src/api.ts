@@ -80,6 +80,43 @@ export class ChainQuotaReader implements QuotaReader {
   }
 }
 
+export class QuotaRateLimited extends Error {
+  constructor() {
+    super("quota rate limited");
+  }
+}
+
+/**
+ * Gate2 B5: /v1/quota reads ~6 contract views on the payout nodes. Answers are cached per address for
+ * `ttlMs`, and cache misses share a global budget of `maxPerSecond` backend lookups (fixed 1 s window).
+ */
+export class CachedQuotaReader implements QuotaReader {
+  private readonly cache = new Map<string, { at: number; v: QuotaView }>();
+  private windowStart = -Infinity;
+  private used = 0;
+  constructor(
+    private readonly inner: QuotaReader,
+    private readonly o: { ttlMs: number; maxPerSecond: number; now?: () => number; maxEntries?: number },
+  ) {}
+
+  async quota(addr: Address): Promise<QuotaView> {
+    const now = (this.o.now ?? Date.now)();
+    const k = addr.toLowerCase();
+    const hit = this.cache.get(k);
+    if (hit && now - hit.at <= this.o.ttlMs) return hit.v;
+    if (now - this.windowStart >= 1000) {
+      this.windowStart = now;
+      this.used = 0;
+    }
+    if (this.used >= this.o.maxPerSecond) throw new QuotaRateLimited();
+    this.used++;
+    const v = await this.inner.quota(addr);
+    if (this.cache.size >= (this.o.maxEntries ?? 10_000)) this.cache.clear();
+    this.cache.set(k, { at: now, v });
+    return v;
+  }
+}
+
 /**
  * Admin back-office session check (PR-6, §8.2): the Cloudflare Worker forwards a short-lived
  * session signed by the owner's wallet (SIWE). The relayer must verify it itself (the Worker is
@@ -163,7 +200,8 @@ export function createApi(o: {
     }
     try {
       return json(200, await o.quota.quota(addr));
-    } catch {
+    } catch (e) {
+      if (e instanceof QuotaRateLimited) return json(429, { error: "too many requests" });
       return json(503, { error: "temporarily unavailable" });
     }
   }

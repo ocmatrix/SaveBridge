@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { newMigratedDb } from "./helpers/db";
 import { OrderRepo, type NewOrder } from "../src/orders";
-import { createApi, publicStatus, ChainQuotaReader, DenyAllAdminSessions, type QuotaReader, type AdminSessionVerifier } from "../src/api";
+import { createApi, publicStatus, ChainQuotaReader, CachedQuotaReader, DenyAllAdminSessions, type QuotaReader, type AdminSessionVerifier } from "../src/api";
 import { startWorld, whitelistBoth, bridgeOut, type World } from "./helpers/system";
 import { BridgeView } from "../src/chain/bridges";
 import { U } from "./helpers/deploy";
@@ -142,6 +142,28 @@ describe("read-only API (for PR-5 / PR-6)", () => {
     const api = createApi({ orders: repo, quota: fakeQuota, admin: allow });
     expect((await api.handle({ method: "GET", url: "/admin/v1/orders", headers: { authorization: "Bearer bad" } })).status).toBe(401);
     expect((await api.handle({ method: "GET", url: "/admin/v1/orders", headers: { authorization: "Bearer ok" } })).status).toBe(501);
+  });
+
+  it("B5: /v1/quota is cached per address and globally rate-limited (429 when over budget)", async () => {
+    let calls = 0;
+    const inner: QuotaReader = { quota: async (a) => (calls++, fakeQuota.quota(a)) };
+    let now = 0;
+    const cached = new CachedQuotaReader(inner, { ttlMs: 15_000, maxPerSecond: 2, now: () => now });
+    const api = createApi({ orders: new OrderRepo(await newMigratedDb()), quota: cached, admin: DenyAllAdminSessions });
+    const get = (a: string) => api.handle({ method: "GET", url: `/v1/quota?address=${a}`, headers: {} });
+    expect((await get(A)).status).toBe(200);
+    expect((await get(A)).status).toBe(200);
+    expect(calls).toBe(1); // cache hit
+    expect((await get("0x00000000000000000000000000000000000000b1")).status).toBe(200);
+    const limited = await get("0x00000000000000000000000000000000000000b2");
+    expect(limited.status).toBe(429);
+    expect(calls).toBe(2);
+    expect((await get(A)).status).toBe(200); // cached answers are still served while limited
+    now += 1_000;
+    expect((await get("0x00000000000000000000000000000000000000b2")).status).toBe(200);
+    now += 15_001;
+    await get(A);
+    expect(calls).toBe(4); // expired → refetched
   });
 
   it("serves over HTTP on 127.0.0.1", async () => {
