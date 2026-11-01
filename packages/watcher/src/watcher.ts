@@ -641,6 +641,7 @@ export class Watcher {
           detail: { check: p, sourceCursor: srcCursor },
           key: `deferred:${p.id}`,
         });
+        p.blindAt ??= this.now();
         await this.overdue(p, "监控源链进度未越过目标交易");
         continue;
       }
@@ -651,6 +652,7 @@ export class Watcher {
       }
       if (v.kind === "undecided") {
         await this.raise("RPC_DISAGREE", `${p.kind} 核对无法由 ≥2 个 RPC 一致确认，不暂停`, { chain: p.targetChain, detail: { check: p, verdict: v }, key: `disagree:${p.id}` });
+        p.blindAt ??= this.now();
         await this.overdue(p, "RPC 结果不一致");
         continue;
       }
@@ -676,7 +678,7 @@ export class Watcher {
     const detail = { reason, observed, check: p };
     // GATE2 A3: acknowledged only if the owner unpaused AFTER this event's grace period ended
     // (i.e. when the watcher could already have flagged it) and the event is not newer than the unpause.
-    if (lu !== null && BigInt(p.block) <= BigInt(lu.block) && lu.timestamp >= p.decideAt) {
+    if (p.blindAt === undefined && lu !== null && BigInt(p.block) <= BigInt(lu.block) && lu.timestamp >= p.decideAt) {
       await this.raise("MISMATCH_ACKNOWLEDGED", `${p.kind} 不符，但负责人已在其宽限期结束后解除暂停（区块 ${lu.block}），视为已确认，只告警不暂停`, { chain: c, detail, key: `ack:${p.id}` });
       this.decide(p);
       return;

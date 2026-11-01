@@ -6,7 +6,7 @@ import { copyFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { Address, Hex } from "viem";
+import { encodeFunctionData, type Address, type Hex } from "viem";
 import { PauseExecutor, PauseGuardError, PauseOnlySigner, pauseCall } from "../../src/pauser.js";
 import { FileStateStore } from "../../src/state.js";
 import { multiRpcPauseReader, viemRawTxSender } from "../../src/wiring.js";
@@ -99,6 +99,41 @@ describe("pause semantics, rollback, replay", () => {
     await t.w.tick();
     expect(await H.isPaused("bsc")).toBe(true);
     expect(t.codes()).toContain("AUTO_PAUSE");
+  });
+
+  it("A3 boundary (R25/R26): with a zero grace period, an Unpaused in the SAME block at exactly decideAt acknowledges the event", async () => {
+    const t = await makeWatcher(H, { config: (c) => void (c.grace.w2bSeconds = 0) });
+    await H.settle();
+    await t.w.tick();
+    // release, pause, unpause — three txs mined together in one block (tips order them)
+    await H.bsc.rpc("evm_setAutomine", [false]);
+    const send = async (a: (typeof ACCOUNTS)[keyof typeof ACCOUNTS], fn: string, args: unknown[], tip: bigint) =>
+      H.bsc.wallet(a).sendTransaction({
+        account: a,
+        chain: H.bsc.chain,
+        to: H.bsc.bridge,
+        data: (encodeFunctionData as (x: unknown) => Hex)({ abi: H.bsc.abi, functionName: fn, args }),
+        gas: 300_000n,
+        maxFeePerGas: 100_000_000_000n,
+        maxPriorityFeePerGas: tip,
+      });
+    try {
+      const h1 = await send(ACCOUNTS.relayer, "release", [41n, ACCOUNTS.user2.address, E(50)], 30_000_000_000n);
+      await send(ACCOUNTS.admin, "pause", [], 20_000_000_000n);
+      await send(ACCOUNTS.wl, "unpause", [], 10_000_000_000n);
+      await H.bsc.mine(1);
+      const rc = await H.bsc.pub.getTransactionReceipt({ hash: h1 });
+      expect(rc.status).toBe("success");
+      const blk = await H.bsc.pub.getBlock({ blockNumber: rc.blockNumber });
+      expect(blk.transactions).toHaveLength(3);
+      t.clock.now = Number(blk.timestamp);
+    } finally {
+      await H.bsc.rpc("evm_setAutomine", [true]);
+    }
+    await H.settle();
+    await t.w.tick();
+    expect(await H.isPaused("bsc")).toBe(false);
+    expect(t.codes()).toContain("MISMATCH_ACKNOWLEDGED");
   });
 
   describe("look-ahead for Unpaused while the cursor is still catching up (one block per tick)", () => {

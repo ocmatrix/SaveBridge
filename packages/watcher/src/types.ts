@@ -69,6 +69,11 @@ export interface PendingCheck {
   decideAt: number;
   /** When the target becomes executable (queue eta / refund executableAt); undefined for an already-paid Released. */
   executableAt?: number;
+  /**
+   * A-2: first time (watcher clock) the check could not be decided although its grace period was over.
+   * Once set, no earlier/later unrelated `Unpaused` may acknowledge it: a mismatch must pause.
+   */
+  blindAt?: number;
   pauseFailures?: number;
   /** First failed auto-pause attempt (PAUSE_FAILED is repeated at most hourly from here, B1). */
   firstPauseFailAt?: number;

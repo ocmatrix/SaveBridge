@@ -84,4 +84,28 @@ describe("round-2 RPC hardening", () => {
       expect(t.w.state.derived.bsc.sums["deposited"]).toBe(E(100).toString()); // the fake one is not counted
     });
   }
+
+  it("POC-D: a check that was undecidable after its grace period is never silently acknowledged by a later unrelated unpause → BSC paused", async () => {
+    let down = true;
+    const flaky = tamperedClient(H.wantos, (m) => (down && m === "eth_blockNumber" ? { handled: true, result: new Error("down") } : { handled: false }));
+    const t = await makeWatcher(H, { endpoints: { wantos: [{ label: "w-a", client: H.wantos.pub }, { label: "w-flaky", client: flaky }] } });
+    const r = await H.bsc.write(ACCOUNTS.relayer, "release", [31n, ACCOUNTS.user2.address, E(50)]);
+    await H.settle();
+    t.clock.now = r.timestamp + 400;
+    await t.w.tick();
+    expect(t.codes()).toContain("CHECK_DEFERRED");
+    expect(t.sink.alerts.find((a) => a.code === "CHECK_OVERDUE")?.level).toBe(1); // Released: already paid → overdue at grace end
+    await H.bsc.increaseTime(400);
+    await H.bsc.write(ACCOUNTS.pauser, "pause", []);
+    await H.bsc.write(ACCOUNTS.admin, "unpause", []);
+    await H.settle();
+    t.clock.now += 400;
+    await t.w.tick();
+    down = false;
+    await H.settle();
+    t.clock.now += 10;
+    await t.w.tick();
+    expect(await H.isPaused("bsc")).toBe(true);
+    expect(t.codes()).not.toContain("MISMATCH_ACKNOWLEDGED");
+  });
 });
