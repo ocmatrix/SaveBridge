@@ -9,7 +9,7 @@ import type { I18nKey } from "../i18n";
 import { AmountField } from "./AmountField";
 import { NetworkPrompt } from "./NetworkPrompt";
 import { useFlow } from "./useFlow";
-import { StepLine } from "./StepLine";
+import { PendingTx, StepLine } from "./StepLine";
 
 /** Deposits are disabled while either side is paused (conservative: the credit could not be processed). */
 export function b2wBlocker(st: BridgeState): I18nKey | null {
@@ -50,7 +50,7 @@ export function B2WPanel({ state, onDeposit }: { state: BridgeState | undefined;
           })
         : parsed.error
       : null;
-  const canSubmit = !!address && !!state && !wrongNet && !blocker && recipientOk && !!parsed?.ok && !problem && !flow.busy;
+  const canSubmit = !!address && !!state && !wrongNet && !blocker && recipientOk && !!parsed?.ok && !problem && !flow.busy && !flow.pending;
   const maxAmount = state ? [state.b2wRemaining, state.bsc.balance, state.bsc.maxDepositPerTx].reduce((a, b) => (a < b ? a : b)) : null;
 
   async function submit() {
@@ -85,7 +85,8 @@ export function B2WPanel({ state, onDeposit }: { state: BridgeState | undefined;
       <AmountField value={input} onChange={setInput} balance={address && state ? state.bsc.balance : null} max={address ? maxAmount : null} decimals={dec} disabled={flow.busy} />
       {problem && <p className="error">{t(problem.key, problem.params)}</p>}
       <p className="hint">{t("b2w.eta")}</p>
-      <StepLine step={flow.step} amount={parsed?.ok ? f(parsed.value) : ""} />
+      <StepLine flow={flow} amount={parsed?.ok ? f(parsed.value) : ""} />
+      <PendingTx flow={flow} chain={cfg.bsc} />
       {flow.done && <p className="ok">{flow.done}</p>}
       {flow.error && <p className="error">{flow.error}</p>}
       {recipientOk && parsed?.ok && <p className="confirm">{t("b2w.confirmRecipient", { amount: f(parsed.value), to: getAddress(recipient) })}</p>}

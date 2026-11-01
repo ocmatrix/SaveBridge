@@ -8,7 +8,7 @@ import type { I18nKey } from "../i18n";
 import { AmountField } from "./AmountField";
 import { NetworkPrompt } from "./NetworkPrompt";
 import { useFlow } from "./useFlow";
-import { StepLine } from "./StepLine";
+import { PendingTx, StepLine } from "./StepLine";
 
 /** First reason the bridge-out button is disabled, or null. */
 export function w2bBlocker(st: BridgeState): I18nKey | null {
@@ -46,7 +46,7 @@ export function W2BPanel({ state, onOrder }: { state: BridgeState | undefined; o
           })
         : parsed.error
       : null;
-  const canSubmit = !!address && !!state && !wrongNet && !blocker && !!parsed?.ok && !problem && !flow.busy;
+  const canSubmit = !!address && !!state && !wrongNet && !blocker && !!parsed?.ok && !problem && !flow.busy && !flow.pending;
   const maxAmount = state ? [state.w2bRemaining, state.wantos.balance, state.wantos.w2bPerAddrDailyCap].reduce((a, b) => (a < b ? a : b)) : null;
 
   async function submit() {
@@ -72,7 +72,8 @@ export function W2BPanel({ state, onOrder }: { state: BridgeState | undefined; o
       )}
       <AmountField value={input} onChange={setInput} balance={address && state ? state.wantos.balance : null} max={address ? maxAmount : null} decimals={dec} disabled={flow.busy} />
       {problem && <p className="error">{t(problem.key, problem.params)}</p>}
-      <StepLine step={flow.step} amount={parsed?.ok ? f(parsed.value) : ""} />
+      <StepLine flow={flow} amount={parsed?.ok ? f(parsed.value) : ""} />
+      <PendingTx flow={flow} chain={cfg.wantos} />
       {flow.done && <p className="ok">{flow.done}</p>}
       {flow.error && <p className="error">{flow.error}</p>}
       <button type="button" className="primary" disabled={!canSubmit} onClick={() => void submit()}>

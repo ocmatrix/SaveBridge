@@ -148,6 +148,7 @@ function fromText(text: string): Translated | null {
 export function translateError(err: unknown, ctx: ErrorContext): Translated {
   const chain = causes(err);
   for (const e of chain) {
+    if (e.name === "UnconfirmedTxError" && typeof e.hash === "string") return { key: "err.unconfirmed", params: { hash: e.hash } };
     if (e.name === "TargetNotAllowedError") return { key: "err.targetNotAllowed" };
     if (e.name === "PreflightError" && typeof e.errorName === "string") {
       const r = fromCustomError(e.errorName, e.args as readonly unknown[] | undefined, ctx);
