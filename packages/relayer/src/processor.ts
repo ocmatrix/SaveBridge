@@ -63,11 +63,25 @@ export class Processor {
   }
 
   async step(): Promise<void> {
-    await this.o.bsc.sender.tick();
-    await this.o.wantos.sender.tick();
+    for (const side of [this.o.bsc, this.o.wantos]) {
+      try {
+        await side.sender.tick();
+      } catch (e) {
+        await this.o.alerts.emit({ kind: "RPC_UNAVAILABLE", key: `${side.name}:sender`, message: `${side.name} sender tick failed: ${(e as Error).message}` });
+      }
+    }
     this.finals = { bsc: await this.o.bsc.finalBlock(), wantos: await this.o.wantos.finalBlock() };
     for (const ord of await this.repo.listActive()) {
-      await this.handle(ord);
+      try {
+        await this.handle(ord);
+      } catch (e) {
+        // One order (or one flaky read) must never stall the others; it is retried next step.
+        await this.o.alerts.emit({
+          kind: "ORDER_PROCESSING_ERROR",
+          key: `${ord.eventKey}:${ord.status}`,
+          message: `${ord.direction} order ${ord.srcEventNonce} (${ord.status}): ${(e as Error).message}`,
+        });
+      }
     }
     await checkTimeouts({ repo: this.repo, alerts: this.o.alerts, now: this.o.now, timeouts: this.o.timeouts });
   }

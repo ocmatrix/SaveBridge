@@ -288,7 +288,8 @@ describe("fault injection (DESIGN §13 PR-3 acceptance) on anvil", () => {
     const crashing = await buildRelayer(world, { db, senderHooks: { bsc: { afterSign: () => { throw new Error("crash"); } } } });
     await bridgeOut(world, world.act.user, 100n * U);
     await confirmWantos(world);
-    await expect(crashing.relayer.tick()).rejects.toThrow(/crash/);
+    await crashing.relayer.tick(); // one order failing never stops the loop; it is alerted
+    expect(crashing.alerts.byKind("ORDER_PROCESSING_ERROR")).toHaveLength(1);
     const repo = new OrderRepo(db);
     expect((await repo.get(wKey(1n)))!.status).toBe("SUBMITTED");
     expect(await world.bsc.publicClient.getTransactionCount({ address: privateKeyToAccount(world.bscRelayerKey).address })).toBe(0);
@@ -321,6 +322,23 @@ describe("fault injection (DESIGN §13 PR-3 acceptance) on anvil", () => {
     await fresh.relayer.tick();
     expect((await new OrderRepo(fresh.db).get(wKey(1n)))!.status).toBe("QUEUED");
     expect(fresh.alerts.byKind("NONCE_MISMATCH").length).toBeGreaterThan(0); // DB lost → key history unknown
+  });
+
+  it("an RPC error while handling one order does not block the others", async () => {
+    const sys = await buildRelayer(world);
+    await bridgeOut(world, world.act.user, 100n * U);
+    await bridgeOut(world, world.act.user2, 100n * U);
+    await confirmWantos(world);
+    const view = sys.relayer.wantosView;
+    const orig = view.order.bind(view);
+    view.order = async (id, at) => {
+      if (id === 1n) throw new Error("rpc hiccup");
+      return orig(id, at);
+    };
+    await sys.relayer.tick();
+    expect((await new OrderRepo(sys.db).get(wKey(1n)))!.status).toBe("DETECTED");
+    expect((await new OrderRepo(sys.db).get(wKey(2n)))!.status).toBe("SUBMITTED");
+    expect(sys.alerts.byKind("ORDER_PROCESSING_ERROR")).toHaveLength(1);
   });
 
   it("process restart mid-flight continues from the DB; duplicate events never duplicate orders", async () => {
