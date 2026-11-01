@@ -96,13 +96,13 @@ export class Watcher {
 
   async tick(): Promise<TickReport> {
     const report: TickReport = { paused: [] };
+    await this.alerts.flushDaily(); // close the previous UTC day before collecting this tick's entries
     const wantosOk = await this.checkWantosRollback(report);
     for (const c of CHAINS) if (c !== "wantos" || wantosOk) await this.advance(c);
     await this.evaluateChecks(report);
     await this.timelockReminders();
     await this.periodic();
     await this.alerts.repeatDue();
-    await this.alerts.flushDaily();
     this.snapshot();
     await this.d.store.save(this.state);
     return report;

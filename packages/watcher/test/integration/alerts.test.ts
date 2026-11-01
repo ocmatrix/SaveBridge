@@ -51,25 +51,37 @@ describe("§9.3 alert drills", () => {
     expect(Object.keys(t.w.state.derived.timelockOps)).toHaveLength(0);
   });
 
-  it("timelock batch proposal → one level-1 alert listing every call; executed upgrade → level 2", async () => {
+  it("timelock batch proposal → one level-1 alert listing every call; executed upgrade / withdraw / legacy batch → level 2 + sums", async () => {
     const t = await makeWatcher(H);
     const impl = await deployImpl(H.bsc);
-    const up = encodeFunctionData({ abi: bscVaultV2Abi, functionName: "upgradeToAndCall", args: [impl, "0x"] });
-    const tighten = encodeFunctionData({ abi: bscVaultV2Abi, functionName: "setParams", args: [BSC_PARAMS] });
-    await H.bsc.write(ACCOUNTS.admin, "scheduleBatch", [[H.bsc.bridge, H.bsc.bridge], [0n, 0n], [up, tighten], ZERO32, ZERO32, H48], H.bsc.timelock);
+    const oldKey = keccak256(toHex("old-tx-1"));
+    const calls = [
+      encodeFunctionData({ abi: bscVaultV2Abi, functionName: "upgradeToAndCall", args: [impl, "0x"] }),
+      encodeFunctionData({ abi: bscVaultV2Abi, functionName: "setParams", args: [BSC_PARAMS] }),
+      encodeFunctionData({ abi: bscVaultV2Abi, functionName: "withdraw", args: [ACCOUNTS.user3.address, E(5)] }),
+      encodeFunctionData({ abi: bscVaultV2Abi, functionName: "payLegacyBatch", args: [[oldKey], [ACCOUNTS.user3.address], [E(10)]] }),
+    ];
+    const targets = calls.map(() => H.bsc.bridge);
+    const values = calls.map(() => 0n);
+    await H.bsc.write(ACCOUNTS.admin, "scheduleBatch", [targets, values, calls, ZERO32, ZERO32, H48], H.bsc.timelock);
     await H.settle();
     await t.w.tick();
     const p = t.sink.alerts.filter((a) => a.code === "TIMELOCK_PROPOSED");
     expect(p).toHaveLength(1);
-    expect((p[0]!.detail["calls"] as Array<{ fn: string }>).map((c) => c.fn)).toEqual(["upgradeToAndCall", "setParams"]);
+    expect((p[0]!.detail["calls"] as Array<{ fn: string }>).map((c) => c.fn)).toEqual(["upgradeToAndCall", "setParams", "withdraw", "payLegacyBatch"]);
 
     await H.bsc.increaseTime(48 * 3600 + 1);
-    await H.bsc.write(ACCOUNTS.attacker, "executeBatch", [[H.bsc.bridge, H.bsc.bridge], [0n, 0n], [up, tighten], ZERO32, ZERO32], H.bsc.timelock); // executor = anyone
+    await H.bsc.write(ACCOUNTS.attacker, "executeBatch", [targets, values, calls, ZERO32, ZERO32], H.bsc.timelock); // executor = anyone
     await H.settle();
     t.clock.now = (await H.bsc.latest()).timestamp;
     await t.w.tick();
     expect(levelOf(t, "UPGRADE_EXECUTED")).toBe(2);
+    expect(levelOf(t, "WITHDRAWN")).toBe(2);
     expect(Object.keys(t.w.state.derived.timelockOps)).toHaveLength(0);
+    expect(t.w.state.derived.bsc.sums["withdrawn"]).toBe(E(5).toString());
+    expect(t.w.state.derived.bsc.sums["legacyPaid"]).toBe(E(10).toString());
+    expect(t.w.state.meta.daily.entries.find((e) => e.kind === "LEGACY_PAID")!.data["oldKey"]).toBe(oldKey);
+    expect(t.w.state.derived.pending).toHaveLength(0); // LegacyPaid is not a Released: no §9.1-1 check
   });
 
   it("key / handover / recovery changes → level 1 (incl. recovery start); PAUSER revoke → level 2", async () => {
@@ -107,10 +119,15 @@ describe("§9.3 alert drills", () => {
     await whitelist(H.bsc, [ACCOUNTS.attacker.address]);
     await H.bsc.write(ACCOUNTS.admin, "freezeWhitelist", []);
     await H.bsc.write(ACCOUNTS.admin, "emergencyRemove", [[ACCOUNTS.attacker.address]]);
+    await H.bsc.write(ACCOUNTS.relayer, "queueRelease", [1n, ACCOUNTS.user1.address, E(1500)]);
+    await H.bsc.write(ACCOUNTS.wl, "voidSource", [1n]);
+    await H.wantos.write(ACCOUNTS.user1, "approve", [H.wantos.bridge, E(20)], H.wantos.token);
+    await H.wantos.write(ACCOUNTS.user1, "bridgeOut", [E(20)]);
+    await H.wantos.write(ACCOUNTS.admin, "requestRefund", [1n]);
     await H.settle();
     await t.w.tick();
     const kinds = t.w.state.meta.daily.entries.map((e) => e.kind);
-    expect(kinds).toEqual(expect.arrayContaining(["WHITELIST_BATCH", "EMERGENCY_REMOVAL"]));
+    expect(kinds).toEqual(expect.arrayContaining(["WHITELIST_BATCH", "EMERGENCY_REMOVAL", "RELEASE_QUEUED", "SOURCE_VOIDED", "REFUND_REQUESTED"]));
     const wb = t.w.state.meta.daily.entries.find((e) => e.kind === "WHITELIST_BATCH")!;
     expect(wb.data).toMatchObject({ count: "1", allowed: true });
     expect(wb.data["txHash"]).toMatch(/^0x/);
