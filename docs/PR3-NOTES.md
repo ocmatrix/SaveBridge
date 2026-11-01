@@ -61,7 +61,9 @@
 ### 2.5 放款流程
 - 每轮：两把付款钥匙的发送器先 `tick`（确认上块/重播/加价），然后逐单处理（单个订单出错只告警 `ORDER_PROCESSING_ERROR`，不阻塞其他订单），最后超时检查。
 - DETECTED/WAITING：①最终块上 payout 已非 None → 直接按分类结算（例如崩溃后 DB 丢了更新）；②该订单有在途交易 → 跳过（绝不重复发）；③最新块上已是 Queued（崩溃后丢状态）→ **直接重放 `queueRelease`**，合约返回成功且不重复扣额度（PR1 D3 / §5.6 #13）；④否则调用风控钩子：AUTO→`release`（B2W 一律 `queueRelease`）、DELAY→`queueRelease`、WAIT→WAITING、REVIEW→REVIEW。
-- 默认风控（`DefaultRiskEngine`，W2B 顺序）：重读 WANTOS `orders[id]`（必须 Locked 且用户/金额与事件一致，否则 REVIEW(freeze) + `ORDER_ONCHAIN_MISMATCH`）→ BSC `paused()` → 两链白名单 → `amount > perAddrDailyCap` → 剩余全局/地址日额度 → 储备（金库余额 ≥ 本单 + 已排队/在途） → `amount > largeThreshold` ? DELAY : AUTO。B2W：重读 BSC `deposits(nonce)`（一致且未申请退款）→ WANTOS `paused()` → `b2wDailyCap` 剩余 → 储备 → DELAY。
+- **源订单硬前置条件（Gate2 A1/A2，处理器执行，风控与审核批准都不能覆盖）**：每次发任何付款交易之前（`release`、`queueRelease`、崩溃后重放的 `queueRelease`、**到期的 `executeRelease`**），以及每次调用风控之前：W2B 重读 WANTOS `orders[id]`，必须 Locked 且用户/金额与事件一致；B2W 重读 BSC `deposits(nonce)`，存款人/金额一致且**未申请入账退款**。不满足 → 不发交易，发 `ORDER_ONCHAIN_MISMATCH`；未排队的订单进 REVIEW(freeze, `onchain_mismatch`)，已 QUEUED 的保持 QUEUED(reason=`onchain_mismatch`) 等负责人 `cancelRelease`。B2W 也做的理由：入账退款与 WANTOS 入账是同一类「两边都付」风险，对称检查成本只有一次读。
+- **审核批准的范围**：批准时记录当时的 `review_level` 与 `reason`（`approved_level/approved_reason`）；只有风控再次返回**同一** level+reason 的 REVIEW 才按 DELAY 放行；以别的 level 或 reason 重新进入 REVIEW 时批准自动作废（`approved_at` 清空），需重新签。
+- 默认风控（`DefaultRiskEngine`，W2B 顺序）：BSC `paused()` → 两链白名单 → `amount > perAddrDailyCap` → 剩余全局/地址日额度 → 储备（金库余额 ≥ 本单 + 已排队/在途） → `amount > largeThreshold` ? DELAY : AUTO。B2W：WANTOS `paused()` → `b2wDailyCap` 剩余 → 储备 → DELAY。
 - 合约没有 `remainingDailyCap()/remainingAddrCap()` 视图（见 §3.1 D1），剩余额度 = `params` 上限 − `dailyUsed(currentDay())` / `addrDailyUsed(currentDay(), addr)`。
 - 发交易时 `onSigned` 回调与 `tx_attempts` 插入在**同一个 DB 事务**里把订单置为 SUBMITTED（带交易哈希），然后才广播。
 - SUBMITTED：最终块 payout 非 None → 结算（`executeRelease` 的单在最终块仍是 Queued 时继续等）；交易已上块回滚 → 取原因分类；`dropped` 或订单无任何交易记录 → FAILED。
@@ -80,8 +82,9 @@
 `TimelockExecutor`：扫描时间锁 `CallScheduled`/`CallSalt`，对每个提议读 `getOperationState`、`isOperationExpired`、`getTimestamp`、`proposalEpoch == epoch`；Waiting 期间在 readyAt 前 24h、6h 各提醒一次（`TIMELOCK_REMINDER`，持久化在 `timelock_notices`，重启不重复；错过 24h 窗口不补发）；Ready 且未过期、同 epoch → 用**无任何合约角色**的热钥匙发 `execute`/`executeBatch`；被取消（Unset）/已执行/过期/陈旧 epoch 一律跳过；模拟回滚（如暂停中）→ `TIMELOCK_EXEC_BLOCKED` 告警一次，之后每轮重试。
 
 ### 2.8 只读 API（给 PR-5 / PR-6）
-- `GET /v1/orders?address=0x…`：该地址作为发起人或收款人的最近 100 单。字段：`direction, srcChainId, nonce, eventKey, srcTxHash, from, to, amount(原始单位十进制字符串), status, executableAt(仅 queued), createdAt`。**对外状态**：`processing | submitted | queued | released | rejected | refunding | refunded`；DETECTED / WAITING / REVIEW / FAILED 一律 `processing`（REVIEW 无法与其他等待态区分）；不返回原因、审核级别、错误。
-- `GET /v1/quota?address=0x…`：`whitelisted{wantos,bsc}`、`w2b{minAmount, perAddrDailyCap, usedToday, remainingToday}`（WANTOS 当日按地址）、`b2w{minDeposit, maxDepositPerTx}`；后端异常 → 503（不泄露细节）。
+- `GET /v1/orders?address=0x…`（**按 PR-5 约定，Gate2 E1**）：`{"orders":[{"direction":"W2B"|"B2W","srcEventNonce":"<十进制字符串>","dstTxHash":"0x…"|null}]}`，字段集合固定为这三个；匹配 W2B 的发起用户与 B2W 的存款人（`user_addr`，不按收款人匹配），最新 50 单；`dstTxHash` 只有订单 RELEASED 且放款交易由本 relayer 发出并上链时才有值，其余为 `null`。**不返回任何状态字段**（决定 16：少披露；状态由用户页自己读链），也不返回原因、审核级别、错误。
+- `GET /v1/quota?address=0x…`：`whitelisted{wantos,bsc}`、`w2b{minAmount, perAddrDailyCap, usedToday, remainingToday}`（WANTOS 当日按地址）、`b2w{minDeposit, maxDepositPerTx}`；按地址缓存 15s、未命中缓存的链上查询全局限 20 次/秒，超出 → 429（Gate2 B5）；后端异常 → 503（不泄露细节）。
+- CORS：只对配置 `api.corsOrigins` 中**完全相同**的 Origin 回 `access-control-allow-origin`（`vary: Origin`）；`OPTIONS` 预检只允许 GET，未列入的 Origin → 403。默认空（不放开），示例配置为 `["https://bridge.wanto.pro"]`。
 - 400 地址非法、405 非 GET、404 其他路径；响应 `cache-control: no-store`；默认只监听 `127.0.0.1`。
 - `/admin/*`：先过 `AdminSessionVerifier.verify(headers)`（默认 `DenyAllAdminSessions` → 401）；通过后一律 501（PR-6 实现）。
 
@@ -104,6 +107,10 @@
 | D11 | 对外状态把 DETECTED/WAITING/FAILED 也并入 `processing` | §7"对外不公开" | 只把 REVIEW 显示为 processing，用户仍能从差异推断出 REVIEW |
 | D12 | B2W 超过当日 `b2wDailyCap` → WAITING(quota)（6h 超时告警），不自动发起入账退款 | §5.3"超过当日额度直接走入账退款" | 入账退款由管理钱包发起，relayer 不持有该权限 |
 | D13 | 默认风控对 W2B 重读 WANTOS 订单时，状态非 Locked 或用户/金额不一致 → REVIEW(freeze) + 告警，不直接 REJECTED | §5.3 第三道防线 | 不付款是硬约束；如何处置交负责人 |
+| D15 | 负责人「拒绝」前先读付款链 `payouts[eventKey]`，已 Released → 拒绝该签名并发一级 `PAYOUT_ALREADY_RELEASED`；REJECTED 阶段读到最终 Released → 告警且永不推进到 REFUNDING（Gate2 B1） | §6.3 REJECTED | 防止「已放款又退款」 |
+| D16 | 模拟失败但**没有 revert 数据**（传输/节点错误或空 revert）不做分类：订单保持原状态并告警 `RPC_UNAVAILABLE`；读 receipt 出错（不是「确认不存在」）中止本轮，不会判为 dropped（Gate2 B2） | §6.3 | 网络抖动不应把订单送进只能人工处理的 FAILED |
+| D17 | RPC URL 只从环境变量读取（配置里只写变量名，配置中出现 `://` 直接拒绝，`api.corsOrigins` 除外）；所有拼进告警的异常文本先脱敏（URL 的 userinfo/路径/查询、Authorization/Bearer、64 位十六进制），结构化字段（`data` 里的 eventKey 等）不经过脱敏（Gate2 B3） | §6.1 | RPC URL 常带 API key |
+| D18 | 启动自检：两侧合约 `eventKeyOf(1)` 必须等于 relayer 自算的 W2B/B2W key，`peerChainId/peerBridge` 必须与配置的另一侧一致，两把付款钥匙与提交服务钥匙两两不同，否则拒绝启动（Gate2 B6） | §5.1、§6.1 | 配置错配时不发任何交易 |
 | D14 | 链上回滚原因在"该交易所在块之后"的状态上重放调用获取（不依赖 `debug_traceTransaction`） | §6.3 | 同块先上链的暂停/作废能被正确识别；节点不必开 debug API |
 
 ### 3.2 待决（需要总控 / 负责人确认）
@@ -119,6 +126,7 @@
 | Q7 | 外部心跳服务、短信/电话第二通道：只有 `HeartbeatSink` / `AlertSink` 接口与内存/日志实现 | §6.5、§9.3 | 选型见 DESIGN §14 待决 3 |
 | Q8 | 仓库根 `package.json` 的 `"packageManager": "pnpm@10"` 不是完整版本号，corepack 直接报错，`pnpm` 命令在仓库内无法运行。本 PR 未改根文件，验证时直接调用 pnpm 10.34.5（`node ~/.cache/node/corepack/v1/pnpm/10.34.5/bin/pnpm.cjs -r test`） | — | 总控在 ts-workspace 上改成 `pnpm@10.34.5` 之类完整版本 |
 | Q9 | QUEUED 订单在 SUBMITTED 后若交易所在块被 WANTOS 回滚（>6 块重组），只靠游标 hash 检测与 SUBMITTED 30 分钟超时告警，不自动重发 | §6.2 | 发生重组时 relayer 已停机，需人工处理 |
+| Q11 | 审核签名改 EIP-712：按总控指示**不在 PR-3 做**，交 PR-6 定稿后再改（避免来回改） | §6.1 | 现为 personal_sign 文本 |
 | Q10 | `index` 等待原因之外，数据源整体不可用不会产生订单，因此"索引 > 10 分钟"告警目前由 `RPC_UNAVAILABLE/RPC_MISMATCH`（去重后）承担 | §6.3 | PR-4 接入索引后由风控返回 WAIT(index) |
 
 ## 4. 给下游的接口约定
@@ -128,9 +136,10 @@
 type RiskDecision = { kind: "AUTO" } | { kind: "DELAY" } | { kind: "REVIEW"; level: "audit" | "freeze"; reason?: string } | { kind: "WAIT"; reason: WaitReason };
 interface RiskEngine { evaluate(order: Order, ctx: { outstandingWei: bigint }): Promise<RiskDecision>; }
 ```
-- `Order`（`src/orders.ts`）提供：`eventKey, direction, srcChain, srcEventNonce, srcTxHash, srcBlockNumber, userAddr, toAddr, amountWei, status, reason, reviewLevel, stateSince, createdAt, approvedAt`。
-- 约定：PR-4 引擎应**包住**（而不是丢掉）`DefaultRiskEngine` 的链上检查（订单 Locked、暂停、两链白名单、额度、储备），再叠加资金来源与行为规则；索引不可用或落后时返回 `WAIT("index")`（§7 降级，不放松规则）；REVIEW 的 `reason` 会存进 `orders.reason`，但**永不对外**。
-- 引擎每轮会被反复调用（WAITING 订单每轮重评），需幂等、无副作用；审核通过后引擎若仍返回 REVIEW，会按 DELAY 处理（D3）。
+- `Order`（`src/orders.ts`）提供：`eventKey, direction, srcChain, srcEventNonce, srcTxHash, srcBlockNumber, userAddr, toAddr, amountWei, status, reason, reviewLevel, stateSince, createdAt, approvedAt, approvedLevel, approvedReason`。
+- 源订单 Locked/存款一致检查**不在引擎里**，由处理器在调用引擎前和每次发交易前强制执行，引擎无法关闭它（Gate2 A1）。
+- 约定：PR-4 引擎应**包住**（而不是丢掉）`DefaultRiskEngine` 的链上检查（暂停、两链白名单、额度、储备），再叠加资金来源与行为规则；索引不可用或落后时返回 `WAIT("index")`（§7 降级，不放松规则）；REVIEW 的 `reason` 会存进 `orders.reason`，但**永不对外**。
+- 引擎每轮会被反复调用（WAITING 订单每轮重评），需幂等、无副作用；审核通过后引擎若仍返回**同一 level+reason** 的 REVIEW，会按 DELAY 处理（D3）；返回不同 level/reason（例如 PR-4 新发现的 freeze 级风险）会使旧批准作废。
 - 受控集合表 `controlled_set`、审计表 `audit_log` 已建（§6.5），PR-4/PR-6 直接使用。
 
 ### 4.2 PR-6 管理后台
@@ -153,7 +162,8 @@ interface RiskEngine { evaluate(order: Order, ctx: { outstandingWei: bigint }): 
 - 回滚事件：`SafetyState.onReorg((side, { block, storedHash, observedHash }) => …)`；relayer 侧同时一级告警并停止所有发送。
 - 对账口径：relayer 认定"已放款"= 付款链最终块上 `payouts[eventKey].status == Released`；B2W 排队 = `ReleaseQueued` 的 `srcEventNonce` 即 BSC `Deposited.nonce`。
 - 告警种类与级别：`src/alerts.ts` 的 `ALERT_LEVEL`（一级：`WANTOS_REORG`、`BSC_REORG`、`HEARTBEAT_MISSED`；`RESERVE_CRITICAL` 已预留给 §9.3「储备不足 0.5 天」，relayer 目前不发；其余二级/三级）。
-- 对外订单状态：`publicStatus()`（`src/api.ts`）。
+- 对外接口不返回订单状态（E1）；`publicStatus()`（`src/api.ts`）只留作 PR-6 内部视图的映射参考。
+- 一级告警 `PAYOUT_ALREADY_RELEASED`：REJECTED/待拒绝订单的放款在链上已 Released，**不得退款**（Gate2 B1）。
 
 ## 5. 测试与覆盖率
 
@@ -186,13 +196,18 @@ interface RiskEngine { evaluate(order: Order, ctx: { outstandingWei: bigint }): 
 | E2E：B2W 排队 15 分钟 | `e2e.test.ts › B2W: Deposited → finalized → queueRelease → QUEUED 15 min → executeRelease → RELEASED` |
 | 其他（规格要求、非 §13 列举） | 只处理本链桥地址：`scanners.test.ts › ignores logs whose address is not this chain's bridge …`、`ignores foreign-address Deposited logs`；receipt 两源一致：`scanners.test.ts › requires the cross-check receipt to agree …` 等 3 例；放款前重读 WANTOS 订单：`faults.test.ts › WANTOS order no longer Locked …`；审核验签：`faults.test.ts › REVIEW: owner approval …`；提交服务：`timelockExecutor.test.ts`（6 例）；API：`api.test.ts`（8 例）；告警出口：`alerts.test.ts`；心跳：`timeouts.test.ts › heartbeat`；KMS/gas/nonce 告警：`sender.test.ts`；配置拒绝密钥：`config.test.ts` |
 
-## 6. 自查发现但未修的风险
+## 6. 上线门槛（Gate2 B9）
+
+- **PR-10 上线前必须**：接入真实告警通道（负责人电话/短信 + 即时消息，§9.3）替换 `main.ts` 中的 `LogAlertSink`，并接入外部心跳服务（`HeartbeatSink`）；否则一级告警（重组、`PAYOUT_ALREADY_RELEASED`、心跳中断）不会到达负责人，**不得上线**。
+- 同时必须完成 Q1（PR-0 ⑥ 同 nonce 替换实测）与 Q2（KMS 签名器实现）。
+
+## 7. 自查发现但未修的风险
 
 1. **KMS 未实现**（Q2）：生产入口目前无法发送交易，这是刻意的（不碰真实密钥），上线前必须补。
 2. **同 nonce 替换依赖 PR-0 ⑥**（Q1）：WANTOS app mempool 若拒绝替换，卡住的交易只能告警 + 人工处理；严格串行意味着一笔卡住会阻塞该链所有放款。
 3. **储备检查偏保守**（D5）：已付款但未最终确认的 SUBMITTED 订单仍计入"在途"，储备临界时可能短暂多等一轮。
 4. **WAITING 订单每轮重评**会对链上视图做多次读取（每单约 6–8 次 eth_call）；订单积压很多时 RPC 压力上升。目前没有批量/缓存。
-5. **API `/v1/quota` 每次请求都读链**，无限流/缓存；需在 Worker 侧限流或后续加缓存。
+5. `/v1/quota` 已加缓存与全局限流（B5），但限流是进程内的单窗口计数，没有按来源 IP 区分；Worker 侧仍建议再限流。
 6. **`run()` 的看门狗在同一进程内**：事件循环卡死时它也不会触发，真正的兜底依赖外部心跳服务（Q7）。
 7. 风险 `outstandingWei` 只按本地订单表计算，不含链上由他人（例如被盗付款钥匙）排进队列的放款；那种情况由监控（PR-7）核对。
 8. 测试用 anvil 的 `finalized = latest − 64` 模拟 BSC 最终性；BSC 真实 finalized 语义（快速最终性）在 PR-9 测试网联调中再验证。
