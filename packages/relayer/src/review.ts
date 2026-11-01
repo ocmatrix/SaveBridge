@@ -8,6 +8,9 @@ import type { Hex } from "./types";
 
 export type ReviewDecision = "approve" | "reject";
 
+/** A signed decision is only accepted if it expires within 24h (limits replay of a leaked signature). */
+export const MAX_DECISION_TTL_S = 24n * 3600n;
+
 /**
  * Message the owner signs (EIP-191 personal_sign) with the ADMIN wallet for an order review
  * (DESIGN §6.1: verified by the relayer, never by the Cloudflare Worker). `chainId` is the payout
@@ -48,6 +51,7 @@ export class ReviewService {
     if (order.status !== "REVIEW") throw new Error(`order is ${order.status}, not REVIEW`);
     const nowSec = BigInt(Math.floor(this.o.now().getTime() / 1000));
     if (r.expires < nowSec) throw new Error("decision expired");
+    if (r.expires > nowSec + MAX_DECISION_TTL_S) throw new Error("decision expires too far in the future (max 24h)");
     const { view, chainId, client } = this.o.payoutView(order.direction);
     const admin = await view.adminWallet();
     const message = reviewMessage({ chainId, eventKey: r.eventKey, decision: r.decision, expires: r.expires });

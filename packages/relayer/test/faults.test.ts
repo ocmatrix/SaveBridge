@@ -437,6 +437,12 @@ describe("fault injection (DESIGN §13 PR-3 acceptance) on anvil", () => {
     await sys.relayer.tick();
     expect((await repo.get(wKey(1n)))!.status).toBe("REVIEW");
     const exp = BigInt(Math.floor(sys.clock.now / 1000) + 600);
+    const far = BigInt(Math.floor(sys.clock.now / 1000) + 2 * 86_400);
+    const farSig = await world.act.admin.signMessage({ message: reviewMessage({ chainId: BSC_ID, eventKey: wKey(1n), decision: "approve", expires: far }) });
+    await expect(sys.relayer.review.decide({ eventKey: wKey(1n), decision: "approve", expires: far, signature: farSig })).rejects.toThrow(/expires/);
+    const past = BigInt(Math.floor(sys.clock.now / 1000) - 1);
+    await expect(sys.relayer.review.decide({ eventKey: wKey(1n), decision: "approve", expires: past, signature: farSig })).rejects.toThrow(/expired/);
+    await expect(sys.relayer.review.decide({ eventKey: ("0x" + "77".repeat(32)) as Hex, decision: "approve", expires: exp, signature: farSig })).rejects.toThrow(/unknown/);
     const forged = await world.act.user.signMessage({ message: reviewMessage({ chainId: BSC_ID, eventKey: wKey(1n), decision: "approve", expires: exp }) });
     await expect(sys.relayer.review.decide({ eventKey: wKey(1n), decision: "approve", expires: exp, signature: forged })).rejects.toThrow(/signature/);
     expect(sys.alerts.byKind("REVIEW_SIGNATURE_INVALID")).toHaveLength(1);
