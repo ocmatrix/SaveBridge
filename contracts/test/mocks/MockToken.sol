@@ -17,6 +17,7 @@ contract ReentrantToken is ERC20 {
     address public target;
     bytes public payload;
     bool public lastOk;
+    bytes public lastRet;
 
     constructor() ERC20("Re", "RE") {}
 
@@ -27,6 +28,7 @@ contract ReentrantToken is ERC20 {
     function arm(address t, bytes calldata p) external {
         target = t;
         payload = p;
+        _approve(address(this), t, type(uint256).max); // so a nested pull would otherwise succeed
     }
 
     function _update(address from, address to, uint256 value) internal override {
@@ -34,7 +36,7 @@ contract ReentrantToken is ERC20 {
         if (target != address(0)) {
             address t = target;
             target = address(0);
-            (lastOk,) = t.call(payload);
+            (lastOk, lastRet) = t.call(payload);
         }
     }
 }
