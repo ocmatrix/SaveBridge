@@ -55,7 +55,7 @@ const KEY_CHANGE_EVENTS = new Set([
   "AdminRecoveryCancelled",
 ]);
 
-const add = (s: Record<string, string>, k: string, v: unknown): void => {
+const addSum = (s: Record<string, string>, k: string, v: unknown): void => {
   s[k] = (BigInt(s[k] ?? "0") + BigInt(String(v))).toString();
 };
 const sumOf = (s: Record<string, string>, k: string): bigint => BigInt(s[k] ?? "0");
@@ -329,7 +329,7 @@ export class Watcher {
     for (const { label, value } of res.ok) {
       for (const entry of value) {
         const k = `${entry.log.transactionHash}:${entry.log.logIndex}`;
-        const sig = stableStringify({ a: lc(entry.log.address), t: entry.log.topics, d: entry.log.data, h: entry.log.blockHash, s: entry.source });
+        const sig = stableStringify({ a: lc(entry.log.address), t: entry.log.topics, d: entry.log.data, h: entry.log.blockHash, b: String(entry.log.blockNumber), s: entry.source });
         const u = union.get(k) ?? { variants: new Map(), labels: new Set<string>() };
         const v = u.variants.get(sig) ?? { entry, n: 0 };
         v.n++;
@@ -338,39 +338,53 @@ export class Watcher {
         union.set(k, u);
       }
     }
-    for (const [k, u] of union) {
-      if (u.labels.size < res.ok.length || u.variants.size > 1)
-        await this.raise("RPC_DISAGREE", `${c} 各 RPC 返回的事件不一致（${k}），已按并集处理，假事件由逐笔共识复核过滤`, {
-          chain: c,
-          detail: { log: k, reportedBy: [...u.labels], answered: res.ok.map((x) => x.label), variants: u.variants.size },
-          key: `logdiff:${c}:${k}`,
+    // Block hash + timestamp of the range end and of every block that carries a log, by consensus (concurrently).
+    const blockNums = new Set<bigint>([to]);
+    for (const u of union.values()) for (const v of u.variants.values()) blockNums.add(v.entry.log.blockNumber!);
+    const blocks = new Map<bigint, { hash: Hex; timestamp: number }>();
+    await Promise.all(
+      [...blockNums].map(async (n) => {
+        const b = await rpc.consensus(async (cl) => {
+          const x = await cl.getBlock({ blockNumber: n });
+          return { hash: x.hash, timestamp: Number(x.timestamp) };
         });
+        if (!b.ok) throw new Error(`block ${n} not confirmed by ≥${rpc.minAgree} RPCs (${b.reason})`);
+        blocks.set(n, b.value);
+      }),
+    );
+    const end = blocks.get(to)!;
+    // A log is confirmed iff exactly one variant exists at its position and ≥ minAgree RPCs reported it
+    // (a 1-vs-1 tie is NOT confirmed). Logs whose block hash is not the agreed one (stale fork) are dropped.
+    const logs: Array<Entry & { confirmed: boolean }> = [];
+    const suspicious: Array<Record<string, unknown>> = [];
+    for (const [k, u] of union) {
+      const variants = [...u.variants.values()];
+      const confirmed = variants.length === 1 && variants[0]!.n >= rpc.minAgree;
+      if (!confirmed || u.labels.size < res.ok.length) suspicious.push({ log: k, reportedBy: [...u.labels], variants: variants.length });
+      for (const v of variants) {
+        const b = blocks.get(v.entry.log.blockNumber!)!;
+        if (v.entry.log.blockHash !== b.hash) {
+          suspicious.push({ log: k, staleBlockHash: v.entry.log.blockHash });
+          continue;
+        }
+        logs.push({ ...v.entry, confirmed });
+      }
     }
-    // same position, different content → keep the variant reported by most RPCs (also alerted above)
-    const logs = [...union.values()].map((u) => [...u.variants.values()].reduce((a, b) => (b.n > a.n ? b : a)).entry);
+    if (suspicious.length > 0)
+      await this.raise("RPC_DISAGREE", `${c} 区块 ${from}-${to}：各 RPC 返回的事件不一致（${suspicious.length} 处）；未确认的事件只建核对项 / 告警，不改状态`, {
+        chain: c,
+        detail: { range: `${from}-${to}`, answered: res.ok.map((x) => x.label), items: suspicious.slice(0, 50) },
+        key: `logdiff:${c}:${from}-${to}`,
+      });
     logs.sort((a, b) => (a.log.blockNumber! === b.log.blockNumber! ? a.log.logIndex! - b.log.logIndex! : a.log.blockNumber! < b.log.blockNumber! ? -1 : 1));
-    const endC = await rpc.consensus(async (cl) => {
-      const b = await cl.getBlock({ blockNumber: to });
-      return { hash: b.hash, timestamp: Number(b.timestamp) };
-    });
-    if (!endC.ok) throw new Error(`block ${to} not confirmed by ≥${rpc.minAgree} RPCs (${endC.reason})`);
-    const end = endC.value;
-    const times = new Map<bigint, number>([[to, end.timestamp]]);
-    for (const { log } of logs) {
-      const n = log.blockNumber!;
-      if (times.has(n)) continue;
-      const t = await rpc.consensus(async (cl) => Number((await cl.getBlock({ blockNumber: n })).timestamp));
-      if (!t.ok) throw new Error(`timestamp of block ${n} not confirmed (${t.reason})`);
-      times.set(n, t.value);
-    }
     // B2: apply the whole range atomically — on any error restore the pre-range state, so a retry
     // from the unchanged cursor cannot double-count sums.
     const before = clone(this.state.derived);
     const newOpsBefore = this.newOps.length;
     try {
       const abiFor = (s: DecodedLog["source"]): Abi => (s === "bridge" ? bridgeAbiOf(c) : s === "timelock" ? (bridgeTimelockAbi as Abi) : (erc20Abi as Abi));
-      for (const { source, log } of logs) {
-        const meta = { address: log.address, block: log.blockNumber!, blockHash: log.blockHash!, txHash: log.transactionHash!, logIndex: log.logIndex!, timestamp: times.get(log.blockNumber!)! };
+      for (const { source, log, confirmed } of logs) {
+        const meta = { address: log.address, block: log.blockNumber!, blockHash: log.blockHash!, txHash: log.transactionHash!, logIndex: log.logIndex!, timestamp: blocks.get(log.blockNumber!)!.timestamp, confirmed };
         if (source === "legacy") {
           await this.onLegacyLog(c, { source, name: "log", args: { topic0: log.topics[0] }, ...meta });
           continue;
@@ -411,18 +425,22 @@ export class Watcher {
 
   private async onBridge(c: ChainName, l: DecodedLog): Promise<void> {
     const der: ChainDerived = this.state.derived[c];
+    // A-1: only confirmed logs may change state
+    const add = (sums: Record<string, string>, k: string, v: unknown): void => {
+      if (l.confirmed) addSum(sums, k, v);
+    };
     const a = l.args;
     const key = this.evKey(c, l);
     const g = this.cfg.grace;
     switch (l.name) {
       case "BridgeOut":
         add(der.sums, "bridgeOut", a["amount"]);
-        if (BigInt(String(a["orderId"])) > BigInt(this.state.derived.maxOrderId)) this.state.derived.maxOrderId = String(a["orderId"]);
+        if (l.confirmed && BigInt(String(a["orderId"])) > BigInt(this.state.derived.maxOrderId)) this.state.derived.maxOrderId = String(a["orderId"]);
         return;
       case "Deposited":
         add(der.sums, "deposited", a["amount"]);
-        this.state.derived.depositBlocks[String(a["nonce"])] = l.block.toString();
-        if (BigInt(String(a["nonce"])) > BigInt(this.state.derived.maxDepositNonce)) this.state.derived.maxDepositNonce = String(a["nonce"]);
+        if (l.confirmed) this.state.derived.depositBlocks[String(a["nonce"])] ??= l.block.toString(); // first confirmed write wins
+        if (l.confirmed && BigInt(String(a["nonce"])) > BigInt(this.state.derived.maxDepositNonce)) this.state.derived.maxDepositNonce = String(a["nonce"]);
         return;
       case "Funded":
         add(der.sums, "funded", a["amount"]);
@@ -433,7 +451,8 @@ export class Watcher {
         return;
       case "Released":
         add(der.sums, "released", a["amount"]);
-        if (c === "bsc") this.addCheck("w2b", c, l, a["srcEventNonce"], a["to"], a["amount"], a["eventKey"], l.timestamp + g.w2bSeconds);
+        // A-2: a Released is already paid → "executable" at its own time, so an undecidable check escalates at grace end
+        if (c === "bsc") this.addCheck("w2b", c, l, a["srcEventNonce"], a["to"], a["amount"], a["eventKey"], l.timestamp + g.w2bSeconds, l.timestamp);
         return;
       case "ReleaseQueued": {
         const eta = Number(a["executableAt"]);
@@ -450,12 +469,8 @@ export class Watcher {
         this.addCheck("depositRefund", c, l, a["nonce"], a["from"], a["amount"], a["eventKey"], Number(a["executableAt"]) - g.depositRefundBeforeExecSeconds, Number(a["executableAt"]));
         this.alerts.daily({ kind: "DEPOSIT_REFUND_REQUESTED", chain: c, id: key, data: { nonce: String(a["nonce"]), amount: String(a["amount"]) } });
         return;
-      case "RefundCancelled":
-        this.dropChecks("refund", String(a["orderId"]));
-        return;
-      case "DepositRefundCancelled":
-        this.dropChecks("depositRefund", String(a["nonce"]));
-        return;
+      // RefundCancelled / DepositRefundCancelled no longer drop checks (A-1): the Verifier's consensus
+      // read of the order / deposit status decides whether the refund was withdrawn.
       case "Refunded":
         add(der.sums, "refunded", a["amount"]);
         return;
@@ -474,7 +489,7 @@ export class Watcher {
         await this.raise("PAUSED", `${c} 桥已暂停（by ${String(a["account"])}）`, { chain: c, detail: this.evDetail(l), key });
         return;
       case "Unpaused":
-        this.noteUnpause(der, l.block, l.timestamp);
+        if (l.confirmed) this.noteUnpause(der, l.block, l.timestamp);
         await this.raise("UNPAUSED", `${c} 桥已解除暂停（by ${String(a["account"])}）；此前事件视为已确认`, { chain: c, detail: this.evDetail(l), key });
         return;
       case "Upgraded":
@@ -525,10 +540,10 @@ export class Watcher {
         return;
       }
       case "CallExecuted":
-        delete ops[id];
+        if (l.confirmed) delete ops[id];
         return;
       case "Cancelled":
-        delete ops[id];
+        if (l.confirmed) delete ops[id];
         await this.raise("TIMELOCK_CANCELLED", `${c} 时间锁提议已取消 ${String(a["id"])}`, { chain: c, detail: this.evDetail(l), key: this.evKey(c, l) });
         return;
       case "MinDelayChange":
@@ -546,9 +561,10 @@ export class Watcher {
     const key = this.evKey(c, l);
     if (c === "wantos" && from === ZERO) {
       // §9.1-6 / decision 14: gross mint, persisted, never reset, never pauses.
-      const total = BigInt(this.state.derived.mintTotal) + value;
-      this.state.derived.mintTotal = total.toString();
-      const detail = { to: l.args["to"], value: value.toString(), grossTotal: total.toString(), threshold: this.cfg.mintAlertThreshold.toString(), txHash: l.txHash };
+      // A-1: an unconfirmed mint is alerted but never added to the persisted gross total
+      const total = BigInt(this.state.derived.mintTotal) + (l.confirmed ? value : 0n);
+      if (l.confirmed) this.state.derived.mintTotal = total.toString();
+      const detail = { to: l.args["to"], value: value.toString(), grossTotal: total.toString(), threshold: this.cfg.mintAlertThreshold.toString(), txHash: l.txHash, confirmed: l.confirmed };
       if (total > this.cfg.mintAlertThreshold) await this.raise("MINT_EXCESS", `WANTOS-USDT 增发过量：累计 ${total} > 阈值（只告警，不暂停）`, { chain: c, detail, key });
       else await this.raise("MINT", `WANTOS-USDT 增发 ${value}（累计 ${total}，只告警）`, { chain: c, detail, key });
     }
@@ -606,10 +622,6 @@ export class Watcher {
       decideAt,
       ...(executableAt !== undefined ? { executableAt } : {}),
     });
-  }
-
-  private dropChecks(kind: CheckKind, nonce: string): void {
-    this.state.derived.pending = this.state.derived.pending.filter((p) => !(p.kind === kind && p.nonce === nonce));
   }
 
   private decide(p: PendingCheck): void {

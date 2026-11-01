@@ -43,6 +43,11 @@ export interface DecodedLog {
   txHash: Hex;
   logIndex: number;
   timestamp: number;
+  /**
+   * Reported identically by ≥ minRpcAgreement RPCs with no conflicting variant at the same position.
+   * Unconfirmed logs may only have conservative effects (new checks, alerts) — never change state.
+   */
+  confirmed: boolean;
 }
 
 export function decodeLog(abi: Abi, log: Log): { name: string; args: Record<string, unknown> } | null {

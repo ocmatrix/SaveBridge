@@ -1,4 +1,4 @@
-import { createPublicClient, custom, http, type EIP1193RequestFn, type PublicClient } from "viem";
+import { createPublicClient, custom, http, type EIP1193RequestFn, type Hex, type PublicClient } from "viem";
 import { MemoryAlertSink } from "../../src/alerts.js";
 import type { WatcherConfig, ControlledEntry } from "../../src/config.js";
 import { MemoryHeartbeat, type RelayerProbe } from "../../src/heartbeat.js";
@@ -24,6 +24,39 @@ export function tamperedClient(h: ChainH, intercept: Intercept): PublicClient {
     return inner.request({ method, params } as never);
   }) as EIP1193RequestFn;
   return createPublicClient({ chain: h.chain, transport: custom({ request }, { retryCount: 0 }) }) as PublicClient;
+}
+
+const hexN = (n: bigint) => `0x${n.toString(16)}`;
+async function rawRpc<T>(h: ChainH, method: string, params: unknown[]): Promise<T> {
+  const j = (await (await fetch(h.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) })).json()) as { result: T };
+  return j.result;
+}
+
+/**
+ * A lying RPC (aligner round-2 POC): appends one fabricated bridge log at block `atBlock()` to every
+ * unfiltered (no topics) bridge `eth_getLogs` covering it — i.e. exactly what range ingestion asks for.
+ */
+export function injector(h: ChainH, atBlock: () => bigint | null, mk: (blockHash: Hex) => { topics: Hex[]; data: Hex }, opts: { withTopics?: boolean } = {}): PublicClient {
+  return tamperedClient(h, (m, p) => {
+    if (m !== "eth_getLogs") return { handled: false };
+    const f = p[0] as { address?: string | string[]; fromBlock: string; toBlock: string; topics?: unknown[] };
+    const addrs = Array.isArray(f.address) ? f.address : [f.address];
+    const X = atBlock();
+    if (X === null || !addrs.some((a) => a?.toLowerCase() === h.bridge.toLowerCase())) return { handled: false };
+    if (!opts.withTopics && f.topics && f.topics.length > 0) return { handled: false };
+    if (opts.withTopics && !(f.topics && f.topics.length > 0)) return { handled: false };
+    const to = f.toBlock === "latest" ? null : BigInt(f.toBlock);
+    if (BigInt(f.fromBlock) > X || (to !== null && to < X)) return { handled: false };
+    return {
+      handled: true,
+      result: (async () => {
+        const real = await rawRpc<unknown[]>(h, m, p);
+        const blk = await rawRpc<{ hash: Hex }>(h, "eth_getBlockByNumber", [hexN(X), false]);
+        const { topics, data } = mk(blk.hash);
+        return [...real, { address: h.bridge, topics, data, blockNumber: hexN(X), blockHash: blk.hash, transactionHash: `0x${"ab".repeat(32)}`, transactionIndex: "0x0", logIndex: "0x63", removed: false }];
+      })(),
+    };
+  });
 }
 
 export interface WOpts {
