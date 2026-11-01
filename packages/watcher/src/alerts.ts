@@ -220,6 +220,13 @@ export class AlertManager {
     delete this.meta().alertKeys[key];
   }
 
+  /** S-3: close every state-type alert whose key starts with `prefix` (re-arm + stop repeats). */
+  resolvePrefix(prefix: string): void {
+    const m = this.meta();
+    for (const k of Object.keys(m.alertKeys)) if (k.startsWith(prefix)) delete m.alertKeys[k];
+    for (const k of Object.keys(m.openLevel1)) if (k.startsWith(prefix)) delete m.openLevel1[k];
+  }
+
   /** Owner acknowledged a level-1 alert: stop the 24h repeats. */
   ack(key: string): void {
     delete this.meta().openLevel1[key];

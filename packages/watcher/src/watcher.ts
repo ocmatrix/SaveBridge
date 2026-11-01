@@ -136,6 +136,7 @@ export class Watcher {
       await this.raise("RPC_MISCONFIGURED", `${c} RPC ${x.label} 服务的是 chainId ${x.value}（应为 ${want}），已剔除`, { chain: c, detail: { label: x.label, chainId: x.value, expected: want }, key: `misconf:${c}:${x.label}:chainId` });
     }
     const verified = r.ok.filter((y) => y.value === want).length;
+    if (verified >= rpc.minAgree) this.alerts.resolvePrefix(`misconf:${c}:quorum:`);
     if (verified < rpc.minAgree)
       await this.raise("RPC_MISCONFIGURED", `${c} 通过 chainId 校验的 RPC 只有 ${verified} 个（需要 ${rpc.minAgree}）`, { chain: c, detail: { verified, failed: r.failed }, key: `misconf:${c}:quorum:${Math.floor(this.now() / 3600)}` });
     return verified;
@@ -145,7 +146,14 @@ export class Watcher {
     return this.d.clock();
   }
 
+  /** S-3: while handling an UNCONFIRMED log, alerts are collected here and folded into the range's level-2 RPC_DISAGREE. */
+  private unconfirmedAlerts: Array<{ code: string; title: string }> | null = null;
+
   private raise(code: AlertCode, title: string, o: { chain?: ChainName; detail?: Record<string, unknown>; key?: string } = {}): Promise<boolean> {
+    if (this.unconfirmedAlerts !== null) {
+      this.unconfirmedAlerts.push({ code, title });
+      return Promise.resolve(true);
+    }
     return this.alerts.raise(code, { title, ...o });
   }
 
@@ -365,7 +373,10 @@ export class Watcher {
     const hp2 = m.headProgress[c];
     const cursorStalled = now - cp.at > stall;
     const headStalled = head !== null && hp2 !== undefined && now - hp2.at > stall;
-    if (!cursorStalled && !headStalled) return;
+    if (!cursorStalled && !headStalled) {
+      this.alerts.resolvePrefix(`stuck:${c}:`); // S-3: progress → close
+      return;
+    }
     const since = Math.min(cursorStalled ? cp.at : now, headStalled ? hp2!.at : now);
     await this.raise("CURSOR_STUCK", `${c} 监控已 ${Math.round((now - since) / 60)} 分钟无进展（${headStalled ? "安全高度不再前进" : "游标不前进"}），监控处于失明状态`, {
       chain: c,
@@ -486,13 +497,6 @@ export class Watcher {
       if (missed || odd) rpc.noteDissent(label, `getLogs ${from}-${to}`);
       else rpc.noteAgree(label);
     }
-    if (suspicious.length > 0)
-      await this.raise("RPC_DISAGREE", `${c} 区块 ${from}-${to}：各 RPC 返回的事件不一致（${suspicious.length} 处）；未确认的事件只建核对项 / 告警，不改状态`, {
-        chain: c,
-        // R12: the unconfirmed logs (not counted in sums) are listed for manual reconciliation
-        detail: { range: `${from}-${to}`, answered: res.ok.map((x) => x.label), items: suspicious.slice(0, 50), unconfirmed: unconfirmed.slice(0, 50) },
-        key: `logdiff:${c}:${from}-${to}`,
-      });
     logs.sort((a, b) => (a.log.blockNumber! === b.log.blockNumber! ? a.log.logIndex! - b.log.logIndex! : a.log.blockNumber! < b.log.blockNumber! ? -1 : 1));
     // B2: apply the whole range atomically — on any error restore the pre-range state, so a retry
     // from the unchanged cursor cannot double-count sums.
@@ -500,7 +504,9 @@ export class Watcher {
     const newOpsBefore = this.newOps.length;
     try {
       const abiFor = (s: DecodedLog["source"]): Abi => (s === "bridge" ? bridgeAbiOf(c) : s === "timelock" ? (bridgeTimelockAbi as Abi) : (erc20Abi as Abi));
+      const folded: Array<{ code: string; title: string }> = [];
       for (const { source, log, confirmed } of logs) {
+        this.unconfirmedAlerts = confirmed ? null : folded;
         const meta = { address: log.address, block: log.blockNumber!, blockHash: log.blockHash!, txHash: log.transactionHash!, logIndex: log.logIndex!, timestamp: blocks.get(log.blockNumber!)!.timestamp, confirmed };
         if (source === "legacy") {
           await this.onLegacyLog(c, { source, name: "log", args: { topic0: log.topics[0] }, ...meta });
@@ -513,7 +519,16 @@ export class Watcher {
         else if (source === "timelock") await this.onTimelock(c, l);
         else await this.onTransfer(c, l);
       }
+      this.unconfirmedAlerts = null;
+      if (suspicious.length > 0)
+        await this.raise("RPC_DISAGREE", `${c} 区块 ${from}-${to}：各 RPC 返回的事件不一致（${suspicious.length} 处）；未确认的事件只建核对项、其告警并入本条（二级），不改状态`, {
+          chain: c,
+          // R12: the unconfirmed logs (not counted in sums) are listed for manual reconciliation
+          detail: { range: `${from}-${to}`, answered: res.ok.map((x) => x.label), items: suspicious.slice(0, 50), unconfirmed: unconfirmed.slice(0, 50), foldedAlerts: folded.slice(0, 50) },
+          key: `logdiff:${c}:${from}-${to}`,
+        });
     } catch (e) {
+      this.unconfirmedAlerts = null;
       this.state.derived = before;
       this.newOps.splice(newOpsBefore);
       throw e;
@@ -745,6 +760,7 @@ export class Watcher {
   }
 
   private decide(p: PendingCheck): void {
+    this.resolve(`overdue:${p.id}`); // S-3: CHECK_OVERDUE closes with the check
     this.state.meta.decided[p.id] = this.now();
     this.state.derived.pending = this.state.derived.pending.filter((x) => x.id !== p.id);
   }
@@ -921,7 +937,7 @@ export class Watcher {
       } catch {
         alive = false;
       }
-      if (alive) this.alerts.clearKey("relayer-down");
+      if (alive) this.resolve("relayer-down");
       else await this.raise("RELAYER_UNREACHABLE", "付款程序失联", { key: "relayer-down" });
     }
   }

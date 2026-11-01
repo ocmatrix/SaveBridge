@@ -212,4 +212,54 @@ describe("round-3 hardening", () => {
       });
     }
   });
+
+  describe("S-3: no phone storm from one RPC; state-type level-1 alerts close themselves", () => {
+    it("POC-G: a fresh fabricated RoleGranted per range → no level-1 KEY_CHANGE; reported inside the level-2 RPC_DISAGREE", async () => {
+      const mk = () => fakeLog(H.bsc.abi as Abi, "RoleGranted", (i) => (i.type === "bytes32" ? (`0x${"11".repeat(32)}` as Hex) : ACCOUNTS.attacker.address));
+      const liar = injectorAt(H.bsc, () => H.bsc.bridge, mk, () => true);
+      const t = await makeWatcher(H, { endpoints: { bsc: three(liar) } });
+      for (let i = 0; i < 4; i++) {
+        await H.bsc.mine(2);
+        await H.settle();
+        t.clock.now += 5;
+        await t.w.tick();
+      }
+      expect(t.sink.alerts.filter((a) => a.code === "KEY_CHANGE")).toHaveLength(0);
+      const d = t.sink.alerts.filter((a) => a.code === "RPC_DISAGREE");
+      expect(d.every((a) => a.level === 2)).toBe(true);
+      expect(JSON.stringify(d.map((a) => a.detail))).toContain("KEY_CHANGE");
+    });
+
+    it("CURSOR_STUCK closes (acked, key re-armed) once the chain makes progress again", async () => {
+      const t = await makeWatcher(H);
+      await H.settle();
+      await t.w.tick();
+      t.clock.now += 601;
+      await t.w.tick();
+      const keys = Object.keys(t.w.state.meta.openLevel1).filter((k) => k.startsWith("stuck:bsc:"));
+      expect(keys.length).toBeGreaterThan(0);
+      await H.settle();
+      t.clock.now += 5;
+      await t.w.tick();
+      expect(Object.keys(t.w.state.meta.openLevel1).filter((k) => k.startsWith("stuck:bsc:"))).toHaveLength(0);
+    });
+
+    it("CHECK_OVERDUE closes once the check is decided", async () => {
+      let down = true;
+      const flaky = tamperedClient(H.wantos, (m) => (down && m === "eth_blockNumber" ? { handled: true, result: new Error("down") } : { handled: false }));
+      const t = await makeWatcher(H, { endpoints: { wantos: [{ label: "w-a", client: H.wantos.pub }, { label: "w-flaky", client: flaky }] } });
+      const r = await forge(81n);
+      await H.settle();
+      t.clock.now = r.timestamp + 400;
+      await t.w.tick();
+      const k = Object.keys(t.w.state.meta.openLevel1).find((x) => x.startsWith("overdue:"));
+      expect(k).toBeDefined();
+      down = false;
+      await H.settle();
+      t.clock.now += 10;
+      await t.w.tick(); // decided (paused)
+      expect(await H.isPaused("bsc")).toBe(true);
+      expect(t.w.state.meta.openLevel1[k!]).toBeUndefined();
+    });
+  });
 });
