@@ -13,6 +13,7 @@ import {IBridgeForTimelock, ITimelockForBridge} from "./interfaces/IBridgeV2.sol
 contract BridgeTimelock is TimelockController, ITimelockForBridge {
     // ------------------------------------------------------------------ constants
     uint256 public immutable MIN_DELAY;
+    uint256 public constant MAX_DELAY = 7 days;
     uint256 public constant EXPIRY_PERIOD = 14 days;
     uint256 public constant PENDING_ADMIN_TTL = 7 days;
     uint256 public constant ADMIN_RECOVERY_DELAY = 14 days;
@@ -41,6 +42,7 @@ contract BridgeTimelock is TimelockController, ITimelockForBridge {
     error ZeroAddress();
     error RoleChangeForbidden();
     error DelayBelowMinimum(uint256 requested, uint256 minimum);
+    error DelayAboveMaximum(uint256 requested, uint256 maximum);
     error NotCanceller(address caller);
     error OperationExpired(bytes32 id);
     error OperationStaleEpoch(bytes32 id);
@@ -212,6 +214,7 @@ contract BridgeTimelock is TimelockController, ITimelockForBridge {
     function updateDelay(uint256 newDelay) external override {
         if (msg.sender != address(this)) revert TimelockUnauthorizedCaller(msg.sender);
         if (newDelay < MIN_DELAY) revert DelayBelowMinimum(newDelay, MIN_DELAY);
+        if (newDelay > MAX_DELAY) revert DelayAboveMaximum(newDelay, MAX_DELAY);
         emit MinDelayChange(_delay, newDelay);
         _delay = newDelay;
     }

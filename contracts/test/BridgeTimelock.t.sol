@@ -80,6 +80,21 @@ contract BridgeTimelockTest is Test {
         assertEq(tl.getMinDelay(), 72 hours);
     }
 
+    function test_updateDelayUpperBound7Days() public {
+        bytes memory bad = abi.encodeCall(TimelockController.updateDelay, (7 days + 1));
+        _schedule(address(tl), bad, bytes32("big"));
+        bytes memory ok = abi.encodeCall(TimelockController.updateDelay, (7 days));
+        _schedule(address(tl), ok, bytes32("max"));
+        vm.warp(block.timestamp + 48 hours);
+        vm.expectRevert(
+            abi.encodeWithSelector(BridgeTimelock.DelayAboveMaximum.selector, uint256(7 days + 1), uint256(7 days))
+        );
+        tl.execute(address(tl), 0, bad, bytes32(0), bytes32("big"));
+        tl.execute(address(tl), 0, ok, bytes32(0), bytes32("max"));
+        assertEq(tl.getMinDelay(), 7 days);
+        assertEq(tl.MAX_DELAY(), 7 days);
+    }
+
     function test_updateDelayDirectCallReverts() public {
         vm.prank(admin);
         vm.expectRevert();

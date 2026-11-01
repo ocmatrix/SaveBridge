@@ -21,7 +21,7 @@
 ## 2. 实现说明（按规格条目）
 
 ### 2.1 BridgeTimelock（§4.2）
-1. `MIN_DELAY = 48h`（immutable）。OZ 把 `_minDelay` 设为 private、`updateDelay` 为 external，无法 `super` 调用，所以延迟值存在本合约 `_delay` 并覆盖 `getMinDelay()`；`updateDelay` 只能由时间锁自身调用且 `>= MIN_DELAY`。
+1. `MIN_DELAY = 48h`（immutable）。OZ 把 `_minDelay` 设为 private、`updateDelay` 为 external，无法 `super` 调用，所以延迟值存在本合约 `_delay` 并覆盖 `getMinDelay()`；`updateDelay` 只能由时间锁自身调用，新延迟必须在 `[MIN_DELAY, MAX_DELAY] = [48h, 7d]`（B2：防止填错超大延迟永久冻结治理）。
 2. `admin = address(0)`。构造函数：提议人 = 管理钱包（同时持 `CANCELLER_ROLE`），执行人 = `address(0)`（任何人），桥地址 `bridge` 为 immutable。**构造期间不调用桥**（桥还没部署），互斥检查由桥的 `initialize` 做一次。
 3. 提议人恰好一个：`_grantRole/_revokeRole` 在构造之后一律 `RoleChangeForbidden`（判断依据 `address(this).code.length == 0` 即构造期，或内部迁移标志），**包括经时间锁提议的 grantRole/revokeRole**；`renounceRole` 一律拒绝。换管理钱包时 `PROPOSER_ROLE` 与 `CANCELLER_ROLE` 一起迁移。
 4. `cancel`：OZ 的 `cancel` 带 `onlyRole(CANCELLER_ROLE)` 且 `_timestamps` 为 private，无法重写函数体。最小改法：覆盖 `_checkRole(role, account)`，当 `role == CANCELLER_ROLE` 时只判断 `account == adminWallet()` 或 `account == IBridge(bridge).whitelistManager()`（运行时读取），否则 `NotCanceller(account)`；角色成员资格对取消不起作用。
@@ -163,7 +163,7 @@
 | `WL_RECOVERY_DELAY` / 时间锁 `ADMIN_RECOVERY_DELAY` | 7 d / 14 d |
 | `RECOVERY_COOLDOWN`（两处） | 3 d |
 | `REFUND_DELAY` | 24 h（订单退款与入账退款共用） |
-| 时间锁 `MIN_DELAY` / `EXPIRY_PERIOD` / `PENDING_ADMIN_TTL` | 48 h / 14 d / 7 d |
+| 时间锁 `MIN_DELAY` / `MAX_DELAY` / `EXPIRY_PERIOD` / `PENDING_ADMIN_TTL` | 48 h / 7 d / 14 d / 7 d |
 | `MAX_LEGACY_BATCH`（BSC） | 100 |
 
 ### 5.2 eventKey 编码（精确）
@@ -309,13 +309,13 @@ struct InitArgs { address timelock; address token; address whitelistManager; add
 | `acceptAdmin()` | `pendingAdmin`（7 天内）或恢复候选人（满 14 天） |
 | `startAdminRecovery(address candidate)` | `bridge.whitelistManager()` |
 | `cancelAdminRecovery()` | 管理钱包或 `bridge.whitelistManager()` |
-| `updateDelay(uint256)` | 仅时间锁自身；`≥ 48h` |
+| `updateDelay(uint256)` | 仅时间锁自身；48h ≤ 新延迟 ≤ 7d（`DelayBelowMinimum` / `DelayAboveMaximum`） |
 
 视图：`adminWallet()`、`bridge()`、`pendingAdmin()`、`pendingAdminExpiresAt()`、`epoch()`、`proposalEpoch(bytes32)`、`isOperationExpired(bytes32)`、`adminRecoveryActive()`、`adminRecoveryCandidate()`、`adminRecoveryReadyAt()`、`adminRecoveryCooldownUntil()`、`MIN_DELAY()`、`getMinDelay()`，以及 OZ 的 `hashOperation`、`hashOperationBatch`、`getTimestamp`、`getOperationState`、`isOperation*`。
 
 事件（自定义）：`AdminTransferStarted(address indexed currentAdmin, address indexed newAdmin, uint256 expiresAt)`、`AdminTransferred(address indexed previousAdmin, address indexed newAdmin, uint256 epoch, bool viaRecovery)`、`AdminRecoveryStarted(address indexed initiator, address indexed candidate, uint256 readyAt)`、`AdminRecoveryCancelled(address indexed by, address indexed candidate, uint256 cooldownUntil)`、`ProposalRecorded(bytes32 indexed id, uint256 epoch)`；以及 OZ 的 `CallScheduled`、`CallSalt`、`CallExecuted`、`Cancelled`、`MinDelayChange`、`RoleGranted`、`RoleRevoked`。
 
-错误：`ZeroAddress()`、`RoleChangeForbidden()`、`DelayBelowMinimum(uint256 requested, uint256 minimum)`、`NotCanceller(address caller)`、`OperationExpired(bytes32 id)`、`OperationStaleEpoch(bytes32 id)`、`RecoveryInProgress()`、`BridgePaused()`、`InvalidNewAdmin(address)`、`KeyConflict(address)`、`NotPendingAdmin(address caller)`、`PendingAdminExpired()`、`NotWhitelistManager(address caller)`、`RecoveryCooldown(uint256 until)`、`NoRecovery()`、`RecoveryNotReady(uint256 readyAt)`，以及 OZ `Timelock*`。
+错误：`ZeroAddress()`、`RoleChangeForbidden()`、`DelayBelowMinimum(uint256 requested, uint256 minimum)`、`DelayAboveMaximum(uint256 requested, uint256 maximum)`、`NotCanceller(address caller)`、`OperationExpired(bytes32 id)`、`OperationStaleEpoch(bytes32 id)`、`RecoveryInProgress()`、`BridgePaused()`、`InvalidNewAdmin(address)`、`KeyConflict(address)`、`NotPendingAdmin(address caller)`、`PendingAdminExpired()`、`NotWhitelistManager(address caller)`、`RecoveryCooldown(uint256 until)`、`NoRecovery()`、`RecoveryNotReady(uint256 readyAt)`，以及 OZ `Timelock*`。
 
 ### 5.10 事件（桥，监控 PR-7 / 付款程序 PR-3 用）
 
