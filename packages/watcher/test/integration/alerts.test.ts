@@ -6,6 +6,7 @@ import { encodeFunctionData, keccak256, toHex, type Hex } from "viem";
 import { bridgeTimelockAbi, bscVaultV2Abi, wantosBridgeV2Abi } from "@bridge/abi";
 import { ACCOUNTS, BSC_PARAMS, E, WANTOS_PARAMS, deployImpl, startHarness, whitelist, type Harness } from "../helpers/harness.js";
 import { makeWatcher } from "../helpers/watcher.js";
+import { MemoryAlertSink } from "../../src/alerts.js";
 
 const RELAYER_ROLE = keccak256(toHex("RELAYER_ROLE"));
 const ZERO32 = `0x${"00".repeat(32)}` as Hex;
@@ -232,6 +233,23 @@ describe("§9.3 alert drills", () => {
     t.clock.now += 3600;
     await t.w.tick();
     expect(levelOf(t, "CLOCK_SKEW")).toBe(2);
+  });
+
+  it("A-3 / R12: a phone channel that was down gets the alert on the next tick (only that channel is retried)", async () => {
+    const phone = new MemoryAlertSink();
+    let down = 1;
+    const flaky = { send: async (a: Parameters<MemoryAlertSink["send"]>[0]) => (down-- > 0 ? Promise.reject(new Error("phone down")) : phone.send(a)) };
+    const t = await makeWatcher(H, { extraChannels: [flaky] });
+    await H.bsc.write(ACCOUNTS.admin, "revokeKey", [RELAYER_ROLE, ACCOUNTS.relayer.address]);
+    await H.settle();
+    await t.w.tick();
+    expect(phone.alerts.filter((a) => a.code === "KEY_CHANGE")).toHaveLength(0);
+    const logged = t.sink.alerts.filter((a) => a.code === "KEY_CHANGE").length;
+    expect(logged).toBe(1);
+    await t.w.tick(); // nothing new happens; the outbox is flushed
+    expect(phone.alerts.filter((a) => a.code === "KEY_CHANGE").length + phone.alerts.filter((a) => a.code === "ALERT_BACKLOG").length).toBeGreaterThan(0);
+    expect(t.sink.alerts.filter((a) => a.code === "KEY_CHANGE")).toHaveLength(logged); // healthy channel not repeated
+    expect(t.w.state.meta.outbox).toHaveLength(0);
   });
 
   it("level-1 alerts repeat after 24h until acknowledged", async () => {

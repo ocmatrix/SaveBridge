@@ -24,7 +24,8 @@ export interface WatcherDeps {
   config: WatcherConfig;
   rpc: Record<ChainName, MultiRpc>;
   store: StateStore;
-  sink: AlertSink;
+  /** One or more independent alert channels (e.g. log + IM + phone). */
+  sink: AlertSink | AlertSink[];
   pauser: PauseExecutor;
   heartbeat: Heartbeat;
   clock: Clock;

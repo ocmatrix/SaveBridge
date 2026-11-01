@@ -1,5 +1,5 @@
 import { createPublicClient, custom, http, type EIP1193RequestFn, type Hex, type PublicClient } from "viem";
-import { MemoryAlertSink } from "../../src/alerts.js";
+import { MemoryAlertSink, type AlertSink } from "../../src/alerts.js";
 import type { WatcherConfig, ControlledEntry } from "../../src/config.js";
 import { MemoryHeartbeat, type RelayerProbe } from "../../src/heartbeat.js";
 import { PauseExecutor, PauseOnlySigner, type RawTxSender } from "../../src/pauser.js";
@@ -68,6 +68,8 @@ export interface WOpts {
   relayerProbe?: RelayerProbe;
   /** Wrap the PAUSER transport (e.g. simulate a lying RPC on the send path). */
   wrapSender?: (inner: RawTxSender) => RawTxSender;
+  /** Additional alert channels after the in-memory one (e.g. a flaky "phone" channel). */
+  extraChannels?: AlertSink[];
 }
 
 export interface TW {
@@ -146,7 +148,7 @@ export async function makeWatcher(H: Harness, o: WOpts = {}): Promise<TW> {
     config: cfg,
     rpc,
     store: o.store ?? new MemoryStateStore(),
-    sink,
+    sink: [sink, ...(o.extraChannels ?? [])],
     pauser,
     heartbeat: hb,
     clock: () => clock.now,

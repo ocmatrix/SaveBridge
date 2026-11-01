@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { encodeFunctionData, type Address } from "viem";
 import { bscVaultV2Abi } from "@bridge/abi";
-import { MemoryAlertSink, MultiAlertSink } from "../../src/alerts.js";
 import { parseConfig } from "../../src/config.js";
 import { describeCall } from "../../src/events.js";
 import { buildRpc, startupGuard } from "../../src/wiring.js";
@@ -16,14 +15,6 @@ describe("misc", () => {
     expect(() => startupGuard({ args: [], signerWired: false })).toThrow(/PAUSER signer/);
     expect(startupGuard({ args: ["--dry-run"], signerWired: false })).toEqual({ dryRun: true });
     expect(startupGuard({ args: [], signerWired: true })).toEqual({ dryRun: false });
-  });
-
-  it("multi sink: one failing sink does not block the others; all failing throws", async () => {
-    const ok = new MemoryAlertSink();
-    const bad = { send: async () => Promise.reject(new Error("x")) };
-    await new MultiAlertSink([bad, ok]).send({ level: 2, code: "PAUSED", title: "t", detail: {}, at: 1 });
-    expect(ok.alerts).toHaveLength(1);
-    await expect(new MultiAlertSink([bad]).send({ level: 2, code: "PAUSED", title: "t", detail: {}, at: 1 })).rejects.toThrow(/all alert sinks/);
   });
 
   it("describeCall decodes bridge calls and falls back to the selector for unknown targets / data", () => {

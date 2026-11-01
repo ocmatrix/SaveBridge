@@ -129,6 +129,83 @@ describe("alerts", () => {
     expect(state.meta.openLevel1["kq"]).toBeDefined();
   });
 
+  describe("A-3: per-channel outbox (log channel ok, phone channel down)", () => {
+    class Flaky extends MemoryAlertSink {
+      down = 0;
+      override async send(a: Parameters<MemoryAlertSink["send"]>[0]): Promise<void> {
+        if (this.down > 0) {
+          this.down--;
+          throw new Error("phone gateway down");
+        }
+        return super.send(a);
+      }
+    }
+    const mk2 = () => {
+      const state = initialState();
+      const log = new MemoryAlertSink();
+      const phone = new Flaky();
+      let now = 1_000_000;
+      const am = new AlertManager([log, phone], () => state.meta, () => now);
+      return { state, log, phone, am, setNow: (t: number) => (now = t) };
+    };
+
+    it("only the failed channel is queued and retried; level-1 repeats are registered once every channel delivered", async () => {
+      const { state, log, phone, am } = mk2();
+      phone.down = 1;
+      await am.raise("AUTO_PAUSE", { title: "x", key: "k" });
+      expect(log.alerts).toHaveLength(1);
+      expect(phone.alerts).toHaveLength(0);
+      expect(state.meta.outbox.map((e) => e.channel)).toEqual([1]);
+      expect(state.meta.openLevel1["k"]).toBeUndefined();
+      await am.flushOutbox();
+      expect(log.alerts).toHaveLength(1); // not re-sent to the healthy channel
+      expect(phone.alerts.map((a) => a.code)).toEqual(["AUTO_PAUSE"]);
+      expect(state.meta.outbox).toHaveLength(0);
+      expect(state.meta.openLevel1["k"]).toBeDefined();
+    });
+
+    it("R33: a failed re-send keeps the item queued", async () => {
+      const { state, phone, am } = mk2();
+      phone.down = 2;
+      await am.raise("AUTO_PAUSE", { title: "x", key: "k" });
+      await am.flushOutbox();
+      expect(state.meta.outbox).toHaveLength(1);
+      await am.flushOutbox();
+      expect(phone.alerts).toHaveLength(1);
+    });
+
+    it("R32: a 24h repeat that fails on the phone channel is queued, not lost", async () => {
+      const { state, phone, am, setNow } = mk2();
+      await am.raise("AUTO_PAUSE", { title: "x", key: "k" });
+      phone.down = 1;
+      setNow(1_000_000 + 86_400);
+      await am.repeatDue();
+      expect(state.meta.outbox).toHaveLength(1);
+      await am.flushOutbox();
+      expect(phone.alerts.filter((a) => a.repeat)).toHaveLength(1);
+    });
+
+    it("B3: a backlog is re-sent as ONE summary per channel (no call storm) and the queue is capped", async () => {
+      const { state, log, phone, am } = mk2();
+      phone.down = 1000;
+      for (let i = 0; i < 6; i++) await am.raise("AUTO_PAUSE", { title: `x${i}`, key: `k${i}` });
+      await am.raise("PAUSED", { title: "p" });
+      expect(state.meta.outbox).toHaveLength(7);
+      phone.down = 0;
+      await am.flushOutbox();
+      expect(phone.alerts).toHaveLength(1);
+      expect(phone.alerts[0]!.code).toBe("ALERT_BACKLOG");
+      expect(phone.alerts[0]!.level).toBe(1);
+      expect((phone.alerts[0]!.detail["items"] as unknown[]).length).toBe(7);
+      expect(log.alerts).toHaveLength(7);
+      expect(Object.keys(state.meta.openLevel1)).toHaveLength(6);
+      phone.down = 100_000;
+      for (let i = 0; i < 600; i++) await am.raise("PAUSED", { title: "flood" });
+      expect(state.meta.outbox.length).toBeLessThanOrEqual(500);
+      expect(state.meta.outboxDropped["1"]).toBeGreaterThan(0);
+    });
+  });
+
   it("level-2 alerts are not repeated; keyless alerts always send", async () => {
     const { sink, am, setNow } = mk();
     await am.raise("PAUSED", { title: "p" });

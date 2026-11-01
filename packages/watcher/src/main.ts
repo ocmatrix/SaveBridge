@@ -8,7 +8,7 @@
  */
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { LogAlertSink, MultiAlertSink } from "./alerts.js";
+import { LogAlertSink } from "./alerts.js";
 import { parseConfig, parseControlledSet } from "./config.js";
 import type { Heartbeat } from "./heartbeat.js";
 import { PauseExecutor, PauseOnlySigner, type RawTxSender } from "./pauser.js";
@@ -42,7 +42,7 @@ const watcher = new Watcher({
   config: cfg,
   rpc,
   store: new FileStateStore(join(dataDir, "state.json")),
-  sink: new MultiAlertSink([new LogAlertSink((l) => process.stdout.write(`${l}\n`)), new LogAlertSink((l) => appendFileSync(join(dataDir, "alerts.jsonl"), `${l}\n`))]),
+  sink: [new LogAlertSink((l) => process.stdout.write(`${l}\n`)), new LogAlertSink((l) => appendFileSync(join(dataDir, "alerts.jsonl"), `${l}\n`))],
   pauser: new PauseExecutor(
     { bsc: new PauseOnlySigner(unwired, [cfg.chains.bsc.bridge]), wantos: new PauseOnlySigner(unwired, [cfg.chains.wantos.bridge]) },
     { bsc: multiRpcPauseReader(rpc.bsc, cfg.chains.bsc.bridge), wantos: multiRpcPauseReader(rpc.wantos, cfg.chains.wantos.bridge) },

@@ -125,8 +125,12 @@ export interface MetaState {
   controlledSetHash: string | null;
   controlledSet: string[];
   snapshots: Array<{ wantosCursor: Cursor | null; derived: DerivedState; takenAt?: number }>;
-  /** Alerts whose delivery failed; retried every tick (B2). */
-  outbox: Alert[];
+  /** (alert, channel) pairs whose delivery failed; retried per channel every tick (B2 / A-3). */
+  outbox: Array<{ id: string; channel: number; alert: Alert }>;
+  /** Per channel: items dropped because the outbox hit its cap (B3). */
+  outboxDropped: Record<string, number>;
+  /** Level-1 alerts not yet delivered on every channel (registered for 24h repeats once they are). */
+  pendingLevel1: Record<string, Alert>;
 }
 
 export interface State {
