@@ -5,6 +5,8 @@ import type { Hex } from "viem";
  * chain until a receipt is read from the chain. Only the lock is persisted (sessionStorage, survives reload):
  * an outcome such as "confirmed" is never stored or restored — it can only come from a receipt. A forged
  * entry can only keep a button disabled longer; it cannot bypass the duplicate-submission guard.
+ * sessionStorage is per tab: the lock protects this tab and its reloads only (defence in depth, not a spec
+ * requirement); closing the tab resets it.
  */
 export interface PendingTx {
   account: string;
@@ -12,8 +14,6 @@ export interface PendingTx {
   action: "w2b" | "b2w";
   hash: Hex;
   kind: "approve" | "send";
-  /** Nonce of the transaction if it could be read when confirmation failed (replacement detection). */
-  nonce: number | null;
 }
 
 export type PendingMap = Record<string, PendingTx>;
@@ -35,8 +35,7 @@ function valid(v: unknown): PendingTx | null {
   if (o.action !== "w2b" && o.action !== "b2w") return null;
   if (typeof o.hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(o.hash)) return null;
   if (o.kind !== "approve" && o.kind !== "send") return null;
-  const nonce = typeof o.nonce === "number" && Number.isSafeInteger(o.nonce) && o.nonce >= 0 ? o.nonce : null;
-  return { account: o.account, chainId: o.chainId, action: o.action, hash: o.hash as Hex, kind: o.kind, nonce };
+  return { account: o.account, chainId: o.chainId, action: o.action, hash: o.hash as Hex, kind: o.kind };
 }
 
 export function loadPending(s: StorageLike | null): PendingMap {

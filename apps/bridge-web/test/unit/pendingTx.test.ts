@@ -12,7 +12,7 @@ class Mem {
 }
 const A = "0x5555555555555555555555555555555555555555";
 const H = `0x${"ab".repeat(32)}` as const;
-const p: PendingTx = { account: A, chainId: 13555, action: "w2b", hash: H, kind: "approve", nonce: 7 };
+const p: PendingTx = { account: A, chainId: 13555, action: "w2b", hash: H, kind: "approve" };
 
 describe("pending-transaction locks (round-2 A1)", () => {
   it("key is account (case-insensitive) + chain + action", () => {
@@ -40,7 +40,7 @@ describe("pending-transaction locks (round-2 A1)", () => {
     // entries are re-keyed from their own fields; extra fields dropped
     expect(Object.values(got)).toEqual([p]); // 'good' and 'extra' normalise to the same lock
     for (const v of Object.values(got)) {
-      expect(Object.keys(v).sort()).toEqual(["account", "action", "chainId", "hash", "kind", "nonce"]);
+      expect(Object.keys(v).sort()).toEqual(["account", "action", "chainId", "hash", "kind"]);
     }
     expect(JSON.stringify(got)).not.toMatch(/confirmed|success/);
   });

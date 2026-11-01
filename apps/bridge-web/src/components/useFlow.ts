@@ -30,8 +30,6 @@ export function useFlow(chainId: number, decimals: number, action: "w2b" | "b2w"
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  /** B1: the hash is unknown to the node and its nonce has been used by another tx → offer a confirmed manual unlock. */
-  const [replaced, setReplaced] = useState(false);
 
   const onStep: StepFn = (s, h) => {
     setStep(s);
@@ -52,7 +50,7 @@ export function useFlow(chainId: number, decimals: number, action: "w2b" | "b2w"
     } catch (e) {
       if ((e as { name?: string }).name === "UnconfirmedTxError") {
         const u = e as UnconfirmedTxError;
-        store.set({ account, chainId, action, hash: u.hash, kind: u.kind, nonce: u.nonce });
+        store.set({ account, chainId, action, hash: u.hash, kind: u.kind });
       } else setError(describeError(translateError(e, { decimals }), lang));
       return null;
     } finally {
@@ -63,11 +61,13 @@ export function useFlow(chainId: number, decimals: number, action: "w2b" | "b2w"
     }
   }
 
-  /** The only way to release a lock: a receipt read from the chain. */
+  /**
+   * The only way to release a lock from the page: a receipt read from the chain (success → per-kind message;
+   * reverted → may resubmit). No receipt → stay locked. The other release is the end of the tab session.
+   */
   async function recheck() {
     if (!pending || !key) return;
     setNote(null);
-    setReplaced(false);
     setDone(null);
     setError(null);
     const pc = clientFor(cfg, clients, chainId);
@@ -78,25 +78,11 @@ export function useFlow(chainId: number, decimals: number, action: "w2b" | "b2w"
       else setDone(t(pending.kind === "approve" ? "pending.approveConfirmed" : "pending.confirmed"));
       await queryClient.invalidateQueries();
     } catch {
-      // no receipt: still in the mempool, or replaced (sped up / cancelled) / dropped?
-      const inPool = await pc.getTransaction({ hash: pending.hash }).then(() => true, () => false);
-      const used =
-        !inPool && pending.nonce !== null
-          ? await pc.getTransactionCount({ address: pending.account as Address, blockTag: "latest" }).then((n) => n > pending.nonce!, () => false)
-          : false;
-      if (used) setReplaced(true);
-      else setNote(t("pending.notYet"));
+      setNote(t("pending.notYet")); // still locked
     }
   }
 
-  /** Manual release after the user confirmed twice (B1); only offered when `replaced`. */
-  function unlock() {
-    if (!key || !replaced) return;
-    store.clear(key);
-    setReplaced(false);
-  }
-
-  return { step, hash, busy, error, done, pending: pending?.hash ?? null, note, replaced, run, recheck, unlock };
+  return { step, hash, busy, error, done, pending: pending?.hash ?? null, note, run, recheck };
 }
 
 export type Flow = ReturnType<typeof useFlow>;

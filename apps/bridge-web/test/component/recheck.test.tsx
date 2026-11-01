@@ -40,7 +40,7 @@ describe("re-check outcomes (A2)", () => {
     expect((await env.wantos.anvil.pc.waitForTransactionReceipt({ hash })).status).toBe("reverted");
     await whitelist(env, env.wantos, [KEYS.alice.address]);
     await whitelist(env, env.bsc, [KEYS.alice.address]);
-    seed({ account: KEYS.alice.address, chainId: 13555, action: "w2b", hash, kind: "send", nonce: null });
+    seed({ account: KEYS.alice.address, chainId: 13555, action: "w2b", hash, kind: "send" });
 
     renderApp(env.cfg, KEYS.alice.address);
     const user = await connect();
@@ -60,14 +60,15 @@ describe("re-check outcomes (A2)", () => {
     await whitelist(env, env.wantos, [KEYS.alice.address]);
     await whitelist(env, env.bsc, [KEYS.alice.address]);
     const hash = `0x${"cd".repeat(32)}` as Hex; // never broadcast on this chain
-    seed({ account: KEYS.alice.address, chainId: 13555, action: "w2b", hash, kind: "send", nonce: null });
+    seed({ account: KEYS.alice.address, chainId: 13555, action: "w2b", hash, kind: "send" });
     renderApp(env.cfg, KEYS.alice.address);
     const user = await connect();
     const w2b = panel("WANTOS → BSC");
     await screen.findByText(/本地址今日可跨出/, {}, T);
     await typeAmount(user, w2b, "100");
     await user.click(within(w2b).getByRole("button", { name: "重新检查" }));
-    await within(w2b).findByText("还没有查到这笔交易的结果，请稍后再检查", {}, T);
+    await within(w2b).findByText("还没有查到这笔交易的结果。如果长时间没有结果，请到区块浏览器核对该哈希；关闭此标签页会重置本页的防重复锁，重置前请务必先核对。", {}, T);
+    expect(within(w2b).queryByRole("button", { name: /解除/ })).toBeNull(); // no non-receipt unlock path
     expect(within(w2b).getByText(new RegExp(hash))).toBeInTheDocument();
     expect(within(w2b).getByRole("button", { name: "跨出" })).toBeDisabled();
   });

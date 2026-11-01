@@ -48,7 +48,6 @@ export class UnconfirmedTxError extends Error {
     override readonly cause: unknown,
     /** "approve" = the allowance tx (the bridge tx was NOT sent); "send" = bridgeOut / deposit. */
     readonly kind: "approve" | "send" = "send",
-    readonly nonce: number | null = null,
   ) {
     super(`transaction ${hash} sent but not confirmed`);
     this.name = "UnconfirmedTxError";
@@ -121,9 +120,7 @@ async function confirm(ctx: TxContext, chainId: number, hash: Hex, kind: "approv
   try {
     r = await pc.waitForTransactionReceipt({ hash });
   } catch (e) {
-    // best effort: remember the nonce so a later re-check can tell "replaced / dropped" from "still pending"
-    const nonce = await pc.getTransaction({ hash }).then((tx) => tx.nonce, () => null);
-    throw new UnconfirmedTxError(hash, chainId, e, kind, nonce);
+    throw new UnconfirmedTxError(hash, chainId, e, kind);
   }
   if (r.status !== "success") throw new TxRevertedError(hash);
   return r;
