@@ -219,6 +219,42 @@ describe("TxSender (DESIGN §6.4) against local anvil", () => {
     expect(alerts.byKind("NONCE_MISMATCH")).toHaveLength(1);
   });
 
+  it("B2: simulation failing without revert data (RPC trouble) is NOT classified: rpc-error, nothing stored, alerted", async () => {
+    let fail = true;
+    const client = new Proxy(a.publicClient as any, {
+      get(t, p) {
+        if (p === "call" && fail) return async () => { throw new Error("fetch failed: ECONNRESET"); };
+        return t[p];
+      },
+    });
+    const s = mk({ client });
+    await s.recover();
+    expect(await s.send(mintCall())).toMatchObject({ kind: "rpc-error" });
+    expect(await attempts()).toHaveLength(0);
+    expect(alerts.byKind("RPC_UNAVAILABLE")).toHaveLength(1);
+    fail = false;
+    expect(await s.send(mintCall())).toMatchObject({ kind: "sent", nonce: 0 });
+  });
+
+  it("B2: a receipt read error is not 'not found': tick throws, the attempt is not dropped", async () => {
+    let fail = false;
+    const client = new Proxy(a.publicClient as any, {
+      get(t, p) {
+        if (p === "getTransactionReceipt" && fail) return async () => { throw new Error("upstream 502"); };
+        return t[p];
+      },
+    });
+    const s = mk({ client });
+    await s.recover();
+    await s.send(mintCall()); // automine: already mined
+    fail = true;
+    await expect(s.tick()).rejects.toThrow(/502/);
+    expect((await attempts())[0]!.state).toBe("broadcast");
+    expect(alerts.byKind("NONCE_MISMATCH")).toHaveLength(0);
+    fail = false;
+    expect((await s.tick()).resolved?.success).toBe(true);
+  });
+
   it("KmsSigner placeholder refuses to sign (production impl is TODO)", async () => {
     const k = new KmsSigner({ keyId: "placeholder", address: signer.address });
     await expect(k.signTransaction({} as any)).rejects.toThrow(/not implemented/);

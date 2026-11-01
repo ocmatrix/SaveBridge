@@ -6,6 +6,7 @@ import type { TxSigner } from "../signer";
 import type { Address, Hex } from "../types";
 import { fromBytes, toBig, toBytes } from "../bytes";
 import { decodeRevert, type RevertInfo } from "./revert";
+import { errText } from "../redact";
 
 export interface SenderConfig {
   /** Same-nonce fee bump replacement. PR-0 ⑥ not yet verified on WANTOS → configurable, default on. */
@@ -28,6 +29,8 @@ export type SendResult =
   | { kind: "busy" }
   | { kind: "blocked" }
   | { kind: "sim-revert"; revert: RevertInfo }
+  /** Simulation failed WITHOUT revert data (transport / node trouble): nothing classified, retried later. */
+  | { kind: "rpc-error"; message: string }
   | { kind: "signer-error"; message: string }
   | { kind: "broadcast-error"; txHash: Hex; nonce: number; message: string };
 
@@ -157,7 +160,10 @@ export class TxSender {
       let rc;
       try {
         rc = await this.o.client.getTransactionReceipt({ hash: h });
-      } catch {
+      } catch (e) {
+        // Only a definite "not found" means not mined; any other read error aborts this tick (Gate2 B2),
+        // so a flaky RPC can never make us conclude "dropped".
+        if ((e as { name?: string }).name !== "TransactionReceiptNotFoundError") throw e;
         rc = null;
       }
       if (rc) {
@@ -270,7 +276,15 @@ export class TxSender {
       await this.o.client.call({ account: this.address, to: req.to, data: req.data });
       gas = req.gas ?? ((await this.o.client.estimateGas({ account: this.address, to: req.to, data: req.data })) * 12n) / 10n;
     } catch (e) {
-      return { kind: "sim-revert", revert: decodeRevert(e) };
+      const revert = decodeRevert(e);
+      if (revert.errorName || revert.raw) return { kind: "sim-revert", revert };
+      // No revert data: RPC/transport trouble (or an empty revert) — never classify it (Gate2 B2).
+      await this.o.alerts.emit({
+        kind: "RPC_UNAVAILABLE",
+        key: `${this.o.chainId}:simulate`,
+        message: `chain ${this.o.chainId}: simulation failed without revert data: ${errText(e)}`,
+      });
+      return { kind: "rpc-error", message: errText(e) };
     }
     const gasPrice = await this.o.client.getGasPrice();
     const raw = await this.sign({ type: "legacy", chainId: this.o.chainId, nonce, to: req.to, data: req.data, gas, gasPrice, value: 0n });

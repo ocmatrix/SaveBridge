@@ -202,4 +202,29 @@ describe("Gate2 r1: source-order hard preconditions, approvals, bump race", () =
     expect((await new OrderRepo(sys.db).get(wKey(2n)))!.status).toBe("REJECTED");
     expect(sys.alerts.byKind("PAYOUT_ALREADY_RELEASED").length).toBeGreaterThanOrEqual(2);
   });
+
+  it("B2: an RPC hiccup during simulation leaves the order where it was (not FAILED) and it proceeds later", async () => {
+    let fail = true;
+    const sys0 = await buildRelayer(world);
+    const bc = new Proxy(world.bsc.publicClient as any, {
+      get(t, p) {
+        if (p === "call" && fail) {
+          return async (args: { account?: unknown }) => {
+            if (args.account) throw new Error("socket hang up");
+            return t.call(args);
+          };
+        }
+        return t[p];
+      },
+    });
+    const sys = await buildRelayer(world, { db: sys0.db, bsc: { ...sys0.relayer.deps.bsc, client: bc } });
+    await bridgeOut(world, world.act.user, 100n * U);
+    await confirmWantos(world);
+    await sys.relayer.tick();
+    expect((await new OrderRepo(sys.db).get(wKey(1n)))!.status).toBe("DETECTED");
+    expect(sys.alerts.byKind("RPC_UNAVAILABLE").length).toBeGreaterThan(0);
+    fail = false;
+    await sys.relayer.tick();
+    expect((await new OrderRepo(sys.db).get(wKey(1n)))!.status).toBe("SUBMITTED");
+  });
 });
