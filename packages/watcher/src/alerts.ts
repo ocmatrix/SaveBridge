@@ -87,40 +87,6 @@ export class MultiAlertSink implements AlertSink {
   }
 }
 
-export interface DraftHttpRequest {
-  method: "POST";
-  url: string;
-  headers: Record<string, string>;
-  body: string;
-}
-
-/**
- * DRAFT ONLY. Builds the Telegram Bot API request body for an alert; it never performs a
- * network call (TRAIN.md / PR-7 boundary: no real Telegram/SMS/phone integration in this PR).
- * The token is referenced by name (`botTokenRef`), never embedded.
- */
-export class TelegramDraftAdapter implements AlertSink {
-  constructor(private readonly opts: { botTokenRef: string; chatId: string }) {}
-
-  buildRequest(alert: Alert): DraftHttpRequest {
-    const prefix = alert.level === 1 ? "🔴 一级" : alert.level === 2 ? "🟠 二级" : "⚪ 三级";
-    return {
-      method: "POST",
-      url: "https://api.telegram.org/bot<bot-token>/sendMessage",
-      headers: { "content-type": "application/json", "x-token-ref": this.opts.botTokenRef },
-      body: jsonSafe({
-        chat_id: this.opts.chatId,
-        text: `${prefix} [${alert.code}] ${alert.title}\n${jsonSafe(alert.detail)}`,
-        disable_notification: alert.level === 3,
-      }),
-    };
-  }
-
-  async send(_alert: Alert): Promise<void> {
-    throw new Error("TelegramDraftAdapter is a draft: sending is not wired in PR-7");
-  }
-}
-
 const DAY = 86_400;
 const REPEAT_LEVEL1_AFTER = DAY;
 

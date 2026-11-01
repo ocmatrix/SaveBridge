@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { AlertManager, ALERT_LEVELS, LogAlertSink, MemoryAlertSink, TelegramDraftAdapter } from "../../src/alerts.js";
+import { AlertManager, ALERT_LEVELS, LogAlertSink, MemoryAlertSink } from "../../src/alerts.js";
 import { FileStateStore, MemoryStateStore, initialState } from "../../src/state.js";
 
 describe("state store", () => {
@@ -31,6 +31,20 @@ describe("state store", () => {
     await st.save(s);
     const back = await new FileStateStore(path).load();
     expect(back.meta.openLevel1["k"]!.alert.detail).toEqual({ args: { amount: "5" } });
+  });
+
+  it("B8: file store keeps the previous version as .bak and falls back to it if the main file is corrupt", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "watcher-state-"));
+    const path = join(dir, "state.json");
+    const st = new FileStateStore(path);
+    const s = await st.load();
+    s.derived.mintTotal = "1";
+    await st.save(s);
+    s.derived.mintTotal = "2";
+    await st.save(s);
+    expect(JSON.parse(readFileSync(`${path}.bak`, "utf8")).derived.mintTotal).toBe("1");
+    writeFileSync(path, "{ torn write");
+    expect((await new FileStateStore(path).load()).derived.mintTotal).toBe("1");
   });
 
   it("file store refuses a state file of an unknown version", async () => {
@@ -144,16 +158,10 @@ describe("alerts", () => {
     expect(state.meta.daily.day).toBe(day0 + 1);
   });
 
-  it("log sink writes JSON lines; Telegram draft adapter only builds a request and never sends", async () => {
+  it("log sink writes JSON lines (bigint-safe)", async () => {
     const lines: string[] = [];
     const log = new LogAlertSink((l) => lines.push(l));
     await log.send({ level: 2, code: "PAUSED", title: "t", detail: { n: 1n }, at: 1 });
     expect(JSON.parse(lines[0]!)).toMatchObject({ level: 2, code: "PAUSED", detail: { n: "1" } });
-    const tg = new TelegramDraftAdapter({ botTokenRef: "env:TG_TOKEN", chatId: "<owner-chat-id>" });
-    const req = tg.buildRequest({ level: 1, code: "AUTO_PAUSE", title: "暂停 BSC", detail: {}, at: 1 });
-    expect(req.method).toBe("POST");
-    expect(req.url).toContain("<bot-token>");
-    expect(JSON.parse(req.body)).toMatchObject({ chat_id: "<owner-chat-id>" });
-    await expect(tg.send({ level: 1, code: "AUTO_PAUSE", title: "x", detail: {}, at: 1 })).rejects.toThrow(/draft/);
   });
 });

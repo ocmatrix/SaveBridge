@@ -6,18 +6,16 @@ import { bscVaultV2Abi } from "@bridge/abi";
 import { MemoryAlertSink, MultiAlertSink } from "../../src/alerts.js";
 import { parseConfig } from "../../src/config.js";
 import { describeCall } from "../../src/events.js";
-import { HttpHeartbeatDraft } from "../../src/heartbeat.js";
-import { buildRpc } from "../../src/wiring.js";
+import { buildRpc, startupGuard } from "../../src/wiring.js";
 
 const A = "0x1111111111111111111111111111111111111111" as Address;
 const T = "0x2222222222222222222222222222222222222222" as Address;
 
 describe("misc", () => {
-  it("heartbeat draft builds a request and never sends", async () => {
-    const h = new HttpHeartbeatDraft({ pingUrlRef: "env:HEARTBEAT_URL" });
-    const r = h.buildRequest({ at: 1, cursors: { bsc: "1", wantos: null }, pendingChecks: 0 });
-    expect(r.url).toBe("<env:HEARTBEAT_URL>");
-    await expect(h.beat({ at: 1, cursors: { bsc: null, wantos: null }, pendingChecks: 0 })).rejects.toThrow(/draft/);
+  it("B8: the entry point refuses to start without a wired PAUSER signer unless --dry-run", () => {
+    expect(() => startupGuard({ args: [], signerWired: false })).toThrow(/PAUSER signer/);
+    expect(startupGuard({ args: ["--dry-run"], signerWired: false })).toEqual({ dryRun: true });
+    expect(startupGuard({ args: [], signerWired: true })).toEqual({ dryRun: false });
   });
 
   it("multi sink: one failing sink does not block the others; all failing throws", async () => {

@@ -37,3 +37,13 @@ export function viemRawTxSender(wallet: WalletClient, account: Account): RawTxSe
     send: (tx) => wallet.sendTransaction({ account, chain: wallet.chain ?? null, to: tx.to, data: tx.data }),
   };
 }
+
+/**
+ * B8: the entry point must not run as a "monitor that cannot pause". Until a PAUSER signer adapter is
+ * wired (PR-10), only an explicit `--dry-run` may start it.
+ */
+export function startupGuard(o: { args: readonly string[]; signerWired: boolean }): { dryRun: boolean } {
+  const dryRun = o.args.includes("--dry-run");
+  if (!o.signerWired && !dryRun) throw new Error("PAUSER signer adapter not wired: refusing to start (pass --dry-run to run without the ability to pause)");
+  return { dryRun };
+}

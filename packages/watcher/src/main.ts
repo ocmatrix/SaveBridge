@@ -1,9 +1,10 @@
 /**
  * Server-B entry point (not exercised by tests; not run in PR-7).
- *   tsx src/main.ts --config ./config/watcher.json [--once]
+ *   tsx src/main.ts --config ./config/watcher.json --dry-run [--once]
  * The PAUSER signer, the alert channel and the heartbeat channel are deliberately NOT wired here:
  * PR-10 plugs in a KMS-backed `RawTxSender`, a real `AlertSink` and a real `Heartbeat`.
- * Until then pause attempts fail loudly (PAUSE_FAILED, level 1) and alerts go to stdout + alerts.jsonl.
+ * Until then it refuses to start unless `--dry-run` is given (startupGuard); in dry-run, pause attempts
+ * fail loudly (PAUSE_FAILED, level 1) and alerts go to stdout + alerts.jsonl.
  */
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -14,11 +15,12 @@ import { PauseExecutor, PauseOnlySigner, type RawTxSender } from "./pauser.js";
 import { redact } from "./redact.js";
 import { FileStateStore } from "./state.js";
 import { Watcher } from "./watcher.js";
-import { buildRpc, multiRpcPauseReader } from "./wiring.js";
+import { buildRpc, multiRpcPauseReader, startupGuard } from "./wiring.js";
 
 const args = process.argv.slice(2);
 const cfgPath = resolve(args[args.indexOf("--config") + 1] ?? "config/watcher.json");
 const once = args.includes("--once");
+startupGuard({ args, signerWired: false }); // PR-10: pass true once a KMS-backed RawTxSender is wired
 const cfg = parseConfig(JSON.parse(readFileSync(cfgPath, "utf8")));
 const dataDir = resolve(cfgPath, "..", cfg.dataDir);
 mkdirSync(dataDir, { recursive: true });

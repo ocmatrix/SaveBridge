@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 import type { ChainDerived, DerivedState, State } from "./types.js";
 
@@ -66,15 +66,30 @@ export class FileStateStore implements StateStore {
 
   async load(): Promise<State> {
     if (!existsSync(this.path)) return initialState();
-    const parsed = JSON.parse(readFileSync(this.path, "utf8")) as State;
+    let parsed: State;
+    try {
+      parsed = JSON.parse(readFileSync(this.path, "utf8")) as State;
+    } catch (e) {
+      // B8: a torn / corrupt main file → fall back to the previous good version
+      if (!existsSync(`${this.path}.bak`)) throw e;
+      parsed = JSON.parse(readFileSync(`${this.path}.bak`, "utf8")) as State;
+    }
     if (parsed.version !== 1) throw new Error(`unsupported state file version ${String(parsed.version)}`);
     return parsed;
   }
 
+  /** Write temp → fsync → keep the current file as `.bak` → atomic rename. */
   async save(state: State): Promise<void> {
     mkdirSync(dirname(this.path), { recursive: true });
     const tmp = `${this.path}.tmp`;
-    writeFileSync(tmp, toJson(state));
+    const fd = openSync(tmp, "w");
+    try {
+      writeSync(fd, toJson(state));
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    if (existsSync(this.path)) copyFileSync(this.path, `${this.path}.bak`);
     renameSync(tmp, this.path);
   }
 }
