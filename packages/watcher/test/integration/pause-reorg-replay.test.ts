@@ -130,6 +130,53 @@ describe("pause semantics, rollback, replay", () => {
     expect(t.codes().filter((c) => c === "WANTOS_REORG")).toHaveLength(1);
   });
 
+  it("B5: after a rollback, a W2B check already decided 'match' (source BridgeOut now orphaned) is re-opened → pause", async () => {
+    const t = await makeWatcher(H);
+    await H.settle();
+    await t.w.tick(); // snapshot whose WANTOS cursor stays canonical
+    await H.wantos.write(ACCOUNTS.user1, "approve", [H.wantos.bridge, E(100)], H.wantos.token);
+    const fork = await H.wantos.snapshot();
+    await H.wantos.write(ACCOUNTS.user1, "bridgeOut", [E(100)]);
+    const r = await H.bsc.write(ACCOUNTS.relayer, "release", [1n, ACCOUNTS.user1.address, E(100)]);
+    await H.settle();
+    t.clock.now = r.timestamp + 301;
+    await t.w.tick();
+    expect(t.w.state.derived.pending).toHaveLength(0); // matched → decided
+    expect(t.codes()).not.toContain("AUTO_PAUSE");
+
+    await H.wantos.revert(fork); // the BridgeOut disappears
+    await H.wantos.rpc("evm_setNextBlockTimestamp", [(await H.wantos.latest()).timestamp + 500]);
+    await H.wantos.mine(12);
+    t.clock.now += 600;
+    await t.w.tick();
+    expect(t.codes()).toContain("WANTOS_REORG");
+    const ap = t.sink.alerts.filter((a) => a.code === "AUTO_PAUSE").map((a) => (a.detail["check"] as { kind?: string } | undefined)?.kind);
+    expect(ap).toContain("w2b");
+  });
+
+  it("B5/M36: after a rollback, an already-decided check whose target block is still canonical is NOT re-opened", async () => {
+    const t = await makeWatcher(H);
+    await H.bsc.write(ACCOUNTS.user2, "approve", [H.bsc.bridge, E(100)], H.bsc.token);
+    await H.bsc.write(ACCOUNTS.user2, "deposit", [E(100), ACCOUNTS.user2.address]);
+    await H.settle();
+    await t.w.tick(); // canonical snapshot
+    const q = await H.wantos.write(ACCOUNTS.relayer, "queueRelease", [1n, ACCOUNTS.user2.address, E(100)]);
+    const fork = await H.wantos.snapshot(); // q stays canonical, later blocks get orphaned
+    await H.settle();
+    const eta = q.timestamp + 15 * 60;
+    t.clock.now = eta - 100;
+    await t.w.tick();
+    expect(t.w.state.derived.pending).toHaveLength(0); // matched → decided
+
+    await H.wantos.revert(fork);
+    await H.wantos.rpc("evm_setNextBlockTimestamp", [(await H.wantos.latest()).timestamp + 500]);
+    await H.wantos.mine(12);
+    t.clock.now = eta - 1000; // before decideAt: a wrongly re-added item would sit in pending
+    await t.w.tick();
+    expect(t.codes()).toContain("WANTOS_REORG");
+    expect(t.w.state.derived.pending.filter((p) => p.kind === "b2w")).toHaveLength(0);
+  });
+
   it("cursor catch-up: stop the watcher, produce events, restart from the file → events processed", async () => {
     const dir = mkdtempSync(join(tmpdir(), "watcher-cursor-"));
     const path = join(dir, "state.json");

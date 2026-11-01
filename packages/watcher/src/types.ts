@@ -119,7 +119,7 @@ export interface MetaState {
   watchedNonces: Record<string, string>;
   controlledSetHash: string | null;
   controlledSet: string[];
-  snapshots: Array<{ wantosCursor: Cursor | null; derived: DerivedState }>;
+  snapshots: Array<{ wantosCursor: Cursor | null; derived: DerivedState; takenAt?: number }>;
   /** Alerts whose delivery failed; retried every tick (B2). */
   outbox: Alert[];
 }

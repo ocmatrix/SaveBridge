@@ -169,16 +169,29 @@ export class Watcher {
       }
       if (canonical) {
         this.state.derived = clone(s.derived);
+        this.reopenAfter(s.takenAt ?? 0);
         return;
       }
       snaps.pop();
     }
     this.state.derived = initialDerived();
+    this.reopenAfter(0);
+  }
+
+  /**
+   * B5: checks whose SOURCE is on WANTOS (w2b, depositRefund) and that were decided after the restore
+   * point may have been satisfied by events that are now orphaned → forget those decisions so the
+   * re-ingested target events are checked again. Other decisions stay (their targets are re-checked
+   * only if their own blocks were orphaned, in which case they disappear anyway).
+   */
+  private reopenAfter(t: number): void {
+    const d = this.state.meta.decided;
+    for (const [id, at] of Object.entries(d)) if ((id.startsWith("w2b:") || id.startsWith("depositRefund:")) && at >= t) delete d[id];
   }
 
   private snapshot(): void {
     const snaps = this.state.meta.snapshots;
-    snaps.push({ wantosCursor: this.state.derived.wantos.cursor, derived: clone(this.state.derived) });
+    snaps.push({ wantosCursor: this.state.derived.wantos.cursor, derived: clone(this.state.derived), takenAt: this.now() });
     if (snaps.length > MAX_SNAPSHOTS) snaps.splice(0, snaps.length - MAX_SNAPSHOTS);
   }
 
