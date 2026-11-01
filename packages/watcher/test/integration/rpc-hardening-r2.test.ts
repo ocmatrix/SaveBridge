@@ -196,6 +196,32 @@ describe("round-2 RPC hardening", () => {
       expect(t.codes()).toContain("RPC_UNREACHABLE");
     });
 
+    it("A-1: a log whose block hash is not the agreed one (stale fork on one RPC) is dropped entirely", async () => {
+      let X: bigint | null = null;
+      const fake = fakeEvent(H.bsc, "Released", (i) => (i.type === "bytes32" ? `0x${"11".repeat(32)}` : i.type.startsWith("uint") ? 61n : ACCOUNTS.user2.address));
+      const stale = tamperedClient(H.bsc, (m, p) => {
+        if (m !== "eth_getLogs" || X === null) return { handled: false };
+        const f = p[0] as { address?: string | string[]; fromBlock: string; toBlock: string; topics?: unknown[] };
+        const addrs = Array.isArray(f.address) ? f.address : [f.address];
+        if (!addrs.some((a) => a?.toLowerCase() === H.bsc.bridge.toLowerCase()) || (f.topics && f.topics.length > 0) || BigInt(f.fromBlock) > X || BigInt(f.toBlock) < X) return { handled: false };
+        return {
+          handled: true,
+          result: (async () => {
+            const real = ((await (await fetch(H.bsc.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: m, params: p }) })).json()) as { result: unknown[] }).result;
+            const { topics, data } = fake();
+            return [...real, { address: H.bsc.bridge, topics, data, blockNumber: `0x${X!.toString(16)}`, blockHash: `0x${"99".repeat(32)}`, transactionHash: `0x${"cd".repeat(32)}`, transactionIndex: "0x0", logIndex: "0x5", removed: false }];
+          })(),
+        };
+      });
+      const t = await makeWatcher(H, { endpoints: { bsc: [{ label: "honest", client: H.bsc.pub }, { label: "stale", client: stale }] } });
+      await H.bsc.mine(1);
+      X = (await H.bsc.latest()).number;
+      await H.settle();
+      await t.w.tick();
+      expect(t.w.state.derived.pending).toHaveLength(0);
+      expect(t.codes()).toContain("RPC_DISAGREE");
+    });
+
     it("R13: a failed range rolls back ALL derived state (here: the mint total), not only the sums", async () => {
       const t = await makeWatcher(H);
       await H.wantos.write(ACCOUNTS.tokenDeployer, "mint", [ACCOUNTS.attacker.address, E(7)], H.wantos.token);
