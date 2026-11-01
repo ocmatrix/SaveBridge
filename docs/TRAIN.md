@@ -20,13 +20,16 @@
 | PR | 标题 | 依赖 | 级别 | 状态 | 分支 | 备注 |
 |---|---|---|---|---|---|---|
 | PR-0 | 调研与准备 | — | L1 | running | main | ①③⑤已完成；②④⑥⑦⑧待用户 |
-| PR-1 | 合约 | PR-0 | L2 | ready | pr-1-contracts | — |
+| PR-1 | 合约 | PR-0 | L2 | **gate2-passed(local)** | pr-1-contracts @ e8ad4fd | aligner 2 轮；230→240 测试；覆盖 100%；slither H0/M0；控制器已独立复跑 7 个变异全部抓住。未推送/未合并 |
 | PR-2 | 外部审计 | PR-1 | — | blocked | — | 需用户选审计方，非自动化 |
-| PR-3 | 付款程序 | PR-1 接口 | L2 | blocked(dep) | — | — |
+| PR-3 | 付款程序 | PR-1 接口 | L2 | running | pr-3-relayer（叠在 ts-workspace 上） | lane-3 |
 | PR-4 | 风控 | PR-3 | L2 | blocked(dep) | — | — |
-| PR-5 | 用户页 | PR-1 接口 | L2 | blocked(dep) | — | — |
+| PR-5 | 用户页 | PR-1 接口 | L2 | running | pr-5-user-page | lane-5 |
 | PR-6 | 管理后台+离线工具 | PR-1/3/4 | L2 | blocked(dep) | — | — |
-| PR-7 | 监控 | PR-1 事件 | L2 | blocked(dep) | — | — |
+| PR-7 | 监控 | PR-1 事件 | L2 | running | pr-7-watcher | lane-7 |
 | PR-8 | 迁移与旧单 | PR-1 | L2 | blocked(dep) | — | — |
 | PR-9 | 测试网联调 | PR-3~8 | L2 | blocked(dep) | — | 需测试网资金，须用户授权 |
 | PR-10 | 主网上线 | PR-2/9 | L2 | blocked(user) | — | 部署与注资须用户亲自授权 |
+
+## 技术栈（总控定）
+TypeScript + pnpm workspace（Node ≥ 22）+ viem + vitest。`packages/abi` 由 `scripts/gen-abi.sh` 从 PR-1 合约生成。服务测试用 anvil（本地，非真实网络）+ PGlite（测试用 Postgres）。分支叠加：pr-1-contracts → ts-workspace → 各车道分支。
