@@ -269,4 +269,77 @@ describe("Gate2 r1: source-order hard preconditions, approvals, bump race", () =
       await expect(r.start()).rejects.toThrow(/decimals/);
     });
   });
+
+  describe("B7: guards must stop BEFORE any simulation / transaction (not only end in the right state)", () => {
+    const sendsFor = (spy: { mock: { calls: unknown[][] } }, key: Hex) => spy.mock.calls.filter((c) => (c[0] as { eventKey: Hex }).eventKey === key).length;
+    const setVaultBalance = async (v: bigint) => {
+      const slot = keccak256(encodeAbiParameters([{ type: "address" }, { type: "uint256" }], [world.b.bridge, 0n]));
+      await world.bsc.testClient.setStorageAt({ address: world.b.token, index: slot, value: pad(toHex(v)) });
+    };
+
+    it("paused: the default engine reads paused() and nothing is simulated or sent", async () => {
+      await bsc("pause", [], world.act.pauser);
+      const sys = await buildRelayer(world);
+      const spy = vi.spyOn(sys.relayer.bscSender, "send");
+      await bridgeOut(world, world.act.user, 100n * U);
+      await confirmWantos(world);
+      await sys.relayer.tick();
+      expect((await new OrderRepo(sys.db).get(wKey(1n)))!).toMatchObject({ status: "WAITING", reason: "paused" });
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it("quota: the default engine checks remaining quota and nothing is simulated or sent", async () => {
+      await bsc("setParams", [{ dailyCap: 1000n * U, perAddrDailyCap: 1000n * U, largeThreshold: 1000n * U, releaseDelay: 12n * 3600n, minDeposit: 10n * U, maxDepositPerTx: 2000n * U }]);
+      const sys = await buildRelayer(world);
+      const spy = vi.spyOn(sys.relayer.bscSender, "send");
+      await bridgeOut(world, world.act.user, 900n * U);
+      await bridgeOut(world, world.act.user2, 200n * U);
+      await confirmWantos(world);
+      await sys.relayer.tick();
+      await sys.relayer.tick();
+      expect((await new OrderRepo(sys.db).get(wKey(2n)))!).toMatchObject({ status: "WAITING", reason: "quota" });
+      expect(sendsFor(spy, wKey(2n))).toBe(0);
+    });
+
+    it("in-flight attempt: the order is not re-evaluated nor re-sent (hasOpenAttempt)", async () => {
+      const evaluate = vi.fn(async () => ({ kind: "AUTO" as const }));
+      const sys = await buildRelayer(world, { risk: { evaluate } });
+      await bridgeOut(world, world.act.user, 100n * U);
+      await confirmWantos(world);
+      await world.bsc.testClient.setAutomine(false);
+      await sys.relayer.tick();
+      expect(evaluate).toHaveBeenCalledTimes(1);
+      await sys.db.query("update orders set status = 'WAITING', reason = 'quota'"); // lost status update
+      const spy = vi.spyOn(sys.relayer.bscSender, "send");
+      await sys.relayer.tick();
+      expect(evaluate).toHaveBeenCalledTimes(1);
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it("outstanding queued amounts count against the reserve (D5)", async () => {
+      await setVaultBalance(1600n * U);
+      const sys = await buildRelayer(world);
+      const spy = vi.spyOn(sys.relayer.bscSender, "send");
+      await bridgeOut(world, world.act.user, 1500n * U); // queued, still in the vault
+      await bridgeOut(world, world.act.user2, 200n * U); // 200 + 1500 > 1600
+      await confirmWantos(world);
+      await sys.relayer.tick();
+      await sys.relayer.tick();
+      expect((await new OrderRepo(sys.db).get(wKey(2n)))!).toMatchObject({ status: "WAITING", reason: "reserve" });
+      expect(sendsFor(spy, wKey(2n))).toBe(0);
+    });
+
+    it("queueRelease replay only when the on-chain payload matches the event", async () => {
+      const relayerAcct = privateKeyToAccount(world.bscRelayerKey);
+      await bridgeOut(world, world.act.user, 100n * U);
+      // someone holding the payout key queued order 1 to a different address
+      await write(world.bsc, relayerAcct, world.b.bridge, bscVaultV2Abi as Abi, "queueRelease", [1n, world.act.user2.address, 100n * U]);
+      const sys = await buildRelayer(world);
+      const spy = vi.spyOn(sys.relayer.bscSender, "send");
+      await confirmWantos(world);
+      await sys.relayer.tick();
+      expect(spy).not.toHaveBeenCalled();
+      expect(sys.alerts.byKind("ORDER_ONCHAIN_MISMATCH").length).toBeGreaterThan(0);
+    });
+  });
 });

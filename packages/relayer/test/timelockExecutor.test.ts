@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { encodeFunctionData, parseEther, toHex, pad, type Abi, type PublicClient } from "viem";
 import { bscVaultV2Abi, bridgeTimelockAbi } from "@bridge/abi";
 import { startWorld, type World } from "./helpers/system";
@@ -114,10 +114,27 @@ describe("submission service: timelock auto-execute + 24h/6h reminders (§6.4, �
     expect(n.rows[0]!.n).toBe(0);
   });
 
-  it("expired proposals (> ready + 14d) are skipped", async () => {
+  it("expired proposals (> ready + 14d) are skipped without even simulating", async () => {
     await schedule(params(6000n * U), pad(toHex(4), { size: 32 }));
     await warp(48n * H + 15n * 24n * H);
+    const spy = vi.spyOn(sender, "send");
     await exec.tick();
+    expect(await dailyCap()).toBe(5000n * U);
+    expect(spy).not.toHaveBeenCalled();
+    expect(alerts.byKind("TIMELOCK_EXEC_BLOCKED")).toHaveLength(0);
+  });
+
+  it("B7: proposals from a previous admin epoch (after an admin recovery) are skipped without simulating", async () => {
+    await schedule(params(6000n * U), pad(toHex(8), { size: 32 }));
+    // WL starts an admin recovery; after 14 days the candidate accepts → epoch + 1
+    await write(world.bsc, world.act.wl, world.b.timelock, bridgeTimelockAbi as Abi, "startAdminRecovery", [world.act.user2.address]);
+    await warp(14n * 24n * H + 1n);
+    await write(world.bsc, world.act.user2, world.b.timelock, bridgeTimelockAbi as Abi, "acceptAdmin", []);
+    expect(await world.bsc.publicClient.readContract({ address: world.b.timelock, abi: bridgeTimelockAbi as Abi, functionName: "epoch" })).toBe(1n);
+    const spy = vi.spyOn(sender, "send");
+    await exec.tick();
+    expect(spy).not.toHaveBeenCalled();
+    expect(alerts.byKind("TIMELOCK_EXEC_BLOCKED")).toHaveLength(0);
     expect(await dailyCap()).toBe(5000n * U);
   });
 
