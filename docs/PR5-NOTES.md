@@ -91,8 +91,15 @@ GET /v1/orders?address=0x…   （只读，无鉴权，CORS 允许 bridge.wanto.
 6. **WalletConnect 不用托管弹窗**：自己画二维码，CSP 不必放开 WalletConnect 的 API、图片和字体域名。WalletConnect Verify 的 iframe 被 `frame-src 'none'` 拦截，钱包端会显示"无法验证域名"，不影响连接（未用真实 WalletConnect 会话验证，见 §9）。
 7. **relayer API 源加入 connect-src**（仅在配置时）：§8.1 只列了 RPC 和 WalletConnect，但订单 API 是规格要求的只读接口。WalletConnect relay 也只在配置了 `VITE_WC_PROJECT_ID` 时才加入。
 8. 若两条链 USDT 的 `decimals` 不同，`readBridgeState` 抛出 `DecimalsMismatchError`：页面显示"两条链 USDT 精度不一致，页面已停用"，按钮禁用，订单列表隐藏（不会用默认的 18 位显示金额）。
-9. **广播后无法确认 ≠ 失败**（第 2 轮 B1）：钱包返回哈希后立即显示"已提交（哈希），结果待确认"。如果之后等待回执超时或 RPC 断开，显示"交易已发出但暂未确认结果，请用该哈希到浏览器核对，核对前请勿再次提交"，并附浏览器链接和"重新检查"按钮。在查到回执之前，同一动作保持禁用。只有广播前的错误才会显示为失败。
-10. **配置一致性**（第 2 轮 B3）：`parseConfig` 要求 `VITE_WANTOS_BRIDGE === VITE_BSC_BRIDGE`（§5.1）。`build:prod` 的 `check-dist --real` 要求链 ID 为 13555/56，WANTOS-USDT 为 `0xc74F2e7f…0873`（§1.1），BSC-USDT 为 `0x55d39832…7955`（§5.2）。测试网构建用 `build:testnet`（`.env.testnet.local`，`--testnet` 跳过这项固定检查）。
+9. **广播后无法确认 ≠ 失败**（第 2 轮 B1，第 3 轮 A1/B1/B2）：
+   - 钱包返回哈希后立即显示"已提交（哈希），结果待确认"。
+   - 等待回执超时或 RPC 断开时，显示"交易已发出但暂未确认结果，请用该哈希到浏览器核对，核对前请勿再次提交"，附浏览器链接和"重新检查"按钮。
+   - 这把"未确认锁"放在页面级，按"账户:链:动作"分别记录：切换标签页不会丢；换账户既不显示也不阻挡另一个账户，切回原账户后锁恢复；用 sessionStorage 跨刷新保留。存储里只有"锁、哈希、类型（授权或跨链交易）、账户/链/动作、nonce"，"已确认"只能来自链上回执，从不从存储里读。
+   - 重新检查：回执成功则解锁。如果是授权交易，提示"授权已确认，请再次点击提交以完成跨链"，不会说"交易已确认"。回执显示被合约拒绝，则解锁并提示可以重新提交。没有回执但节点里还有这笔交易，继续锁定。
+   - 节点里已没有这笔交易、且它的 nonce 已被别的交易用掉（钱包加速、取消或丢弃）时，提示"可能已被替换或丢弃"，并提供需要二次确认的"手动解除锁"。
+   - 钱包超时或请求过期、且没有返回哈希时，只能显示为失败，但文案里会写"如钱包中已有该交易，请勿重复提交"。
+   - 只有广播前的错误才显示为普通失败。
+10. **配置一致性**（第 2 轮 B3）：`parseConfig` 要求 `VITE_WANTOS_BRIDGE === VITE_BSC_BRIDGE`（§5.1）。`build:prod` 的 `check-dist --real` 要求链 ID 为 13555/56，WANTOS-USDT 为 `0xc74F2e7f…0873`（§1.1），BSC-USDT 为 `0x55d39832…7955`（§5.2）。测试网构建用 `build:testnet`（`.env.testnet.local`，必须设置 `VITE_NETWORK=testnet`）。它输出到 `dist-testnet/`（与正式构建的 `dist/` 分开），页面顶部常驻"测试网"横幅；正式构建不显示横幅，`VITE_NETWORK` 也不得是 testnet。`--testnet` 只跳过链 ID 和 USDT 地址的固定检查。check-dist 的参数解析是纯函数，并有测试保证 `build:prod` 不会带 `--testnet`。正式构建还会在产物 bundle 里确认两个 USDT 地址和桥地址确实已经内联。
 
 ## 8. 对共享文件的改动（叠在 ts-workspace 上，需总控合并时注意）
 
