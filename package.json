@@ -1,0 +1,11 @@
+{
+  "name": "wantos-bridge-v2",
+  "private": true,
+  "packageManager": "pnpm@10",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "gen:abi": "bash scripts/gen-abi.sh",
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck"
+  }
+}
