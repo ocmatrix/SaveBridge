@@ -54,6 +54,14 @@ alter table orders add column if not exists approved_at timestamptz;
 alter table orders add column if not exists approved_by bytea;
 `,
   },
+  {
+    version: 4,
+    name: "timelock_notices",
+    sql: `
+create table if not exists timelock_notices (chain_id int not null, op_id bytea not null, kind text not null,
+  at timestamptz default now(), primary key (chain_id, op_id, kind));
+`,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {
