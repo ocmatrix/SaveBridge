@@ -105,5 +105,11 @@ describe("B2W unconfirmed (A2, symmetric to W2B)", () => {
     expect(within(b2w).getByRole("link", { name: "在浏览器核对" })).toHaveAttribute("href", `${env.cfg.bsc.explorerUrl}/tx/${hash}`);
     await typeAmount(user, b2w, "50");
     expect(btn).toBeDisabled();
+
+    // D2: re-check must ask the BSC chain — the deposit receipt exists only there
+    await expect(env.wantos.anvil.pc.getTransactionReceipt({ hash: hash as Hex })).rejects.toThrow();
+    await user.click(within(b2w).getByRole("button", { name: "重新检查" }));
+    await within(b2w).findByText("交易已确认", {}, T);
+    await waitFor(() => expect(btn).toBeEnabled(), T);
   });
 });
