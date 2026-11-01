@@ -489,6 +489,49 @@ contract BscInvariantsTest is BscFixture {
         vault.setParams(p);
     }
 
+    /// A3: each half of `largeThreshold <= perAddrDailyCap <= dailyCap`, on both the timelock and the admin path.
+    function test_inv12_neg_perAddrAboveDailyCapViaTimelock() public {
+        BscVaultV2.Params memory p = _bscParams();
+        p.dailyCap = 1_000 * U;
+        p.perAddrDailyCap = 2_000 * U;
+        p.largeThreshold = 500 * U;
+        vm.prank(address(tl));
+        vm.expectRevert(BridgeBase.ParamConstraint.selector);
+        vault.setParams(p);
+        // full timelock path as well
+        bytes memory data = abi.encodeCall(BscVaultV2.setParams, (p));
+        bytes32 salt = _propose(address(vault), data);
+        vm.warp(block.timestamp + 48 hours);
+        vm.expectRevert(BridgeBase.ParamConstraint.selector);
+        _execute(address(vault), data, salt);
+    }
+
+    function test_inv12_neg_perAddrAboveDailyCapViaAdminTighten() public {
+        BscVaultV2.Params memory p = _bscParams();
+        p.dailyCap = 1_000 * U; // tightening dailyCap alone below perAddrDailyCap (2,000)
+        vm.prank(admin);
+        vm.expectRevert(BridgeBase.ParamConstraint.selector);
+        vault.setParams(p);
+    }
+
+    function test_inv12_neg_thresholdAbovePerAddrViaTimelock() public {
+        BscVaultV2.Params memory p = _bscParams();
+        p.largeThreshold = 2_001 * U;
+        vm.prank(address(tl));
+        vm.expectRevert(BridgeBase.ParamConstraint.selector);
+        vault.setParams(p);
+    }
+
+    function test_inv12_pos_boundaryEqualitiesAllowed() public {
+        BscVaultV2.Params memory p = _bscParams();
+        p.dailyCap = 2_000 * U;
+        p.perAddrDailyCap = 2_000 * U;
+        p.largeThreshold = 2_000 * U;
+        vm.prank(address(tl));
+        vault.setParams(p);
+        assertEq(vault.params().dailyCap, 2_000 * U);
+    }
+
     // ---------------------------------------------------------------- 13. queueRelease replay
     function test_inv13_pos_replayReturnsQueuedWithoutDoubleCharge() public {
         _applyBatch(vault, _one(alice), true);

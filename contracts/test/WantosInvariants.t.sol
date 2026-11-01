@@ -91,6 +91,34 @@ contract WantosInvariantsTest is WantosFixture {
         assertEq(token.balanceOf(alice), 10_000 * U);
     }
 
+    // 12 (WANTOS half) ------------------------------------------------------
+    // The only inter-parameter constraint on WANTOS is w2bMinAmount <= w2bPerAddrDailyCap
+    // (there is no B2W per-address cap, §5.5).
+    function test_inv12_neg_minAbovePerAddrViaTimelock() public {
+        WantosBridgeV2.Params memory p = _wParams();
+        p.w2bMinAmount = 2_001 * U;
+        vm.prank(address(tl));
+        vm.expectRevert(BridgeBase.ParamConstraint.selector);
+        bridge.setParams(p);
+    }
+
+    function test_inv12_neg_perAddrBelowMinViaAdminTighten() public {
+        WantosBridgeV2.Params memory p = _wParams();
+        p.w2bMinAmount = 500 * U; // tighten
+        p.w2bPerAddrDailyCap = 499 * U; // tighten, but now below the minimum
+        vm.prank(admin);
+        vm.expectRevert(BridgeBase.ParamConstraint.selector);
+        bridge.setParams(p);
+    }
+
+    function test_inv12_pos_minEqualsPerAddrAllowed() public {
+        WantosBridgeV2.Params memory p = _wParams();
+        p.w2bMinAmount = 2_000 * U;
+        vm.prank(admin);
+        bridge.setParams(p);
+        assertEq(bridge.params().w2bMinAmount, 2_000 * U);
+    }
+
     // 10 -----------------------------------------------------------------
     function test_inv10_neg_overCeilingRejectedAndCannotLowerBelowSupply() public {
         _applyBatch(bridge, _one(alice), true);
