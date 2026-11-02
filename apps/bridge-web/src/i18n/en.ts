@@ -1,7 +1,7 @@
 import type { Dict } from "./zh";
 
 export const en: Dict = {
-  "app.title": "WANTOS ⇄ BSC USDT Bridge",
+  "app.title": "SafeBridge",
   "app.subtitle": "Whitelisted bridge",
   "lang.toggle": "中文",
   "testnet.label": "Testnet",
@@ -96,6 +96,7 @@ export const en: Dict = {
   "order.viewTx": "View transaction",
 
   "footer.notice": "Bridging is enabled for whitelisted addresses only",
+  "footer.powered": "Powered by WANTOS",
 
   "err.notWhitelisted": "Bridging is not enabled for this address. Please contact support.",
   "err.paused": "The bridge is under maintenance. Please try again later.",

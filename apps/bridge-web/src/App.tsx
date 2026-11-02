@@ -13,6 +13,7 @@ import { StatusBar } from "./components/StatusBar";
 import { W2BPanel } from "./components/W2BPanel";
 import { B2WPanel } from "./components/B2WPanel";
 import { Orders } from "./components/Orders";
+import { Brand } from "./components/Brand";
 import { Footer } from "./components/Footer";
 import { WalletPicker } from "./components/WalletPicker";
 import { browserStorage, loadKnown, saveKnown, type Known } from "./lib/knownOrders";
@@ -75,6 +76,7 @@ function Page() {
         </div>
       )}
       <main className="stage">
+        <Brand />
         <div className="card">
           <StatusBar state={state.data} loading={state.isLoading} error={state.error} onRefresh={() => void state.refetch()} />
           {dir === "w2b" ? (

@@ -1,5 +1,5 @@
 export const zh = {
-  "app.title": "WANTOS ⇄ BSC USDT 跨链",
+  "app.title": "SafeBridge",
   "app.subtitle": "白名单跨链桥",
   "lang.toggle": "English",
   "testnet.label": "测试网",
@@ -94,6 +94,7 @@ export const zh = {
   "order.viewTx": "查看交易",
 
   "footer.notice": "仅白名单地址开通跨链",
+  "footer.powered": "Powered by WANTOS",
 
   "err.notWhitelisted": "跨链未开通，请联系客服",
   "err.paused": "跨链桥维护中，暂停操作，请稍后再试",

@@ -21,7 +21,10 @@ body { margin: 0; color: var(--text); }
     radial-gradient(260px 260px at 4% 100%, rgba(255, 205, 120, 0.8), rgba(255, 205, 120, 0) 70%),
     linear-gradient(165deg, #e8f0ff 0%, #f3eaff 52%, #ffeedd 100%);
 }
-.stage { max-width: 440px; margin: 0 auto; padding-top: 48px; }
+.stage { max-width: 440px; margin: 0 auto; padding-top: 40px; }
+.brand { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 0 0 20px; }
+.brand svg { height: 34px; width: auto; flex: none; color: #706e6f; }
+.brand h1 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.01em; }
 .muted, small { color: var(--muted); }
 .link { background: none; border: 0; padding: 0; font: inherit; color: var(--blue); text-decoration: underline; cursor: pointer; }
 
@@ -137,3 +140,5 @@ body { margin: 0; color: var(--text); }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .card { background: rgba(255, 255, 255, 0.88); }
 }
+
+.foot .powered { letter-spacing: 0.04em; opacity: 0.85; }

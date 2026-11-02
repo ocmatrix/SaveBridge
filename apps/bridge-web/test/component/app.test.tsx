@@ -183,11 +183,13 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     expect(screen.queryByRole("dialog", { name: "选择钱包" })).toBeNull();
   });
 
-  it("footer is the one-line hint: only whitelisted addresses can bridge (no contract address, no extra text)", async () => {
+  it("brand on top (logo + SafeBridge) and the footer: whitelist hint, then Powered by WANTOS — no contract address", async () => {
     renderApp(env.cfg, KEYS.alice.address);
+    expect(screen.getByRole("heading", { level: 1, name: "SafeBridge" })).toBeInTheDocument();
     const footer = screen.getByRole("contentinfo");
-    expect(footer).toHaveTextContent("仅白名单地址开通跨链");
-    expect(footer.textContent).toBe("仅白名单地址开通跨链");
+    const lines = Array.from(footer.querySelectorAll("small")).map((e) => e.textContent);
+    expect(lines).toEqual(["仅白名单地址开通跨链", "Powered by WANTOS"]);
+    expect(footer.textContent).not.toMatch(/0x[0-9a-fA-F]{8}/);
   });
 
   it("orders come through the replaceable StatusProvider; risk states are shown as 处理中", async () => {
