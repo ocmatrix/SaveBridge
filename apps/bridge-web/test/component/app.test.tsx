@@ -192,6 +192,17 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     expect(footer.textContent).not.toMatch(/0x[0-9a-fA-F]{8}/);
   });
 
+  it("language switch in the footer flips the page to English and back", async () => {
+    const user = userEvent.setup();
+    renderApp(env.cfg, KEYS.alice.address);
+    await user.click(screen.getByRole("button", { name: "English" }));
+    const footer = screen.getByRole("contentinfo");
+    expect(within(footer).getByText("Only whitelisted addresses can bridge out from WANTOS to BSC")).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("en");
+    await user.click(screen.getByRole("button", { name: "中文" }));
+    expect(within(footer).getByText("仅白名单地址可从 WANTOS 跨出到 BSC")).toBeInTheDocument();
+  });
+
   it("orders come through the replaceable StatusProvider; risk states are shown as 处理中", async () => {
     const sp: StatusProvider = {
       list: vi.fn().mockResolvedValue([
