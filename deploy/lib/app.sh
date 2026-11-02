@@ -46,7 +46,7 @@ step_node() {
     run tar -xJf "$dir/$tar" -C "$dest" --strip-components=1 --no-same-owner
   fi
   # corepack ships with Node; it verifies the pnpm package signature from the npm registry
-  run env COREPACK_HOME=/opt/corepack "$dest/bin/corepack" prepare "pnpm@${PNPM_VERSION}" --activate
+  run env COREPACK_HOME=/opt/corepack PATH="$dest/bin:$PATH" "$dest/bin/corepack" prepare "pnpm@${PNPM_VERSION}" --activate
   run ln -sfn "$dest" /opt/node
 }
 

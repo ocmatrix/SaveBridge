@@ -81,6 +81,9 @@ sha="$( (sha256sum "$T/savebridge-test.tar.gz" 2>/dev/null || shasum -a 256 "$T/
 PATH="${PATH//$T\/bin:/}" bash "$SS" release "$T/savebridge-test.tar.gz" "$sha" >"$T/out" 2>&1 || { echo "FAIL [release ok sha]"; cat "$T/out"; fail=1; }
 if grep -q '\[dry-run\] .*pnpm install --frozen-lockfile --ignore-scripts --filter @bridge/relayer...' "$T/out"; then echo "ok   [release]: verified sha256, dry-run plans a filtered frozen install"; else echo "FAIL [release plan]"; cat "$T/out"; fail=1; fi
 
+bash "$RW" node >"$T/out" 2>&1 || true
+if grep -q 'PATH=/opt/node-v[0-9.]*/bin:.* /opt/node-v[0-9.]*/bin/corepack prepare' "$T/out"; then echo "ok   [node]: corepack runs with the new node on PATH"; else echo "FAIL [node]: corepack not given the new node on PATH"; fail=1; fi
+
 # put_file: a differing existing file is never overwritten without --allow-overwrite
 # shellcheck source=../lib/common.sh disable=SC2034
 ( source "$ROOT/deploy/lib/common.sh"; SB_APPLY=1; echo old >"$T/f"; if echo new | put_file "$T/f" 0644 "$(id -un):$(id -gn)" >/dev/null 2>&1; then echo "FAIL [put_file overwrite guard]"; exit 1; fi; [[ "$(cat "$T/f")" == old ]] && echo "ok   [put_file]: differing file kept without --allow-overwrite" ) || fail=1
