@@ -134,6 +134,9 @@ export class Relayer {
         },
       },
     });
+    // Gate2 r2 A-1: every (re)broadcast / fee bump of a signed payout re-checks its source order first.
+    this.bscSender.setGuard((k) => this.processor.broadcastGuard(k));
+    this.wantosSender.setGuard((k) => this.processor.broadcastGuard(k));
     this.review = new ReviewService({
       db: d.db,
       alerts: d.alerts,

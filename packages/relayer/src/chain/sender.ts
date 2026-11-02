@@ -60,6 +60,12 @@ interface AttemptRow {
   created_at: string | Date;
 }
 
+/**
+ * Pre-broadcast guard (Gate2 r2 A-1): re-checks the payout's source order right before a signed tx is
+ * (re)broadcast or fee-bumped. "unknown" = could not read (RPC error) → do nothing this tick.
+ */
+export type BroadcastGuard = (eventKey: Hex) => Promise<"ok" | "mismatch" | "unknown">;
+
 export interface TxSenderOpts {
   chainId: number;
   client: PublicClient;
@@ -85,6 +91,12 @@ const OPEN_STATES = ["signed", "broadcast"];
  */
 export class TxSender {
   private nextNonce: number | null = null;
+  private guard: BroadcastGuard | null = null;
+
+  /** Installed by the relayer (Processor.broadcastGuard). Applies to every attempt that carries an eventKey. */
+  setGuard(g: BroadcastGuard): void {
+    this.guard = g;
+  }
   private readonly now: () => Date;
 
   constructor(private readonly o: TxSenderOpts) {
@@ -154,8 +166,16 @@ export class TxSender {
     if (open.length === 0) return {};
     const nonce = Number(open[0]!.nonce);
     const group = open.filter((r) => Number(r.nonce) === nonce);
+    // Abandoned payout attempts of this nonce may still be mined (if they reached a mempool before the
+    // cancel); they take part in receipt resolution so the outcome is never lost.
+    const abandoned = (
+      await this.o.db.query<AttemptRow>(
+        "select * from tx_attempts where chain_id = $1 and from_addr = $2 and nonce = $3 and state = 'abandoned' order by id",
+        [this.o.chainId, toBytes(this.address), nonce],
+      )
+    ).rows;
     // 1. any attempt of this nonce mined?
-    for (const row of group) {
+    for (const row of [...abandoned, ...group]) {
       const h = fromBytes(row.tx_hash)!;
       let rc;
       try {
@@ -170,8 +190,8 @@ export class TxSender {
         await this.o.db.tx(async (t) => {
           await t.query("update tx_attempts set state = $2, updated_at = $3 where id = $1", [row.id, rc.status === "success" ? "mined" : "reverted", this.now()]);
           await t.query(
-            "update tx_attempts set state = 'replaced', updated_at = $3 where chain_id = $1 and nonce = $2 and state = any($4::text[]) and from_addr = $5",
-            [this.o.chainId, nonce, this.now(), OPEN_STATES, toBytes(this.address)],
+            "update tx_attempts set state = 'replaced', updated_at = $3 where chain_id = $1 and nonce = $2 and state = any($4::text[]) and from_addr = $5 and id <> $6",
+            [this.o.chainId, nonce, this.now(), OPEN_STATES, toBytes(this.address), row.id],
           );
         });
         return {
@@ -199,6 +219,17 @@ export class TxSender {
     // 3. (re)broadcast: signed-but-unsent attempts, or on startup the newest attempt as-is.
     let rebroadcast = 0;
     const newest = group[group.length - 1]!;
+    const stuck = this.now().getTime() - new Date(newest.created_at).getTime() >= this.o.cfg.stuckAfterMs;
+    const willBroadcast = group.some((row) => row.state === "signed" || (opts.rebroadcastAll && row.id === newest.id));
+    if ((willBroadcast || (stuck && !opts.rebroadcastAll)) && newest.event_key && newest.action !== "cancel" && this.guard) {
+      // Gate2 r2 A-1: §6.4 "replay as-is" still holds, but only after the source order is re-checked.
+      const verdict = await this.guard(fromBytes(newest.event_key)!);
+      if (verdict === "unknown") return {};
+      if (verdict === "mismatch") {
+        await this.cancelNonce(group, nonce);
+        return {};
+      }
+    }
     for (const row of group) {
       if (row.state === "signed" || (opts.rebroadcastAll && row.id === newest.id)) {
         const r = await this.broadcast(row);
@@ -220,6 +251,32 @@ export class TxSender {
     }
     await this.bump(newest);
     return { bumped: true, rebroadcast };
+  }
+
+  /**
+   * Abandon a payout nonce whose source order is no longer intact: mark its attempts `abandoned` and
+   * occupy the same nonce with a 0-value self-transfer priced above every attempt (replaces it if it is
+   * already in a mempool; otherwise simply uses the nonce). If replacement is not supported by the node,
+   * the original may still be mined — the post-payout safety net then raises PAYOUT_ALREADY_RELEASED.
+   */
+  private async cancelNonce(group: AttemptRow[], nonce: number): Promise<void> {
+    const top = group.reduce((m, r) => (toBig(r.gas_price) > m ? toBig(r.gas_price) : m), 0n);
+    let price = (top * BigInt(100 + this.o.cfg.feeBumpPercent)) / 100n + 1n;
+    const market = await this.o.client.getGasPrice();
+    if (market > price) price = market;
+    const raw = await this.sign({ type: "legacy", chainId: this.o.chainId, nonce, to: this.address, data: "0x", gas: 21_000n, gasPrice: price, value: 0n });
+    if (!raw) return; // KMS alerted; the guard runs again next tick, nothing is broadcast meanwhile
+    const hash = keccak256(raw);
+    const id = await this.o.db.tx(async (t) => {
+      await t.query("update tx_attempts set state = 'abandoned', updated_at = $2 where id = any($1::bigint[])", [group.map((r) => r.id), this.now()]);
+      const r = await t.query<{ id: string }>(
+        `insert into tx_attempts (event_key, chain_id, nonce, tx_hash, gas_price, raw_tx, state, action, created_at, updated_at, from_addr)
+         values (null,$1,$2,$3,$4,$5,'signed','cancel',$6,$6,$7) returning id`,
+        [this.o.chainId, nonce, toBytes(hash), price.toString(), toBytes(raw), this.now(), toBytes(this.address)],
+      );
+      return r.rows[0]!.id;
+    });
+    await this.broadcast({ id, raw_tx: toBytes(raw), tx_hash: toBytes(hash) });
   }
 
   private async bump(prev: AttemptRow): Promise<void> {

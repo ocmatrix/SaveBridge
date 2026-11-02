@@ -54,6 +54,7 @@ interface AttemptInfo {
 export class Processor {
   private readonly repo: OrderRepo;
   private finals: Record<"bsc" | "wantos", bigint | null> = { bsc: null, wantos: null };
+  private readonly paidAlerted = new Set<Hex>();
 
   constructor(private readonly o: ProcessorOpts) {
     this.repo = new OrderRepo(o.db, o.now);
@@ -141,7 +142,11 @@ export class Processor {
   private async applyFinal(o: Order, p: PayoutView): Promise<boolean> {
     if (p.status === PayoutStatus.None) return false;
     await this.checkPayload(o, p);
-    if (p.status === PayoutStatus.Released) return this.moveIfChanged(o, "RELEASED");
+    if (p.status === PayoutStatus.Released) {
+      const moved = await this.moveIfChanged(o, "RELEASED");
+      if (moved) await this.checkAfterPayout(o);
+      return moved;
+    }
     if (p.status === PayoutStatus.Voided) return this.moveIfChanged(o, "REJECTED", { reason: "voided" });
     const delay = await this.side(o).view.releaseDelay();
     return this.moveIfChanged(o, "QUEUED", { executableAt: new Date(Number(p.queuedAt + delay) * 1000) });
@@ -160,11 +165,19 @@ export class Processor {
     return BigInt(r.rows[0]?.s ?? "0");
   }
 
+  /** Exposed for tests. */
+  lastAttemptFor(eventKey: Hex): Promise<AttemptInfo | null> {
+    return this.lastAttempt(eventKey);
+  }
+
   private async lastAttempt(eventKey: Hex): Promise<AttemptInfo | null> {
     const r = await this.o.db.query<{ id: string; action: string | null; state: string; tx_hash: Uint8Array }>(
-      // A resolved (mined/reverted) row of the latest nonce wins over its "replaced" siblings: after a fee
-      // bump the ORIGINAL tx may be the one that got mined (Gate2 A3).
-      "select id, action, state, tx_hash from tx_attempts where event_key = $1 order by nonce desc, (state in ('mined','reverted')) desc, id desc limit 1",
+      // Latest (signer, nonce) group of this order — key rotation makes nonces incomparable across
+      // signers — and inside it a resolved (mined/reverted) row wins over "replaced" siblings (Gate2 A3/r2).
+      `with g as (select from_addr, nonce from tx_attempts where event_key = $1 and action <> 'cancel' order by id desc limit 1)
+       select a.id, a.action, a.state, a.tx_hash from tx_attempts a, g
+        where a.event_key = $1 and a.nonce = g.nonce and a.from_addr is not distinct from g.from_addr
+        order by (a.state in ('mined','reverted')) desc, a.id desc limit 1`,
       [toBytes(eventKey)],
     );
     const row = r.rows[0];
@@ -199,6 +212,55 @@ export class Processor {
     if (d.from.toLowerCase() !== o.userAddr.toLowerCase() || d.amount !== o.amountWei) return "BSC deposit differs from the event";
     if (d.refundStatus !== DepositRefundStatus.None) return `BSC deposit refund status ${d.refundStatus}`;
     return null;
+  }
+
+  /**
+   * Sender pre-broadcast guard (Gate2 r2 A-1): before a signed payout tx is (re)broadcast or bumped.
+   * On mismatch the order is parked exactly like in submit() and a level-1 alert is raised.
+   */
+  async broadcastGuard(eventKey: Hex): Promise<"ok" | "mismatch" | "unknown"> {
+    const o = await this.repo.get(eventKey);
+    if (!o) return "ok"; // not a payout of ours (should not happen)
+    let why: string | null;
+    try {
+      why = await this.sourceMismatch(o);
+    } catch (e) {
+      await this.o.alerts.emit({ kind: "RPC_UNAVAILABLE", key: `guard:${eventKey}`, message: `source re-check before broadcast failed: ${errText(e)}` });
+      return "unknown";
+    }
+    if (!why) return "ok";
+    await this.o.alerts.emit({
+      kind: "SIGNED_TX_SOURCE_MISMATCH",
+      key: `signed:${eventKey}`,
+      message: `${o.direction} order ${o.srcEventNonce}: ${why}; its signed payout tx is NOT broadcast/bumped and the nonce is being cancelled`,
+      data: { eventKey },
+    });
+    if (o.status === "SUBMITTED" || o.status === "QUEUED") {
+      if (canTransition(o.direction, o.status, "REVIEW")) await this.repo.move(o, "REVIEW", { reason: "onchain_mismatch", reviewLevel: "freeze" });
+      else await this.moveIfChanged(o, "QUEUED", { reason: "onchain_mismatch" });
+    }
+    return "mismatch";
+  }
+
+  /**
+   * Post-payout safety net (Gate2 r2 A-1 #2): a payout that is mined / Released while the source order
+   * is being refunded means "pay twice" unless the owner cancels the refund now.
+   */
+  private async checkAfterPayout(o: Order): Promise<void> {
+    let why: string | null;
+    try {
+      why = await this.sourceMismatch(o);
+    } catch {
+      return; // retried on the next pass (SUBMITTED) / covered by PR-7 reconciliation (RELEASED)
+    }
+    if (!why || this.paidAlerted.has(o.eventKey)) return; // one page per order per process
+    this.paidAlerted.add(o.eventKey);
+    await this.o.alerts.emit({
+      kind: "PAYOUT_ALREADY_RELEASED",
+      key: `paid:${o.eventKey}`,
+      message: `${o.direction} order ${o.srcEventNonce} was PAID but ${why}: immediately ${o.direction === "W2B" ? "cancelRefund on WANTOS" : "cancelDepositRefund on BSC"} for this order`,
+      data: { eventKey: o.eventKey },
+    });
   }
 
   /** Returns true (and parks the order) when the source order is no longer intact. */
@@ -307,15 +369,29 @@ export class Processor {
         await this.applyFinal(o, pf);
         return;
       }
-      if (att.state !== "reverted" && att.state !== "dropped") return; // execute tx not final yet
+      if (att.state !== "reverted" && att.state !== "dropped") {
+        if (att.state === "mined") await this.checkAfterPayout(o); // execute mined, not final yet
+        return;
+      }
     }
     if (!att) {
       await this.moveIfChanged(o, "FAILED", { lastError: "SUBMITTED without any tx attempt" });
       return;
     }
-    if (att.state === "signed" || att.state === "broadcast" || att.state === "mined") return; // in flight / awaiting finality
+    if (att.state === "mined") {
+      // Awaiting finality; the tx is out — if the source is being refunded, page the owner now.
+      // Only txs that moved funds (release / executeRelease); a queued payout is still stopped by the
+      // executeRelease guard.
+      if (att.action === "release" || att.action === "executeRelease") await this.checkAfterPayout(o);
+      return;
+    }
+    if (att.state === "signed" || att.state === "broadcast" || att.state === "abandoned") return; // in flight / guarded
     if (att.state === "reverted") {
       const rv = await this.revertReasonOf(o, att);
+      if (rv.rpcError) {
+        await this.o.alerts.emit({ kind: "RPC_UNAVAILABLE", key: `revert-reason:${o.eventKey}`, message: `could not read revert reason of ${att.txHash}: ${rv.message ?? ""}` });
+        return; // stay SUBMITTED, retry next pass
+      }
       await this.applyRevert(o, (att.action as PayoutAction) ?? "release", rv);
       return;
     }
@@ -327,7 +403,7 @@ export class Processor {
    * Re-execute the reverted call against the state AFTER its block to recover a revert reason
    * (the parent-block state would not include a same-block pause/void that made it revert).
    */
-  private async revertReasonOf(o: Order, att: AttemptInfo): Promise<RevertInfo> {
+  private async revertReasonOf(o: Order, att: AttemptInfo): Promise<RevertInfo & { rpcError?: boolean }> {
     const side = this.side(o);
     try {
       const rc = await side.view.client.getTransactionReceipt({ hash: att.txHash });
@@ -339,7 +415,9 @@ export class Processor {
       });
       return { message: "revert reason unavailable" };
     } catch (e) {
-      return decodeRevert(e);
+      const rv = decodeRevert(e);
+      // Gate2 r2 B5: without revert data this is RPC trouble, not a revert reason.
+      return rv.errorName || rv.raw ? rv : { ...rv, rpcError: true };
     }
   }
 
