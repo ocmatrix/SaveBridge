@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {W} from "./utils/Windows.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {BscFixture} from "./utils/Fixtures.sol";
@@ -46,7 +47,7 @@ contract BscEdgeCasesTest is BscFixture {
         (bool active, address cand, uint64 readyAt, uint64 cooldown) = vault.whitelistRecovery();
         assertTrue(active);
         assertEq(cand, bob);
-        assertEq(readyAt, block.timestamp + 7 days);
+        assertEq(readyAt, block.timestamp + W.WL_RECOVERY);
         assertEq(cooldown, 0);
     }
 
@@ -62,7 +63,7 @@ contract BscEdgeCasesTest is BscFixture {
         vault.beginWhitelistManagerTransfer(bob);
         vm.prank(wl);
         tl.startAdminRecovery(carol); // admin recovery (does not void the WL handover)
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.WL_TRANSFER_DELAY);
         vm.prank(bob);
         vm.expectRevert(BridgeBase.RecoveryInProgress.selector);
         vault.acceptWhitelistManagerTransfer();
@@ -121,7 +122,7 @@ contract BscEdgeCasesTest is BscFixture {
     /// ADD batch can put the address back. Correct order: freezeWhitelist first, then remove.
     function test_runbook_emergencyRemoveWithoutFreezeCanBeUndoneByPresignedAdd() public {
         _applyBatch(vault, _one(alice), true); // nonce 0 used
-        uint256 dl = block.timestamp + 1 hours;
+        uint256 dl = block.timestamp + W.SIG_TTL / 24;
         bytes memory presigned = _signBatch(vault, wlKey, _one(alice), true, 1, dl); // stolen / pending signature
         vm.prank(admin);
         vault.emergencyRemove(_one(alice));

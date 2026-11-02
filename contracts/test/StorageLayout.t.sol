@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {BscFixture} from "./utils/Fixtures.sol";
+import {W} from "./utils/Windows.sol";
 import {WantosFixture} from "./utils/WantosFixture.sol";
 import {BscVaultV2} from "../src/BscVaultV2.sol";
 import {BscVaultV2Appended} from "./mocks/UpgradeMocks.sol";
@@ -115,7 +116,7 @@ contract BscLayoutTest is BscFixture {
         vault.startWhitelistRecovery(bob);
         vm.prank(wl);
         vault.cancelWhitelistRecovery();
-        vm.warp(block.timestamp + 3 days);
+        vm.warp(block.timestamp + W.WL_COOLDOWN);
         vm.prank(admin);
         vault.startWhitelistRecovery(carol);
         (bool active, address cand, uint64 readyAt, uint64 cooldown) = vault.whitelistRecovery();
@@ -201,6 +202,7 @@ contract BscLayoutTest is BscFixture {
         assertEq(v2.depositNonce(), 1);
         assertTrue(v2.legacyPaid(bytes32("old")));
         assertEq(keccak256(abi.encode(v2.params())), keccak256(paramsBefore));
+        vm.warp(block.timestamp + 12 hours); // releaseDelay (do not rely on the timelock wait being longer)
         vm.prank(relayer);
         v2.executeRelease(7);
         assertEq(token.balanceOf(alice), 1_500 * U);

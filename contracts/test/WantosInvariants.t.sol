@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import {W} from "./utils/Windows.sol";
 import {WantosFixture} from "./utils/WantosFixture.sol";
 import {BridgeBase} from "../src/BridgeBase.sol";
 import {WantosBridgeV2} from "../src/WantosBridgeV2.sol";
@@ -44,7 +45,7 @@ contract WantosInvariantsTest is WantosFixture {
         uint256 id = bridge.bridgeOut(1_000 * U);
         vm.prank(admin);
         bridge.requestRefund(id);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + W.REFUND_DELAY);
         vm.prank(relayer);
         bridge.queueRelease(1, carol, 2_500 * U);
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.DailyCapExceeded.selector, 3_500 * U, 3_000 * U));
@@ -116,7 +117,7 @@ contract WantosInvariantsTest is WantosFixture {
         bridge.requestRefund(id);
         vm.prank(relayer);
         bridge.queueRelease(1, carol, 100 * U);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + 1 days);
         vm.prank(pauser);
         bridge.pause();
         vm.prank(alice);
@@ -153,7 +154,8 @@ contract WantosInvariantsTest is WantosFixture {
         assertEq(bridge.orderNonce(), 1);
         assertTrue(bridge.whitelisted(alice));
         assertEq(token.balanceOf(address(bridge)), reserve);
-        bridge.executeRefund(id); // 24h passed during the 48h timelock wait
+        vm.warp(block.timestamp + W.REFUND_DELAY); // refund wait, independent of the timelock wait
+        bridge.executeRefund(id);
         assertEq(token.balanceOf(alice), 10_000 * U);
     }
 
@@ -216,7 +218,7 @@ contract WantosInvariantsTest is WantosFixture {
         uint256 id = bridge.bridgeOut(900 * U);
         vm.prank(admin);
         bridge.requestRefund(id);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + W.REFUND_DELAY);
         uint256 before = token.balanceOf(alice);
         vm.prank(bob); // executed by someone else: still pays alice
         bridge.executeRefund(id);
@@ -236,7 +238,7 @@ contract WantosInvariantsTest is WantosFixture {
         bridge.executeRefund(5);
         vm.prank(admin);
         bridge.requestRefund(id);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + W.REFUND_DELAY);
         bridge.executeRefund(id);
         vm.expectRevert(abi.encodeWithSelector(WantosBridgeV2.BadOrderStatus.selector, id, 3));
         bridge.executeRefund(id);
