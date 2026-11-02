@@ -52,7 +52,7 @@ describe("Gate2 r1: source-order hard preconditions, approvals, bump race", () =
       evaluate: async (o, c) => {
         if (first) {
           first = false;
-          return { kind: "REVIEW", level: "audit", reason: "pr4" };
+          return { kind: "REVIEW", level: "audit", reason: "injected" };
         }
         return inner!.evaluate(o, c);
       },
@@ -85,11 +85,11 @@ describe("Gate2 r1: source-order hard preconditions, approvals, bump race", () =
 
   it("A1: an approval only covers the level+reason it was given for", async () => {
     const seq: ReturnType<RiskEngine["evaluate"]> extends Promise<infer D> ? D[] : never = [
-      { kind: "REVIEW", level: "audit", reason: "pr4-audit" },
-      { kind: "REVIEW", level: "freeze", reason: "pr4-freeze" },
-      { kind: "REVIEW", level: "freeze", reason: "pr4-freeze" },
+      { kind: "REVIEW", level: "audit", reason: "injected-audit" },
+      { kind: "REVIEW", level: "freeze", reason: "injected-freeze" },
+      { kind: "REVIEW", level: "freeze", reason: "injected-freeze" },
     ];
-    const risk: RiskEngine = { evaluate: async () => seq.shift() ?? { kind: "REVIEW", level: "freeze", reason: "pr4-freeze" } };
+    const risk: RiskEngine = { evaluate: async () => seq.shift() ?? { kind: "REVIEW", level: "freeze", reason: "injected-freeze" } };
     const sys = await buildRelayer(world, { risk });
     await bridgeOut(world, world.act.user, 100n * U);
     await confirmWantos(world);
@@ -99,12 +99,12 @@ describe("Gate2 r1: source-order hard preconditions, approvals, bump race", () =
     await sys.relayer.tick();
     expect(await actions(sys.db)).toEqual([]);
     const o = (await new OrderRepo(sys.db).get(wKey(1n)))!;
-    expect(o).toMatchObject({ status: "REVIEW", reviewLevel: "freeze", reason: "pr4-freeze" });
+    expect(o).toMatchObject({ status: "REVIEW", reviewLevel: "freeze", reason: "injected-freeze" });
     expect(o.approvedAt).toBeNull();
   });
 
   it("A1: approval for the same level+reason still proceeds (via the delay queue)", async () => {
-    const risk: RiskEngine = { evaluate: async () => ({ kind: "REVIEW", level: "audit", reason: "pr4-audit" }) };
+    const risk: RiskEngine = { evaluate: async () => ({ kind: "REVIEW", level: "audit", reason: "injected-audit" }) };
     const sys = await buildRelayer(world, { risk });
     await bridgeOut(world, world.act.user, 100n * U);
     await confirmWantos(world);
@@ -179,7 +179,7 @@ describe("Gate2 r1: source-order hard preconditions, approvals, bump race", () =
   });
 
   it("B1: owner reject is refused when the payout is already Released; REJECTED never advances over a Released payout", async () => {
-    const review: RiskEngine = { evaluate: async () => ({ kind: "REVIEW", level: "audit", reason: "pr4" }) };
+    const review: RiskEngine = { evaluate: async () => ({ kind: "REVIEW", level: "audit", reason: "injected" }) };
     const sys = await buildRelayer(world, { risk: review });
     await bridgeOut(world, world.act.user, 100n * U);
     await bridgeOut(world, world.act.user2, 100n * U);
