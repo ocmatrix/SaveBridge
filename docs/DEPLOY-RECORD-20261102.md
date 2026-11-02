@@ -93,3 +93,10 @@ BSC 全局日额 `dailyCap` 5 万 → **50 万**（合约上限）。大额阈�
 
 ## 部署者钥匙销毁
 - 2026-11-02：用户确认已删除 `~/.savebridge-deployer/deployer`（目录已不存在，我核对过）。部署者不持有任何合约角色，后续服务均不使用。
+
+## 监控（rpc3）就绪记录
+- 发布 `savebridge-5ece07faf349`（main 5ece07f，含 Node family autoselection 修复）已切为 current；服务未启用未启动。
+- 配置：BSC 起点 131237000、WANTOS 起点 3460300（部署后两链桥合约无新事件，已核对）；BSC 节点 publicnode + rpc-bsc.48.club（1rpc 超时已弃用）；`wantosLowBalanceWei`=5000 USDT。
+- 凭据（服务器上，值由用户亲手输入）：telegram-bot-token / telegram-chat-id / heartbeat-url / 两个暂停口令。
+- 试运行两次：第 2 次无心跳失败；剩余告警均为预期（桥未注资、钥匙无 gas）；对账在落后追赶期被 48.club 拒绝旧区块读取，待实时运行验证。
+- 待办：两个暂停钥匙与管理/白名单钱包充 gas；旧 telegram token 备份文件 `/etc/credstore.encrypted/telegram-bot-token.savebridge-bak-*` 清理；rpc3 一次性 SSH 钥 claude-savebridge-rpc3-20261102 清理；试运行状态目录 `/var/lib/savebridge-watcher/dryrun-old*` 清理。
