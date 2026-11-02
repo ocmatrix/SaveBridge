@@ -47,12 +47,12 @@ const out = { rulesVersion: 1, params, cases: cases.map((c) => {
     const addrs = c.expect.addresses.slice(i, i + size);
     const listHash = keccak256(encodeAbiParameters([{ type: "address[]" }], [addrs]));
     const b = { count: addrs.length, listHash };
-    for (const [k, name, chainId, nonce0] of [["bsc", "BscVaultV2", params.bscChainId, params.bscNonce], ["wantos", "WantosBridgeV2", params.wantosChainId, params.wantosNonce]]) {
-      const domain = { name, version: "1", chainId, verifyingContract: CONTRACT };
+    for (const [k, nonce0] of [["bsc", params.bscNonce], ["wantos", params.wantosNonce]]) {
+      const domain = { name: "SaveBridgeWhitelist", version: "1", verifyingContract: CONTRACT }; // no chainId: one signature for both chains
       const message = { listHash, count: addrs.length, allowed, nonce: BigInt(nonce0 + i / size), deadline: BigInt(params.deadline) };
       b[k] = {
         nonce: String(nonce0 + i / size),
-        domainHash: hashDomain({ domain, types: { EIP712Domain: [{ name: "name", type: "string" }, { name: "version", type: "string" }, { name: "chainId", type: "uint256" }, { name: "verifyingContract", type: "address" }] } }),
+        domainHash: hashDomain({ domain, types: { EIP712Domain: [{ name: "name", type: "string" }, { name: "version", type: "string" }, { name: "verifyingContract", type: "address" }] } }),
         messageHash: hashStruct({ data: message, primaryType: "WhitelistBatch", types }),
         digest: hashTypedData({ domain, types, primaryType: "WhitelistBatch", message }),
       };

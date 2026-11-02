@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
@@ -32,6 +33,11 @@ abstract contract BridgeBase is
     bytes32 public constant WHITELIST_BATCH_TYPEHASH =
         keccak256("WhitelistBatch(bytes32 listHash,uint32 count,bool allowed,uint256 nonce,uint256 deadline)");
     string public constant EVENT_KEY_TAG = "WANTOS-BSC-BRIDGE-V2";
+    // Whitelist-batch signing domain: deliberately has NO chainId and one name on both chains, so that a single
+    // whitelist-wallet signature is valid on the BSC vault and the WANTOS bridge (both proxies share one address).
+    bytes32 public constant WL_DOMAIN_TYPEHASH = keccak256("EIP712Domain(string name,string version,address verifyingContract)");
+    string public constant WL_DOMAIN_NAME = "SaveBridgeWhitelist";
+    string public constant WL_DOMAIN_VERSION = "1";
 
     uint256 public constant MAX_WHITELIST_BATCH = 500;
     uint256 public constant MAX_SIGNATURE_TTL = 24 hours;
@@ -322,7 +328,38 @@ abstract contract BridgeBase is
     }
 
     function domainSeparator() external view returns (bytes32) {
-        return _domainSeparatorV4();
+        return _whitelistDomainSeparator();
+    }
+
+    function _whitelistDomainSeparator() internal view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                WL_DOMAIN_TYPEHASH, keccak256(bytes(WL_DOMAIN_NAME)), keccak256(bytes(WL_DOMAIN_VERSION)), address(this)
+            )
+        );
+    }
+
+    /// @dev Replaces the OZ domain (which would bind chainId and the per-contract name) with the whitelist domain.
+    function _hashTypedDataV4(bytes32 structHash) internal view override returns (bytes32) {
+        return MessageHashUtils.toTypedDataHash(_whitelistDomainSeparator(), structHash);
+    }
+
+    /// @dev ERC-5267: name, version and verifyingContract only (fields = 0x0b); chainId is intentionally absent.
+    function eip712Domain()
+        public
+        view
+        override
+        returns (
+            bytes1 fields,
+            string memory name,
+            string memory version,
+            uint256 chainId,
+            address verifyingContract,
+            bytes32 salt,
+            uint256[] memory extensions
+        )
+    {
+        return (hex"0b", WL_DOMAIN_NAME, WL_DOMAIN_VERSION, 0, address(this), bytes32(0), new uint256[](0));
     }
 
     /// @notice EIP-712 digest the whitelist wallet signs for a batch (for offline tooling parity).

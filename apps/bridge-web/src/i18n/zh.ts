@@ -42,7 +42,7 @@ export const zh = {
   "b2w.recipientHint": "默认为当前地址。请勿填写交易所充值地址。",
   "b2w.recipientInvalid": "收款地址无效",
   "b2w.confirmRecipient": "将存入 {amount} USDT，到账 WANTOS 地址：{to}",
-  "b2w.eta": "BSC 存入后约 15 分钟排队，到账 WANTOS。",
+  "b2w.eta": "BSC 存入后，等待 WANTOS 到账，通常几分钟内完成。",
   "b2w.notOpenNote": "当前地址未开通跨链：存入可以到账 WANTOS，但从 WANTOS 跨回 BSC 需要先开通。",
 
   "quota.today": "今日剩余额度",
@@ -65,7 +65,7 @@ export const zh = {
   "step.send": "第 2 步：提交跨链交易",
   "step.confirming": "等待链上确认…",
   "step.w2bDone": "已提交，订单 #{id}",
-  "step.b2wDone": "已存入，存入编号 #{id}，约 15 分钟到账 WANTOS",
+  "step.b2wDone": "已存入，存入编号 #{id}，等待到账 WANTOS",
 
   "order.title": "我的订单",
   "order.empty": "暂无订单",
@@ -75,7 +75,7 @@ export const zh = {
   "order.completed": "已到账",
   "order.refunding": "退款中",
   "order.refunded": "已退款",
-  "order.awaitingCredit": "BSC 已存入，等待 WANTOS 到账（约 15 分钟）",
+  "order.awaitingCredit": "BSC 已存入，等待 WANTOS 到账",
   "order.viewTx": "查看交易",
 
   "footer.contracts": "桥合约地址（请核对）",

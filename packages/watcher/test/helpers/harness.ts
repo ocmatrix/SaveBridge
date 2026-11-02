@@ -205,7 +205,7 @@ export async function whitelist(h: ChainH, addrs: Address[], allowed = true): Pr
   const listHash = keccak256(encodeAbiParameters([{ type: "address[]" }], [sorted]));
   const sig = await h.wallet(ACCOUNTS.wl).signTypedData({
     account: ACCOUNTS.wl,
-    domain: { name: h.name === "bsc" ? "BscVaultV2" : "WantosBridgeV2", version: "1", chainId: h.chainId, verifyingContract: h.bridge },
+    domain: { name: "SaveBridgeWhitelist", version: "1", verifyingContract: h.bridge },
     types: { WhitelistBatch: [{ name: "listHash", type: "bytes32" }, { name: "count", type: "uint32" }, { name: "allowed", type: "bool" }, { name: "nonce", type: "uint256" }, { name: "deadline", type: "uint256" }] },
     primaryType: "WhitelistBatch",
     message: { listHash, count: sorted.length, allowed, nonce, deadline },

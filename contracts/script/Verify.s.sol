@@ -69,6 +69,19 @@ contract Verify is Script {
         require(address(b.token()) == e.token, "Verify: token");
         require(b.peerChainId() == e.peerChainId, "Verify: peer chain");
         require(b.peerBridge() == e.proxy, "Verify: peer bridge");
+        // whitelist signing domain: no chainId, one name on both chains (hard-coded, independent of the contract's own constants)
+        require(
+            b.domainSeparator()
+                == keccak256(
+                    abi.encode(
+                        keccak256("EIP712Domain(string name,string version,address verifyingContract)"),
+                        keccak256("SaveBridgeWhitelist"),
+                        keccak256("1"),
+                        e.proxy
+                    )
+                ),
+            "Verify: whitelist domain"
+        );
 
         // ---- empty whitelist, clean state
         require(b.whitelistNonce() == 0, "Verify: whitelist not empty");
