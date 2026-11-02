@@ -116,6 +116,36 @@ describe("A-1: preparing locks the form", () => {
   });
 });
 
+describe("A-1: events that still reach disabled controls never produce a batch different from the form (T22/T23)", () => {
+  for (const kind of ["radio", "checkbox"] as const) {
+    it(`fireEvent.click on the disabled ${kind} during prepare → result discarded or consistent, never stale`, async () => {
+      const g = gatedChains();
+      render(<App cfg={w.cfg} chains={g.chains} signer={localSigner(w, w.act.wl)} initialPath="/" />);
+      const list = [keccak256(toBytes(`t2${kind}a`)).slice(0, 42), keccak256(toBytes(`t2${kind}b`)).slice(0, 42)];
+      paste(list.join("\n"));
+      await waitFor(() => expect(prepareBtn()).toBeEnabled());
+      g.arm();
+      fireEvent.click(prepareBtn());
+      await tick(200);
+      const target = kind === "radio" ? radio("移除") : (screen.getByLabelText(`选择 ${list[0]}`) as HTMLInputElement);
+      expect(target).toBeDisabled();
+      fireEvent.click(target); // jsdom still dispatches it
+      g.release();
+      await tick(500);
+      const hashes = screen.queryByTestId("hashes");
+      if (hashes === null) {
+        expect(screen.getByText(/准备期间表单已改动，请重新准备/)).toBeInTheDocument();
+      } else {
+        expect(screen.getByTestId("op")).toHaveTextContent(radio("移除").checked ? "移除" : "添加");
+        const selected = screen.getAllByRole("checkbox").filter((c) => (c as HTMLInputElement).checked).length;
+        expect(screen.getByTestId("count")).toHaveTextContent(String(selected));
+      }
+      // the form is consistent again afterwards and can be prepared
+      await waitFor(() => expect(prepareBtn()).toBeEnabled());
+    });
+  }
+});
+
 describe("A-1 (runJob path): the form is locked while signing/writing; a change that still lands stops the run", () => {
   /** wraps a signer so that its first EIP-712 signature waits on a gate */
   function gatedSigner(base: Signer) {

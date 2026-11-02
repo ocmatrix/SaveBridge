@@ -147,6 +147,27 @@ describe("whitelist batch write (two chains, §4.4 order)", () => {
     expect(j.runs.bsc.status).toBe("pending");
   });
 
+  it("B2: a tx that passes simulation but reverts on chain (nonce consumed in between) marks the chain failed", async () => {
+    const s = localSigner(w, w.act.wl);
+    const list = addrs("rv", 1);
+    const job0 = await prepareJob(w.chains, list, true, await deadline());
+    // between simulateContract and the wallet's broadcast, the batch nonce is consumed elsewhere → on-chain revert
+    const racing: typeof s = {
+      ...s,
+      write: async (chainId, req) => {
+        if (req.functionName === "applyWhitelistBatch" && chainId === BSC_ID) await invalidateNonce(w.chains.bsc, s);
+        return s.write(chainId, req);
+      },
+    };
+    const j = await runJob(job0, { chains: w.chains, signer: racing });
+    expect(j.runs.bsc.status).toBe("failed");
+    expect(j.runs.bsc.error).toContain("回滚");
+    expect(j.runs.bsc.txHash).toBeUndefined();
+    expect(j.runs.wantos.status).toBe("pending");
+    expect(isComplete(j)).toBe(false);
+    expect(await readWhitelisted(w.chains.bsc, list)).toEqual([false]);
+  });
+
   it("a non-whitelist wallet cannot write: contract rejects the signature (InvalidSigner), nothing changes", async () => {
     for (const who of [w.act.stranger, w.act.admin]) {
       const s = localSigner(w, who);

@@ -157,16 +157,27 @@ export function WhitelistPage() {
       setPreparing(false);
     }
   };
+  const runningRef = useRef(false); // double-click guard (state would be stale inside this closure)
   const run = async () => {
-    if (!job || !signer) return;
+    if (!job || !signer || runningRef.current) return;
+    runningRef.current = true;
     const g = gen.current;
     const live = () => g === gen.current;
     setRunning(true);
     try {
       const done = await runJob(job, { chains, signer, onProgress: (j) => live() && setJob(j), shouldStop: () => !live() });
-      if (live()) setJob(done);
-      else setFormNote("签名期间表单已改动，已停止；请重新准备");
+      if (!live()) {
+        setFormNote("签名期间表单已改动，已停止；请重新准备");
+        return;
+      }
+      setJob(done);
+      if (!isComplete(done)) {
+        // the button must not show 「已完成」 when a chain failed or the run stopped
+        const bad = (["bsc", "wantos"] as Side[]).find((s) => done.runs[s].status === "failed");
+        throw new Error(bad ? (done.runs[bad].error ?? `${SIDE_NAME[bad]}：失败`) : "未完成");
+      }
     } finally {
+      runningRef.current = false;
       setRunning(false);
     }
   };

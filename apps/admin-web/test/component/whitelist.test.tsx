@@ -87,8 +87,13 @@ describe("whitelist page", () => {
     wl.failNext(/^write:31337:/, "User rejected the request.");
     fireEvent.click(screen.getByRole("button", { name: "签名并写入两条链" }));
     await waitFor(() => expect(screen.getByTestId("progress")).toHaveTextContent(/BSC：已写入.*WANTOS：失败.*钱包里拒绝了/s), { timeout: 20_000 });
+    // B1: no green 「已完成」 next to the button while a chain failed
+    const runAction = () => screen.getByRole("button", { name: /重试未完成的链|已完成|签名并写入/ }).closest(".action")!;
+    expect(runAction().querySelector(".ok")).toBeNull();
+    expect(runAction().querySelector(".err")).toHaveTextContent(/WANTOS/);
     fireEvent.click(screen.getByRole("button", { name: "重试未完成的链" }));
     await waitFor(() => expect(screen.getByTestId("progress")).toHaveTextContent(/WANTOS：已写入/), { timeout: 20_000 });
+    await waitFor(() => expect(runAction().querySelector(".ok")).toHaveTextContent("已完成"));
     expect(await readWhitelisted(w.chains.wantos, parseAddressList(list.join("\n")).addresses)).toEqual([true]);
     cleanup();
   });
@@ -266,5 +271,21 @@ describe("whitelist page", () => {
         u.revokeObjectURL = saved.r;
       }
     });
+  });
+
+  it("B3: double-clicking 「签名并写入两条链」 runs once (one signature per chain)", async () => {
+    const wl = localSigner(w, w.act.wl);
+    renderApp(w, wl);
+    paste(keccak256(toBytes("dbl")).slice(0, 42));
+    await waitFor(() => expect(prepareBtn()).toBeEnabled());
+    fireEvent.click(prepareBtn());
+    await screen.findByTestId("listHash");
+    wl.log.length = 0;
+    const b = screen.getByRole("button", { name: "签名并写入两条链" });
+    fireEvent.click(b);
+    fireEvent.click(b);
+    await waitFor(() => expect(screen.getByTestId("progress")).toHaveTextContent(/BSC：已写入.*WANTOS：已写入/s), { timeout: 20_000 });
+    expect(wl.log.filter((x) => x.startsWith("sign712")).length).toBe(2);
+    expect(wl.log.filter((x) => x.startsWith("write:")).length).toBe(2);
   });
 });
