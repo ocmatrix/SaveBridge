@@ -164,7 +164,7 @@ alter table controlled_set add column effective_from timestamptz   -- NULL = 一
 
 ## Gate2 结果
 
-- 测试：`packages/risk` 81 条全绿（engine 47、indexer 16、config/pairs/store 18 含参数化、e2e 4 条在 anvil 上跑 PR-3 relayer）。全仓 `typecheck` 通过。
+- 测试：`packages/risk` 81 条全绿（含参数化展开：engine 42、indexer 16、config/pairs/store 19、e2e 4 条在 anvil 上跑 PR-3 relayer）。全仓 `typecheck` 通过。
 - 覆盖率（v8）：语句 96.11%、分支 93.56%、函数 94.52%、行 98.6%。未覆盖：`ViemIndexReader` 的 `BlockNotFoundError` 分支（indexer.ts 54-55）、`maxBlockRange` 截断分支的一侧、`store.ts` 删受控地址时的空值分支、engine 一处告警 `.catch`。
 - 变异测试（`node scripts/mutate.mjs <dir>`，在临时副本里做，跑 engine/indexer/config 测试，不含 e2e）：40 个变异，第 1 轮杀死 31 个；对 6 个真实缺口补测试后第 2 轮**杀死 37/40**。
 
