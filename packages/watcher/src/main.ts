@@ -9,7 +9,7 @@
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { LogAlertSink } from "./alerts.js";
-import { parseConfig, parseControlledSet } from "./config.js";
+import { parseConfig } from "./config.js";
 import type { Heartbeat } from "./heartbeat.js";
 import { PauseExecutor, PauseOnlySigner, type RawTxSender } from "./pauser.js";
 import { redact } from "./redact.js";
@@ -51,9 +51,6 @@ const watcher = new Watcher({
   ),
   heartbeat: logHeartbeat,
   clock: () => Math.floor(Date.now() / 1000),
-  ...(cfg.controlledSetFile
-    ? { controlledSet: { load: async () => parseControlledSet(JSON.parse(readFileSync(resolve(cfgPath, "..", cfg.controlledSetFile!), "utf8"))) } }
-    : {}),
 });
 
 await watcher.init();

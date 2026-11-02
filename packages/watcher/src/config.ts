@@ -26,11 +26,6 @@ export interface GasWatch extends WatchedAddress {
   minWei: bigint;
 }
 
-export interface ControlledEntry {
-  address: Address;
-  label: string;
-}
-
 export interface WatcherConfig {
   dataDir: string;
   minRpcAgreement: number;
@@ -56,7 +51,6 @@ export interface WatcherConfig {
   dailyCapReportRatioBps: number;
   gasWatch: GasWatch[];
   legacyAddresses: WatchedAddress[];
-  controlledSetFile: string | null;
 }
 
 type Json = Record<string, unknown>;
@@ -145,15 +139,5 @@ export function parseConfig(raw: unknown): WatcherConfig {
       return { ...w, minWei: big(obj(v, `gasWatch[${i}]`)["minWei"], `gasWatch[${i}].minWei`) };
     }),
     legacyAddresses: arr(r["legacyAddresses"] ?? [], "legacyAddresses").map((v, i) => watched(v, `legacyAddresses[${i}]`)),
-    controlledSetFile: r["controlledSetFile"] === null || r["controlledSetFile"] === undefined ? null : str(r["controlledSetFile"], "controlledSetFile"),
   };
-}
-
-/** DESIGN Appendix A, loaded from JSON (maintained by the owner; PR-6 admin writes the same shape). */
-export function parseControlledSet(raw: unknown): ControlledEntry[] {
-  const o = obj(raw, "controlled set");
-  return arr(o["entries"], "entries").map((v, i) => {
-    const e = obj(v, `entries[${i}]`);
-    return { address: addr(e["address"], `entries[${i}].address`), label: str(e["label"], `entries[${i}].label`) };
-  });
 }

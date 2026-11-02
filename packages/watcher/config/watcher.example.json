@@ -51,6 +51,5 @@
     { "chain": "wantos", "address": "0x9dAb17a9Ad061cbDA2BeF607A6A330EE74076E90", "label": "旧付款程序 0x9dab" },
     { "chain": "bsc", "address": "0x9dAb17a9Ad061cbDA2BeF607A6A330EE74076E90", "label": "旧付款程序 0x9dab" },
     { "chain": "bsc", "address": "0xeC6E356a2E986D6A9b103217B9d215c8a6F37139", "label": "旧 BSC 金库 0xec6e" }
-  ],
-  "controlledSetFile": "./controlled-set.json"
+  ]
 }

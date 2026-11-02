@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseConfig, parseControlledSet } from "../../src/config.js";
+import { parseConfig } from "../../src/config.js";
 import { MultiRpc, stableStringify } from "../../src/rpc.js";
 
 const exampleDir = join(__dirname, "../../config");
@@ -21,13 +21,6 @@ describe("config", () => {
     }
     expect(cfg.legacyAddresses.map((l) => l.address.toLowerCase())).toContain("0x8dfd39e98f478688a41cdbe40bc544d672f0a9e3");
     expect(cfg.legacyAddresses.map((l) => l.address.toLowerCase())).toContain("0x9dab17a9ad061cbda2bef607a6a330ee74076e90");
-  });
-
-  it("parses the controlled-set example (DESIGN Appendix A)", () => {
-    const set = parseControlledSet(JSON.parse(readFileSync(join(exampleDir, "controlled-set.example.json"), "utf8")));
-    expect(set.length).toBeGreaterThanOrEqual(20);
-    expect(set.map((e) => e.address.toLowerCase())).toContain("0xf974868f63a711d3f36b35a02e3a8fcbd2087c4b");
-    expect(() => parseControlledSet({ entries: [{ address: "0xnope", label: "x" }] })).toThrow();
   });
 
   it("rejects fewer RPCs than the agreement threshold, threshold < 2, bad addresses", () => {
