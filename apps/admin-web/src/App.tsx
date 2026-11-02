@@ -63,7 +63,7 @@ export function App(p: AppProps) {
   return (
     <Ctx.Provider value={ctx}>
       <header>
-        <h1>WANTOS 桥管理后台</h1>
+        <h1>跨链桥白名单管理</h1>
         {isPlaceholder(p.cfg) && <p className="err">占位构建：没有真实合约地址</p>}
         <div className="wallet">
           {p.signer ? (

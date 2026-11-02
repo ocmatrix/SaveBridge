@@ -1,6 +1,14 @@
-# Cloudflare Pages project for admin.wanto.pro (Qbit account). PR-6 produces this file and dist/ only — NOT deployed.
-# Deploy (owner, later): pnpm build:prod && wrangler pages deploy dist --project-name wanto-admin
-# Cloudflare Access: protect admin.wanto.pro/* EXCEPT /handover (DESIGN §8.4) — configured in the Zero Trust dashboard.
-name = "wanto-admin"
-pages_build_output_dir = "dist"
+# Cloudflare Workers Static Assets site for admin.wanto.pro (Qbit account, Worker "savebridge-admin"; DESIGN §8).
+# The custom domain admin.wanto.pro is already attached to this Worker in the dashboard (placeholder page), so no
+# `routes` here: a deploy keeps it. workers.dev stays closed.
+# Deploy (owner-authorised): pnpm -C apps/admin-web build:prod && pnpm -C apps/admin-web exec wrangler deploy
+# The app uses History API paths (/handover, /emergency, ...): single-page-application fallback is required.
+# Cloudflare Access (optional "privacy shield", not the security boundary, DESIGN §8.4): admin.wanto.pro/* except /handover.
+name = "savebridge-admin"
 compatibility_date = "2026-10-01"
+workers_dev = false
+preview_urls = false
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
