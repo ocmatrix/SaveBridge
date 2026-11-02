@@ -91,6 +91,14 @@ create table if not exists timelock_salts (chain_id int not null, op_id bytea no
   primary key (chain_id, op_id));
 `,
   },
+  {
+    version: 8,
+    name: "review_signatures_single_use",
+    sql: `
+create table if not exists review_signatures (msg_hash bytea primary key, event_key bytea not null, decision text not null,
+  at timestamptz default now());
+`,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {

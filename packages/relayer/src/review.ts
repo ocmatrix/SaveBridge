@@ -1,4 +1,4 @@
-import type { PublicClient } from "viem";
+import { hashMessage, type PublicClient } from "viem";
 import type { AlertSink } from "./alerts";
 import type { BridgeView } from "./chain/bridges";
 import type { Db } from "./db/types";
@@ -75,16 +75,26 @@ export class ReviewService {
       throw new Error("invalid review signature");
     }
     await this.o.db.tx(async (t) => {
+      // Gate2 r2 A-2: each signed decision is single-use. Keyed on the signed MESSAGE hash, so a
+      // re-encoded (e.g. high-s) signature of the same message is refused as well.
+      const used = await t.query(
+        "insert into review_signatures (msg_hash, event_key, decision, at) values ($1, $2, $3, $4) on conflict do nothing returning msg_hash",
+        [toBytes(hashMessage(message)), toBytes(r.eventKey), r.decision, this.o.now()],
+      );
+      if (used.rows.length !== 1) throw new Error("review signature already used");
       const tr = new OrderRepo(t, this.o.now);
       if (r.decision === "reject") {
         if (!(await tr.move(order, "REJECTED", { reason: "review_rejected" }))) throw new Error("order changed concurrently");
       } else {
         // The approval is scoped to the REVIEW level+reason being approved; re-entering REVIEW with a
         // different level or reason clears it (OrderRepo.move).
-        await t.query(
-          "update orders set approved_at = $2, approved_by = $3, approved_level = $4, approved_reason = $5 where event_key = $1 and status = 'REVIEW'",
+        const upd = await t.query(
+          `update orders set approved_at = $2, approved_by = $3, approved_level = $4, approved_reason = $5
+            where event_key = $1 and status = 'REVIEW' and review_level is not distinct from $4 and reason is not distinct from $5
+            returning event_key`,
           [toBytes(r.eventKey), this.o.now(), toBytes(admin), order.reviewLevel, order.reason],
         );
+        if (upd.rows.length !== 1) throw new Error("order changed concurrently; approval not recorded");
       }
       await t.query("insert into audit_log (actor, action, payload, at) values ($1, $2, $3, $4)", [
         admin,
