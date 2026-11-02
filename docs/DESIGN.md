@@ -325,7 +325,7 @@ BSC 放款：`None / Queued / Released / Voided`（撤销排队 = 作废）。WA
 | BSC | `releaseDelay` | 12h | 6h ～ 7 天 |
 | BSC | `minDeposit` / `maxDepositPerTx` | 10 / 2,000（试运营取 1000 万） | `minDeposit` ≤ 2 万；`maxDepositPerTx` ≤ 1000 万 |
 | WANTOS | `w2bMinAmount` / `w2bPerAddrDailyCap`（也是单笔上限） | 10 / 2,000 | 10 ～ 2 万 |
-| WANTOS | `b2wDailyCap` | 3,000（试运营取 1000 万） | 500 ～ 1000 万 |
+| WANTOS | `b2wDailyCap`（每个 UTC 日，非总额） | 3,000（试运营取 1 亿） | 500 ～ 1 亿 |
 | WANTOS | `b2wDelay` | 15 分钟 | 10 分钟 ～ 24h |
 | WANTOS | `supplyCeiling` | 部署时 `totalSupply` + 1 万 | 降低不得低于当前 `totalSupply` |
 

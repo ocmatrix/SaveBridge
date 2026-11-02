@@ -199,13 +199,13 @@ contract WantosEdgeCasesTest is WantosFixture {
         bridge.setParams(p);
     }
 
-    function test_b2wDailyCapReachesTenMillion() public {
+    function test_b2wDailyCapReachesHundredMillion() public {
         WantosBridgeV2.Params memory p = _wParams();
-        p.b2wDailyCap = 10_000_000 * U;
+        p.b2wDailyCap = 100_000_000 * U;
         vm.prank(address(tl));
         bridge.setParams(p);
-        assertEq(bridge.params().b2wDailyCap, 10_000_000 * U);
-        p.b2wDailyCap = 10_000_000 * U + 1;
+        assertEq(bridge.params().b2wDailyCap, 100_000_000 * U);
+        p.b2wDailyCap = 100_000_000 * U + 1;
         vm.prank(address(tl));
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.ParamOutOfRange.selector, 2));
         bridge.setParams(p);
