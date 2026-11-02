@@ -1,0 +1,10 @@
+# Cloudflare Worker that forwards admin.wanto.pro/api/* to the relayer admin API (DESIGN §8.2). NOT deployed in PR-6.
+# The Worker is untrusted: it only forwards; the relayer verifies the SIWE session and every signed decision.
+name = "wanto-admin-api"
+main = "forward.ts"
+compatibility_date = "2026-10-01"
+routes = [{ pattern = "admin.wanto.pro/api/*", zone_name = "wanto.pro" }]
+
+[vars]
+# Relayer admin API origin (server A), e.g. https://relayer-a.internal.example — set at deploy time.
+RELAYER_ORIGIN = ""

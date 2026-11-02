@@ -1,0 +1,22 @@
+{
+  "name": "@bridge/offline-check",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "WANTOS bridge v2 offline whitelist-batch checker (single file, zero dependencies)",
+  "bin": { "wantos-offline-check": "./offline-check.mjs" },
+  "main": "./offline-check.mjs",
+  "types": "./offline-check.d.mts",
+  "files": ["offline-check.mjs", "offline-check.d.mts", "vectors.json"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@bridge/abi": "workspace:*",
+    "@vitest/coverage-v8": "^4.1.12",
+    "viem": "^2.57.13",
+    "vitest": "^4.1.12"
+  }
+}
