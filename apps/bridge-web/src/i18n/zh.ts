@@ -28,7 +28,6 @@ export const zh = {
   "steps.hint": "第 1 步 授权 › 第 2 步 提交跨链",
   "amount.approveNote": "授权只用本次金额 {amount} USDT。",
   "amount.receive": "接收金额（USDT）",
-  "footer.contract": "桥合约（两条链相同）",
   "wallet.retry": "重试",
 
   "net.wrong": "当前网络不是 {chain}，请切换",
@@ -94,10 +93,7 @@ export const zh = {
   "order.awaitingCredit": "BSC 已存入，等待 WANTOS 到账（约 15 分钟）",
   "order.viewTx": "查看交易",
 
-  "footer.contracts": "桥合约地址（请核对）",
-  "footer.wantos": "WANTOS 桥",
-  "footer.bsc": "BSC 桥",
-  "footer.notice": "本页只会向以上桥合约和 USDT 合约发起交易，授权只用精确金额。",
+  "footer.notice": "仅白名单地址开通跨链",
 
   "err.notWhitelisted": "跨链未开通，请联系客服",
   "err.paused": "跨链桥维护中，暂停操作，请稍后再试",

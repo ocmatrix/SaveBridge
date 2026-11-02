@@ -30,7 +30,6 @@ export const en: Dict = {
   "steps.hint": "Step 1 approve › Step 2 submit",
   "amount.approveNote": "The approval covers this amount only: {amount} USDT.",
   "amount.receive": "Amount received (USDT)",
-  "footer.contract": "Bridge contract (same on both chains)",
   "wallet.retry": "Retry",
 
   "net.wrong": "Your wallet is not on {chain}. Please switch.",
@@ -96,10 +95,7 @@ export const en: Dict = {
   "order.awaitingCredit": "Deposited on BSC, awaiting WANTOS credit (~15 minutes)",
   "order.viewTx": "View transaction",
 
-  "footer.contracts": "Bridge contracts (verify before use)",
-  "footer.wantos": "WANTOS bridge",
-  "footer.bsc": "BSC bridge",
-  "footer.notice": "This page only sends transactions to the bridge and USDT contracts above, and only approves exact amounts.",
+  "footer.notice": "Bridging is enabled for whitelisted addresses only",
 
   "err.notWhitelisted": "Bridging is not enabled for this address. Please contact support.",
   "err.paused": "The bridge is under maintenance. Please try again later.",

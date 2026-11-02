@@ -86,7 +86,7 @@ function Page() {
           {/* amounts are formatted with chain decimals: no state (e.g. decimals mismatch) → no order list */}
           {address && state.data && <Orders orders={orders.data} decimals={{ wantos: state.data.wantos.decimals, bsc: state.data.bsc.decimals }} />}
         </div>
-        <Footer key={cfg.wantos.bridge} />
+        <Footer />
       </main>
     </div>
   );

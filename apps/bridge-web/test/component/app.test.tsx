@@ -183,11 +183,11 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     expect(screen.queryByRole("dialog", { name: "选择钱包" })).toBeNull();
   });
 
-  it("footer shows the bridge address from config (the same on both chains)", async () => {
+  it("footer is the one-line hint: only whitelisted addresses can bridge (no contract address, no extra text)", async () => {
     renderApp(env.cfg, KEYS.alice.address);
     const footer = screen.getByRole("contentinfo");
-    expect(within(footer).getAllByText(env.cfg.wantos.bridge).length).toBeGreaterThan(0);
-    expect(within(footer).getAllByText(env.cfg.bsc.bridge).length).toBeGreaterThan(0);
+    expect(footer).toHaveTextContent("仅白名单地址开通跨链");
+    expect(footer.textContent).toBe("仅白名单地址开通跨链");
   });
 
   it("orders come through the replaceable StatusProvider; risk states are shown as 处理中", async () => {

@@ -122,11 +122,10 @@ body { margin: 0; color: var(--text); }
 .order-amount, .order-status { text-align: right; }
 .order-status { font-weight: 600; font-size: 13px; color: #8a5200; }
 .st-completed .order-status, .st-refunded .order-status { color: var(--ok); }
-.order a, .foot a { color: var(--blue); font-weight: 600; text-decoration: none; font-size: 12px; margin-right: 8px; }
+.order a { color: var(--blue); font-weight: 600; text-decoration: none; font-size: 12px; margin-right: 8px; }
 
 /* footer: the bridge address, to compare with the announced one */
 .foot { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-top: 18px; font-size: 12px; color: var(--muted); text-align: center; }
-.foot code { font-size: 11px; word-break: break-all; }
 
 .testnet-banner { position: sticky; top: 0; z-index: 20; background: #b42318; color: #fff; text-align: center; padding: 8px; font-weight: 700; margin: 0 -16px; }
 
