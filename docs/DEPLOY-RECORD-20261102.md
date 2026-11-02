@@ -62,3 +62,23 @@ BSC 全局日额 `dailyCap` 5 万 → **50 万**（合约上限）。大额阈�
 - 实现合约链上字节码与本地编译一致，仅有 60 个字节差异，位于 UUPS 的 immutable（合约自身地址）处；广播的 initcode 与本地编译逐字节相同。
 - forge 在 `--slow` 过程中打印过「dropped from the mempool」提示，但三笔均已上链确认，该提示无影响。
 - BSC 代理部署区块 = 监控 `startBlock` = **131219867**（时间锁在 131219862）。回执中确认已授予：RELAYER 0xbf5c…6436、PAUSER 0x4340…3c3d、白名单钱包 0x8F36…F4A9；时间锁提议人 = 管理钱包 0x860f…5669。
+
+## WANTOS 主网部署（G3，负责人 2026-11-02 授权并亲自输入钥匙密码）
+
+| nonce | 合约 | 地址（与 BSC 相同） | 交易 | 区块 |
+|---|---|---|---|---|
+| 0 | BridgeTimelock | 0xf60D6D98E1878c7f499788c19efcD671d00d8aC4 | 0x2ca8a807e1ef2508ec3c3423e92ed1a80a5c51d7a739958c76de1f97b2b234f0 | 3458824 |
+| 1 | WantosBridgeV2（实现） | 0x31BC1C89D0cB80C8f0e1b3d190cf8d096465d765 | 0x4f9e73df8862113b61b3ce44cb8d66a800bd725fd731981954c04a7ce453cdb3 | 3458825 |
+| 2 | ERC1967Proxy（桥） | 0xe2fD0F2Ee8041Ff1bDA023e6Fca65ba889114AD5 | 0xe70af4d9d26d664d5920918b6609f39d2c3858d7547b962629250a4d8e15ea66 | 3458826 |
+
+- WANTOS 监控 `startBlock` = **3458826**（代理部署区块）。
+- 三笔均成功，部署者 nonce = 3；实际花费 0.273 WANT，部署者余额剩约 1.727 WANT。
+- 验收脚本 `Verify.s.sol` 在 WANTOS 上全部通过（含 `supplyCeiling` 3001 万）；实现合约链上字节码与本地编译仅有 60 字节差异（UUPS immutable），广播 initcode 与本地逐字节相同。
+- 两条链的桥地址相同：**0xe2fD0F2Ee8041Ff1bDA023e6Fca65ba889114AD5**。
+
+## 部署后待办（按顺序）
+
+1. 部署者收尾：用同一钥匙把误转的 2 USDT 退回，并退回剩余 BNB / WANT；然后销毁部署者钥匙（需负责人给出完整收款地址）。
+2. 开源验证三个合约（BscScan 与 scan.wantos.io）。
+3. 写监控 / 付款程序的真实配置（桥、时间锁地址、startBlock、BSC 节点、心跳、Telegram），启动顺序：监控 → 付款程序。
+4. 首批白名单（白名单钱包两链各签一次）→ 注资 → 冒烟 → 开放。
