@@ -23,7 +23,7 @@ contract DeployFast is Deploy {
     ///      (so this script can never be used to push a production build with test parameters either).
     function _requireBuildWindows() internal override {
         _requireTestnetChain();
-        BridgeTimelock t = new BridgeTimelock(address(this), address(this));
+        BridgeTimelock t = new BridgeTimelock(address(0xA11CE), address(0xB0B)); // throw-away probe
         BridgeBase b = BridgeBase(address(new BscVaultV2()));
         BridgeBase w = BridgeBase(address(new WantosBridgeV2()));
         require(

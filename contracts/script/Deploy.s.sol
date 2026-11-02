@@ -36,7 +36,7 @@ contract Deploy is Script {
     ///         simulates the whole run before sending anything, so a mismatch never reaches a chain.
     ///         Overridden only by the testnet-fast DeployFast script (chain-id gated).
     function _requireBuildWindows() internal virtual {
-        BridgeTimelock t = new BridgeTimelock(address(this), address(this));
+        BridgeTimelock t = new BridgeTimelock(address(0xA11CE), address(0xB0B)); // throw-away probe
         BridgeBase b = BridgeBase(address(new BscVaultV2()));
         BridgeBase w = BridgeBase(address(new WantosBridgeV2()));
         require(
