@@ -80,6 +80,14 @@ step_release() {
 
 systemd_major() { systemctl --version 2>/dev/null | awk 'NR==1{print $2}' || echo 0; }
 
+# unit_for_systemd FILE : prints a unit file; on systemd < 250 (e.g. Ubuntu 22.04 = 249) LoadCredentialEncrypted=
+# is not available, so it is rewritten to LoadCredential= (the same root-only files in $SB_CREDSTORE, see put_credential).
+unit_for_systemd() {
+  if (( $(systemd_major) >= 250 )); then cat "$1"; else sed 's/^LoadCredentialEncrypted=/LoadCredential=/' "$1"; fi
+}
+# cred_property : the -p property name matching the installed systemd (used by dry-run-service)
+cred_property() { if (( $(systemd_major) >= 250 )); then echo LoadCredentialEncrypted; else echo LoadCredential; fi; }
+
 # put_credential NAME : reads a secret from the terminal (no echo, never argv / env / history) and stores it
 # encrypted with the host credential key (systemd-creds, systemd >= 250) under $SB_CREDSTORE/NAME.
 # On older systemd it falls back to a 0600 root-only file that the unit loads with LoadCredential=.

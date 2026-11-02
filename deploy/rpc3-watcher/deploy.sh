@@ -32,7 +32,7 @@ step_preflight() {
   local f="$BASELINE_DIR/before.txt"
   # shellcheck disable=SC2016 # expanded by the inner sh
   sb_log "OS: $(probe sh -c '. /etc/os-release; echo "$PRETTY_NAME"')  systemd: $(systemd_major)"
-  if (( $(systemd_major) < 250 )); then sb_warn "systemd < 250: no LoadCredentialEncrypted — the unit must be switched to LoadCredential= with root-only files (README §rpc3)"; fi
+  if (( $(systemd_major) < 250 )); then sb_warn "systemd < 250: no LoadCredentialEncrypted — the systemd step installs the unit with LoadCredential= and the credentials are root-only 0600 files (README §4 note)"; fi
   sb_log "running services (look for the node / blockscout / shim names):"; probe systemctl list-units --type=service --state=running --no-pager --plain | awk '{print $1}' | head -60 >&2
   for s in "${NEIGHBOURS[@]}"; do sb_log "$s: $(probe systemctl is-active "$s")"; done
   probe free -m >&2; probe df -h / /data >&2
@@ -83,7 +83,7 @@ step_config() {
 
 step_systemd() {
   require_root
-  put_file /etc/systemd/system/savebridge-watcher.service 0644 root:root <"$HERE/files/savebridge-watcher.service"
+  put_file /etc/systemd/system/savebridge-watcher.service 0644 root:root < <(unit_for_systemd "$HERE/files/savebridge-watcher.service")
   run systemctl daemon-reload
   if have systemd-analyze; then probe systemd-analyze security savebridge-watcher.service | tail -1 >&2; fi
   sb_log "unit installed but NOT enabled / started (owner-authorised: '$0 start --apply')"
@@ -93,7 +93,7 @@ step_dry_run_service() {
   # one tick without the ability to pause, as the service user, to validate config + RPCs (no writes)
   require_root
   local creds=() c
-  for c in pauser-bsc-pass pauser-wantos-pass telegram-bot-token telegram-chat-id heartbeat-url; do creds+=(-p "LoadCredentialEncrypted=$c:$SB_CREDSTORE/$c"); done
+  for c in pauser-bsc-pass pauser-wantos-pass telegram-bot-token telegram-chat-id heartbeat-url; do creds+=(-p "$(cred_property)=$c:$SB_CREDSTORE/$c"); done
   run systemd-run --wait --pipe --uid="$SB_USER" --gid="$SB_USER" -p EnvironmentFile=/etc/savebridge-watcher/rpc.env "${creds[@]}" \
     -p WorkingDirectory="$SB_OPT/current/packages/watcher" /opt/node/bin/node --import tsx src/main.ts --config "$SB_ETC/watcher.json" --dry-run --once
 }
