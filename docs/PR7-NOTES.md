@@ -1,6 +1,7 @@
 # PR-7 独立监控 Watcher（服务器 B）：实现说明、配置、偏差与待决、运维手册草稿
 
 > 依据：`docs/DESIGN.md` v0.9.4 §9（9.1 / 9.2 / 9.3）、§4.3 C、§5.3、§6.2、§11；`docs/PR1-NOTES.md` §5（以实际 ABI `@bridge/abi` 为准）。分支 `pr-7-watcher`。
+> **v0.9.5 同步（2026-11-02）**：风控只靠白名单，监控删除受控集合相关配置（`controlledSetFile`）与两个二级告警（`CONTROLLED_SET_CHANGED`、`CONTROLLED_FUNDS_MOVED`）；旧地址监控与 §9.1 / §9.2 核对不变。
 > 范围：只写代码与本地测试。**未连接任何真实网络 / 节点，未接入 Telegram / 短信 / 电话 / 心跳服务，未发送真实链上交易，未读写真实私钥。** 测试只用本机两个 `anvil`（随机端口，127.0.0.1）与 anvil 公开默认账户。17 条决定未改。
 
 ## 0. GATE2 第 1 轮修复（v2）摘要
@@ -84,7 +85,7 @@
 
 | 文件 | 内容 |
 |---|---|
-| `packages/watcher/src/watcher.ts` | 主循环 `tick()`：WANTOS 回滚检查 → 两链推进游标并处理事件 → §9.1 到期核对 → 时间锁提醒 → 周期任务（§9.2 对账、心跳、gas、旧地址 nonce、受控集合）→ 快照 + 落盘 |
+| `packages/watcher/src/watcher.ts` | 主循环 `tick()`：WANTOS 回滚检查 → 两链推进游标并处理事件 → §9.1 到期核对 → 时间锁提醒 → 周期任务（§9.2 对账、心跳、gas、旧地址 nonce）→ 快照 + 落盘 |
 | `src/verifier.ts` | §9.1 四类核对的独立复核：目标事件存在、未被取消、源链事实成立，**每一步都在全部 RPC 上分别计算、要求 ≥2 一致且无矛盾** |
 | `src/pauser.ts` | PAUSER：`PauseOnlySigner`（类型 + 运行时双重限制只能发 `pause()`）、`PauseExecutor`（幂等、`EnforcedPause` = 成功、重试） |
 | `src/rpc.ts` | `MultiRpc`：`all`（全部 RPC，用于并集摄取与最小安全头）、`consensus`（条件 ②）、`primary`（只用于无安全含义的读：gas、nonce、参数、时钟比对） |
@@ -92,14 +93,13 @@
 | `src/alerts.ts` | 三级告警码表、`AlertManager`（去重、一级 24h 重复直到 ack、三级日报）、`MemoryAlertSink` / `LogAlertSink` / `MultiAlertSink`（真实通道 PR-10 实现） |
 | `src/heartbeat.ts` | `Heartbeat` 接口、`MemoryHeartbeat`、`RelayerProbe` 接口 |
 | `src/state.ts` / `src/types.ts` | 持久化状态（单 JSON 文件，临时文件 + rename 原子替换）与类型 |
-| `src/config.ts` | 配置解析与校验；受控集合 JSON 解析 |
+| `src/config.ts` | 配置解析与校验 |
 | `src/events.ts` | 事件解码、`computeEventKey`（与 PR1-NOTES §5.2 逐字一致，有测试对照合约）、时间锁调用解码 |
 | `src/wiring.ts` | 生产装配：每个 URL 一个独立 viem client、`multiRpcPauseReader`、`viemRawTxSender`（适配器，只能被 `PauseOnlySigner` 包裹） |
 | `src/main.ts` | 服务器 B 入口（测试不覆盖、本 PR 未运行）。**签名器 / 告警通道 / 心跳通道故意未接**：没有签名器时拒绝启动，`--dry-run` 才能运行（暂停会以 `PAUSE_FAILED` 一级失败），告警输出到 stdout + `alerts.jsonl`；PR-10 接 KMS 签名器与真实通道 |
 | `config/watcher.example.json` | 配置示例：RPC 全是 `*.example.invalid` 占位；桥 / 时间锁 / 钱包地址为占位；只出现 DESIGN 中的主网地址（USDT、旧金库、旧付款程序） |
-| `config/controlled-set.example.json` | 附录 A 受控集合（22 条），可加载 |
 | `test/helpers/harness.ts` | 两条本地 anvil（BSC 本地 chainId 5600、`--slots-in-an-epoch 1` 使 `finalized = latest − 2`；WANTOS 本地 13500）+ 用 `out/*.json` 字节码按 §5.1 nonce 0/1/2 部署两链（地址相同）+ EIP-712 白名单批次 |
-| `test/unit/*`、`test/integration/*` | 170 个测试，见 §0、§0b、§8 |
+| `test/unit/*`、`test/integration/*` | 169 个测试（v0.9.5 删除 1 个受控集合用例，原 170），见 §0、§0b、§8 |
 
 依赖：只依赖 `@bridge/abi` 与 `viem`；**不依赖 `@bridge/relayer`，不读付款程序数据库**。
 
@@ -111,10 +111,10 @@
 
 1. **flushDaily**：跨 UTC 日时发出前一日的三级日报。
 2. **WANTOS 回滚检查（§9.1-5 / §6.2）**：在全部 RPC 上取游标区块的 hash；≥2 一致且与游标不同 → 一级 `WANTOS_REORG` + **暂停两条链** + 回退到最近一个仍在主链上的状态快照（找不到则从 `startBlock` 全量重放）。RPC 意见不一 → 二级 `RPC_DISAGREE`，本轮不推进 WANTOS、不暂停。
-3. **推进游标**：安全头 = 各 RPC 的最小值——BSC 取 `finalized`（回答的 RPC 少于 `minRpcAgreement` → 二级 `BSC_NO_FINALIZED`，等待）；WANTOS 取 `latest − confirmations`（默认 6）。按 `maxBlockRange` 分段，**在每个 RPC 上**各做一次 `eth_getLogs` 并取并集（桥 + 时间锁全部事件；USDT `Transfer` 中 from=0x0 / 旧地址 / 受控地址；旧合约地址发出的任何日志），按 (区块, logIndex) 顺序处理，段尾写入游标 `{number, hash, timestamp}`。失败的段下轮按游标重试（断线补扫）。
+3. **推进游标**：安全头 = 各 RPC 的最小值——BSC 取 `finalized`（回答的 RPC 少于 `minRpcAgreement` → 二级 `BSC_NO_FINALIZED`，等待）；WANTOS 取 `latest − confirmations`（默认 6）。按 `maxBlockRange` 分段，**在每个 RPC 上**各做一次 `eth_getLogs` 并取并集（桥 + 时间锁全部事件；USDT `Transfer` 中 from=0x0 / 旧地址；旧合约地址发出的任何日志），按 (区块, logIndex) 顺序处理，段尾写入游标 `{number, hash, timestamp}`。失败的段下轮按游标重试（断线补扫）。
 4. **§9.1 到期核对**（见 §3）。
 5. **时间锁提醒**：每个未执行未取消的提议在可执行前 24h、6h 各一次。
-6. **周期任务**：对账（默认每小时）、心跳（每 5 分钟）、gas / 旧地址 nonce / 受控集合（每 5 分钟）。
+6. **周期任务**：对账（默认每小时）、心跳（每 5 分钟）、gas / 旧地址 nonce（每 5 分钟）。
 7. 一级告警 24h 重复；保存快照（最多 16 个）；原子落盘。
 
 ## 3. §9.1 实时核对
@@ -184,7 +184,6 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 | 二 | `PAUSER_REVOKED` | 暂停钥匙被吊销 |
 | 二 | `UPGRADE_EXECUTED` | `Upgraded` |
 | 二 | `MINT` | 增发（累计未超阈值） |
-| 二 | `CONTROLLED_SET_CHANGED` | 受控集合文件变更（列出增删） |
 | 二 | `PARAMS_INCONSISTENT` / `PARAMS_UPDATED` / `SUPPLY_CEILING_UPDATED` | 跨链参数不一致 / 参数或时间锁延迟变更 / supplyCeiling 变更 |
 | 二 | `RESERVE_LOW` / `WANTOS_BALANCE_LOW` | 储备不足 1 天 / WANTOS 桥余额偏低 |
 | 二 | `INDEX_LAG` / `WANTOS_STALLED` / `BSC_NO_FINALIZED` / `RPC_UNREACHABLE` | 监控落后 / 出块停滞 / 取不到 finalized / RPC 不可达 |
@@ -194,7 +193,6 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 | 二 | `RECONCILE_SHORTFALL` / `RECONCILE_FAILED` | 对账短缺 / 对账失败 |
 | 二 | `GAS_LOW` | 两个钱包或暂停钥匙 gas 不足（`gasWatch`，两链分别配置） |
 | 二 | `LEGACY_ACTIVITY` | 旧金库 `0x8dFd` / 旧付款程序 `0x9dab`（及其他配置的旧地址）：USDT 转入 / 转出、合约发出日志、EOA nonce 增加 |
-| 二 | `CONTROLLED_FUNDS_MOVED` | 受控地址的 WANTOS-USDT 转入 / 转出 |
 | 二 | `WHITELIST_FROZEN` / `VOID_FUTURE_SOURCE` / `WITHDRAWN` / `TIMELOCK_REMINDER` / `TIMELOCK_CANCELLED` / `HEARTBEAT_FAILED` | 冻结 / 解冻；作废了尚不存在的来源编号（PR1-NOTES §5.11a-2）；储备提取已执行；时间锁 24h / 6h 提醒；提议被取消；心跳报到失败 |
 | 三 | `DAILY_REPORT` | 每 UTC 日一份：`WHITELIST_BATCH`（地址数、`listHash`、nonce、本链交易哈希——两链各一条）、`EMERGENCY_REMOVAL`、`DAILY_CAP_70`、`RELEASE_QUEUED`、`REFUND_REQUESTED`、`DEPOSIT_REFUND_REQUESTED`、`SOURCE_VOIDED`、`LEGACY_PAID`、`RECONCILE_SURPLUS` |
 
@@ -217,7 +215,6 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 | `dailyCapReportRatioBps` | 7000 |
 | `gasWatch[]` | `{chain, address, label, minWei}`：管理钱包、白名单钱包、暂停钥匙（两链） |
 | `legacyAddresses[]` | `{chain, address, label}`：`0x8dFd`（WANTOS）、`0x9dab`（两链）、`0xec6e`（BSC） |
-| `controlledSetFile` | 受控集合 JSON（`{entries:[{address,label}]}`，附录 A 示例） |
 
 秘密不进配置：暂停钥匙在 `RawTxSender` 适配器后（KMS），告警 / 心跳令牌按名字引用。
 
@@ -239,7 +236,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 | P10 | WANTOS 侧 `Released`（B2W 执行）不单独核对（排队时已核对） | §9.1 只列 `ReleaseQueued` | 按规格；见风险 R3 |
 | P11 | 回滚处理：暂停两链后，自动回退到最近一个游标仍在主链上的状态快照并重新摄取（快照 16 个；都不在主链则从 `startBlock` 重放）；告警去重不回退；`meta.decided` 不回退，**但恢复点之后判定的 W2B / 存款退款项会重新打开**（其源在 WANTOS，可能已成孤块，B5） | §6.2 | 孤块事件不计入；源事件被回滚掉的付款会被重新核对 |
 | P13 | POC-E 回归测试的断言由「暂停 或 CURSOR_STUCK / INDEX_LAG」改为「游标越过冻结高度 + `RPC_LAGGING` + 暂停或一级（CURSOR_STUCK / CHECK_OVERDUE / RPC_DISSENTING）」：冻结节点对回执返回 null，按严格规则 Verifier 暂缓，不会自动暂停（建议 6 在 backlog） | §9.1 条件 ② | 暂停决定保持严格 |
-| P12 | 受控地址资金动作只监控 WANTOS-USDT 的 `Transfer`；旧地址额外监控 nonce（EOA 发交易）和合约日志；原生币转账未监控 | §9.3 | 避免全块扫描；见风险 R5 |
+| P12 | 旧地址资金动作只监控 USDT 的 `Transfer`，另监控 nonce（EOA 发交易）和合约日志；原生币转账未监控 | §9.3 | 避免全块扫描；见风险 R5 |
 
 ### 7.2 待决
 
@@ -269,7 +266,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 | `Funded` | `Funded(from, amount)` |
 | 时间锁提议 | OZ `CallScheduled(id, index, target, value, data, predecessor, delay)`；执行 `CallExecuted`；取消 `Cancelled`；`CallSalt` / `ProposalRecorded` 忽略 |
 | 交接 / 恢复 | 桥：`WhitelistManagerTransferStarted/Cancelled`、`WhitelistManagerChanged`、`WhitelistRecoveryStarted/Cancelled`；时间锁：`AdminTransferStarted`、`AdminTransferred`、`AdminRecoveryStarted/Cancelled` |
-| 受控集合 / 白名单日报 | `WhitelistBatchApplied`、`WhitelistEmergencyRemoval`（`WhitelistUpdated`、`WhitelistNonceInvalidated` 未单独推送） |
+| 白名单日报 | `WhitelistBatchApplied`、`WhitelistEmergencyRemoval`（`WhitelistUpdated`、`WhitelistNonceInvalidated` 未单独推送） |
 
 **发现的不一致**：
 1. 规格"BSC `Released`/`ReleaseQueued` … 或属于旧单补付批次"——合约里旧单补付不发 `Released`，该豁免条件在实现上不存在（P4）。
@@ -278,7 +275,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 
 ## 8. 测试（DH L2）
 
-`pnpm -r typecheck` 通过；`pnpm -r test`：**17 个文件 / 170 个测试全部通过**（约 4 秒，两条本地 anvil）。变异重跑结果见 GATE2 第 2、3 次与最终报告。
+`pnpm -r typecheck` 通过；`pnpm -r test`：**17 个文件 / 170 个测试全部通过**（约 4 秒，两条本地 anvil）。v0.9.5 清理后为 17 个文件 / 169 个测试（删除「受控集合示例解析」1 个用例）。变异重跑结果见 GATE2 第 2、3 次与最终报告。
 
 覆盖率（`vitest run --coverage`，`src/main.ts`、`src/index.ts` 除外）：语句 94.98%、分支 85.6%、函数 99.41%、行 96.55%。核心逻辑：`watcher.ts` 行 95.1% / 语句 94.3%，`verifier.ts` 行 98.6% / 语句 92.4%，`pauser.ts` 行 100% / 语句 93.9%，`rpc.ts` 100%，`alerts.ts` 100%。
 
@@ -308,7 +305,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 | §9.2 正常 / 多出不报警 / 短缺告警 | `mint-reconcile > reconciliation: exact balance → nothing; unregistered surplus …`、`… a shortfall beyond tolerance → level-2 alert (no pause)` |
 | §9.2 储备 0.5 天一级 / 1 天二级 / WANTOS 偏低 | `mint-reconcile > reserves: …` |
 | 一级：时间锁提议（含批量）、角色 / 交接 / 恢复、失联、重复 24h | `alerts > timelock: new proposal …`、`alerts > timelock batch proposal …`、`alerts > key / handover / recovery changes …`、`alerts > heartbeat every 5 minutes …`、`alerts > level-1 alerts repeat after 24h until acknowledged` |
-| 二级：暂停 / 解除、吊销暂停钥匙、升级、提取、参数不一致、作废未来编号、冻结、gas、旧地址、受控地址、受控集合变更、落后 / 停滞、心跳失败 | `alerts > pause / unpause / freeze / params …`、`alerts > key / handover …`（PAUSER_REVOKED）、`alerts > timelock batch …`（UPGRADE_EXECUTED / WITHDRAWN）、`alerts > gas below threshold …`、`alerts > legacy vault / relayer activity …`、`alerts > WANTOS block production stall and index lag …` |
+| 二级：暂停 / 解除、吊销暂停钥匙、升级、提取、参数不一致、作废未来编号、冻结、gas、旧地址、落后 / 停滞、心跳失败 | `alerts > pause / unpause / freeze / params …`、`alerts > key / handover …`（PAUSER_REVOKED）、`alerts > timelock batch …`（UPGRADE_EXECUTED / WITHDRAWN）、`alerts > gas below threshold …`、`alerts > legacy vault / relayer activity …`、`alerts > WANTOS block production stall and index lag …` |
 | 三级日报（白名单批次两链哈希、紧急移除、70%、排队 / 退款 / 作废、旧单补付） | `alerts > whitelist batches, emergency removals and queue/void summaries go to the level-3 daily report`、`mint-reconcile > daily report: BSC used ≥ 70% …`、`alerts > timelock batch …`（LEGACY_PAID）、`state-alerts > collects level-3 entries …` |
 | 入口无签名器拒绝启动；状态文件 .bak 回退；告警失败入 outbox；错误脱敏 | `misc > B8 …`、`state-alerts > B8 … / B2 …`、`redact > …` |
 
@@ -318,7 +315,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 1. 服务器 B 与服务器 A 不同机器、不同云账户；不放付款程序的任何凭据与数据库连接。
 2. **至少 3 个**独立 RPC / 链（WANTOS 建议：自建节点 + 两个其他节点；BSC：三个不同服务商），`minRpcAgreement = 2`；配错链的 RPC 会被自动剔除并一级告警。
 3. 暂停钥匙：两条链各一把，经 KMS 适配器实现 `RawTxSender`，只交给 `PauseOnlySigner`；每条链 gas 备足并加入 `gasWatch`。
-4. 填 `startBlock` = 两链桥代理的部署区块；`legacyAddresses`、`controlledSetFile` 按负责人确认的清单。
+4. 填 `startBlock` = 两链桥代理的部署区块；`legacyAddresses` 按负责人确认的清单。
 5. 外部心跳服务：超时（建议 10 分钟）直接电话 / 短信负责人。告警通道接一级电话 + 短信、二级即时消息、三级日报。
 
 **启动**：`tsx src/main.ts --config <path>`（建议 systemd，`Restart=always`）；本 PR 中只能 `--dry-run`。启动时校验每个 RPC 的 chainId 与两链代币 decimals，不符拒绝启动。状态文件：`<dataDir>/state.json`（上一版本 `state.json.bak`，主文件损坏时自动回退）；告警流水：`<dataDir>/alerts.jsonl`（错误信息已脱敏）。
@@ -345,7 +342,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 | R2 | 源链进度落后（条件 ①）或 RPC 分歧（条件 ②）持续到 B2W `eta` 时，可疑入账可能被执行 | 三条件缺一不暂停是规格要求；此时有二级 `CHECK_DEFERRED` / `RPC_DISAGREE` + `INDEX_LAG`，到 eta 时升级为一级 `CHECK_OVERDUE`（B4），负责人需人工判断；B2W 损失受 `b2wDailyCap` 约束 |
 | R3 | 被确认后放过的 WANTOS 可疑排队项被执行时（`Released`），WANTOS 侧不再核对（P10） | 按规格；若要加，WANTOS `Released` 也可建核对项 |
 | R4 | `meta.decided`、`meta.alertKeys` 只增不减；快照每份含完整累计状态 | 桥的业务量下增长很慢；后续可按时间修剪 |
-| R5 | 受控 / 旧地址的原生币转账、BSC 侧受控地址未监控（P12） | 需要逐块扫交易或第三方索引；与 PR-3/PR-4 的自建索引共享会违背"完全独立"，建议另行决定 |
+| R5 | 旧地址的原生币转账未监控（P12） | 需要逐块扫交易或第三方索引，会违背"完全独立"，建议另行决定 |
 | R6 | 宽限期判断依赖服务器 B 系统时钟 | 部署时启用 NTP；时钟大幅偏快只会提前判定（仍需条件 ①②），偏慢会推迟 |
 | R7 | `main.ts` 未接签名器与通道：没有 `--dry-run` 时拒绝启动；dry-run 下暂停一定失败（一级 `PAUSE_FAILED`） | 有意为之（本 PR 禁止接真实服务）；PR-10 接入前不得作为生产监控 |
 | R9 | 并集摄取：单个 RPC 伪造的事件会进入累计值（对账表现为短缺告警）并建核对项（由逐笔存在性共识过滤，不会误暂停）；单个 RPC 漏报会触发 `RPC_DISAGREE` | 宁可多报；累计值偏差会在对账中暴露 |

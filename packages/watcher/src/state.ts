@@ -26,8 +26,6 @@ export const initialState = (): State => ({
     lastGasCheckAt: 0,
     wantosHead: null,
     watchedNonces: {},
-    controlledSetHash: null,
-    controlledSet: [],
     snapshots: [],
     cursorProgress: {},
     headProgress: {},

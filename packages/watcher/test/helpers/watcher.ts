@@ -1,6 +1,6 @@
 import { createPublicClient, custom, encodeAbiParameters, encodeEventTopics, getAbiItem, http, type Abi, type AbiEvent, type Address, type EIP1193RequestFn, type Hex, type PublicClient } from "viem";
 import { MemoryAlertSink, type AlertSink } from "../../src/alerts.js";
-import type { WatcherConfig, ControlledEntry } from "../../src/config.js";
+import type { WatcherConfig } from "../../src/config.js";
 import { MemoryHeartbeat, type RelayerProbe } from "../../src/heartbeat.js";
 import { PauseExecutor, PauseOnlySigner, type RawTxSender } from "../../src/pauser.js";
 import { MultiRpc, type RpcEndpoint } from "../../src/rpc.js";
@@ -146,7 +146,6 @@ export interface WOpts {
   endpoints?: Partial<Record<ChainName, RpcEndpoint[]>>;
   store?: StateStore;
   config?: (c: WatcherConfig) => void;
-  controlled?: ControlledEntry[];
   relayerProbe?: RelayerProbe;
   /** Wrap the PAUSER transport (e.g. simulate a lying RPC on the send path). */
   wrapSender?: (inner: RawTxSender) => RawTxSender;
@@ -160,7 +159,6 @@ export interface TW {
   hb: MemoryHeartbeat;
   clock: { now: number };
   cfg: WatcherConfig;
-  controlled: { list: ControlledEntry[] };
   codes(): string[];
 }
 
@@ -201,7 +199,6 @@ export async function makeWatcher(H: Harness, o: WOpts = {}): Promise<TW> {
     dailyCapReportRatioBps: 7000,
     gasWatch: [],
     legacyAddresses: [],
-    controlledSetFile: null,
   };
   o.config?.(cfg);
   const mkRpc = (h: ChainH): MultiRpc =>
@@ -227,7 +224,6 @@ export async function makeWatcher(H: Harness, o: WOpts = {}): Promise<TW> {
     { bsc: H.bsc.bridge, wantos: H.wantos.bridge },
     cfg.pauseRetry,
   );
-  const controlled = { list: o.controlled ?? [] };
   const w = new Watcher({
     config: cfg,
     rpc,
@@ -236,9 +232,8 @@ export async function makeWatcher(H: Harness, o: WOpts = {}): Promise<TW> {
     pauser,
     heartbeat: hb,
     clock: () => clock.now,
-    controlledSet: { load: async () => controlled.list },
     ...(o.relayerProbe ? { relayerProbe: o.relayerProbe } : {}),
   });
   await w.init();
-  return { w, sink, hb, clock, cfg, controlled, codes: () => sink.codes() };
+  return { w, sink, hb, clock, cfg, codes: () => sink.codes() };
 }

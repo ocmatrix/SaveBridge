@@ -1,7 +1,7 @@
 import { bridgeTimelockAbi } from "@bridge/abi";
 import { getAbiItem, type Abi, type AbiEvent, type Address, type Hex, type Log, type PublicClient } from "viem";
 import { ALERT_LEVELS, AlertManager, type AlertCode, type AlertSink } from "./alerts.js";
-import type { ControlledEntry, WatcherConfig } from "./config.js";
+import type { WatcherConfig } from "./config.js";
 import { PAUSER_ROLE, bridgeAbiOf, computeEventKey, decodeLog, describeCall, erc20Abi, type DecodedLog } from "./events.js";
 import type { Heartbeat, RelayerProbe } from "./heartbeat.js";
 import type { PauseExecutor } from "./pauser.js";
@@ -29,7 +29,6 @@ export interface WatcherDeps {
   pauser: PauseExecutor;
   heartbeat: Heartbeat;
   clock: Clock;
-  controlledSet?: { load(): Promise<ControlledEntry[]> };
   relayerProbe?: RelayerProbe;
 }
 
@@ -91,7 +90,6 @@ export class Watcher {
     if (this.d.store.restoredFromBackup)
       await this.raise("STATE_RESTORED_FROM_BACKUP", "状态文件损坏，已从 .bak 恢复（可能少处理最后一轮，游标会补扫）");
     await this.assertWiring();
-    await this.refreshControlledSet(false);
   }
 
   /**
@@ -404,10 +402,6 @@ export class Watcher {
     return this.cfg.legacyAddresses.filter((l) => l.chain === c).map((l) => l.address);
   }
 
-  private controlledOn(c: ChainName): Address[] {
-    return c === "wantos" ? (this.state.meta.controlledSet as Address[]) : [];
-  }
-
   private async fetchLogs(cl: PublicClient, c: ChainName, fromBlock: bigint, toBlock: bigint): Promise<Array<{ source: DecodedLog["source"]; log: Log }>> {
     const cfg = this.cfg.chains[c];
     const out: Array<{ source: DecodedLog["source"]; log: Log }> = [];
@@ -415,7 +409,7 @@ export class Watcher {
       out.push({ source: lc(log.address) === lc(cfg.bridge) ? "bridge" : "timelock", log });
     }
     const transfer = getAbiItem({ abi: erc20Abi, name: "Transfer" }) as AbiEvent;
-    const watched = [...this.legacyOn(c), ...this.controlledOn(c)];
+    const watched = this.legacyOn(c);
     const fromSet = [...(c === "wantos" ? [ZERO as Address] : []), ...watched];
     const seen = new Set<string>();
     const pushToken = (logs: Log[]) => {
@@ -728,12 +722,8 @@ export class Watcher {
       else await this.raise("MINT", `WANTOS-USDT 增发 ${value}（累计 ${total}，只告警）`, { chain: c, detail, key });
     }
     const legacy = new Set(this.legacyOn(c).map(lc));
-    const controlled = new Set(this.controlledOn(c).map(lc));
     if (legacy.has(from) || legacy.has(to)) {
       await this.raise("LEGACY_ACTIVITY", `${c} 旧桥地址有资金动作`, { chain: c, detail: this.evDetail(l), key: `${key}:legacy` });
-    }
-    if (controlled.has(from) || controlled.has(to)) {
-      await this.raise("CONTROLLED_FUNDS_MOVED", `${c} 受控地址有资金动作`, { chain: c, detail: this.evDetail(l), key: `${key}:controlled` });
     }
   }
 
@@ -939,7 +929,6 @@ export class Watcher {
       for (const c of CHAINS) await this.checkChainIds(c); // B5: runtime re-check
       await this.checkGas();
       await this.checkLegacyNonces();
-      await this.refreshControlledSet(true);
     }
   }
 
@@ -992,22 +981,6 @@ export class Watcher {
         await this.raise("RPC_UNREACHABLE", `${l.chain} 读取 ${l.label} nonce 失败`, { chain: l.chain, detail: { error: errMsg(e) }, key: `nonce:${k}:err` });
       }
     }
-  }
-
-  private async refreshControlledSet(alertOnChange: boolean): Promise<void> {
-    if (!this.d.controlledSet) return;
-    const list = [...new Set((await this.d.controlledSet.load()).map((e) => lc(e.address)))].sort();
-    const m = this.state.meta;
-    const hash = list.join(",");
-    if (m.controlledSetHash === hash) return;
-    const before = new Set(m.controlledSet);
-    const after = new Set(list);
-    if (alertOnChange && m.controlledSetHash !== null)
-      await this.raise("CONTROLLED_SET_CHANGED", "受控集合已变更", {
-        detail: { added: list.filter((a) => !before.has(a)), removed: m.controlledSet.filter((a) => !after.has(a)) },
-      });
-    m.controlledSet = list;
-    m.controlledSetHash = hash;
   }
 
   // ------------------------------------------------------------------ §9.2 reconciliation + reserves + params

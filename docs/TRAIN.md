@@ -1,6 +1,6 @@
 # DH 列车账本：白名单跨链桥 v2
 
-- 列车文档：`docs/DESIGN.md`（v0.9.3）§13；调研：`docs/PR0-FINDINGS.md`
+- 列车文档：`docs/DESIGN.md`（当前 v0.9.5：风控只靠白名单，PR-4 已取消）§13；调研：`docs/PR0-FINDINGS.md`
 - 总控：本会话（Claude）。车道：子智能体（隔离 worktree），分支叠加（stacked），**不合并**。
 - 验证：合约 `forge test` / `forge coverage` / `forge build --sizes`；服务各自测试。无 fci（非 mulo）。
 - 开始：2026-11-02
@@ -20,16 +20,20 @@
 | PR | 标题 | 依赖 | 级别 | 状态 | 分支 | 备注 |
 |---|---|---|---|---|---|---|
 | PR-0 | 调研与准备 | — | L1 | running | main | ①③⑤已完成；②④⑥⑦⑧待用户 |
-| PR-1 | 合约 | PR-0 | L2 | **gate2-passed(local)** | pr-1-contracts @ e8ad4fd | aligner 2 轮；230→240 测试；覆盖 100%；slither H0/M0；控制器已独立复跑 7 个变异全部抓住。未推送/未合并 |
-| PR-2 | 外部审计 | PR-1 | — | blocked | — | 需用户选审计方，非自动化 |
-| PR-3 | 付款程序 | PR-1 接口 | L2 | fix round 1 | pr-3-relayer | aligner 打回：3 阻塞（批准绕过 Locked 检查、executeRelease 前不重读、加价替换后错标 FAILED）+ 与 PR-5 的 /v1/orders 接口对齐 |
-| PR-4 | 风控 | PR-3 | L2 | blocked(dep) | — | — |
-| PR-5 | 用户页 | PR-1 接口 | L2 | **gate2-passed(local)** | pr-5-user-page @ 38fc077 | aligner 3 轮（第 3 轮最强模型 fable）；271 测试；控制器复跑变异全部抓住。有意取舍：未确认锁只保护本标签页及刷新，不做替换检测/手动解锁（非回执解锁会引入重复转账风险）。未推送/未合并 |
-| PR-6 | 管理后台+离线工具 | PR-1/3/4 | L2 | blocked(dep) | — | — |
-| PR-7 | 监控 | PR-1 事件 | L2 | aligner round 3 | pr-7-watcher @ b326518 | 3 轮：单一 RPC 信任类问题逐层修复；第 3 轮最强模型穷举审计中 |
-| PR-8 | 迁移与旧单 | PR-1 | L2 | blocked(dep) | — | — |
-| PR-9 | 测试网联调 | PR-3~8 | L2 | blocked(dep) | — | 需测试网资金，须用户授权 |
-| PR-10 | 主网上线 | PR-2/9 | L2 | blocked(user) | — | 部署与注资须用户亲自授权 |
+| PR-1 | 合约 | PR-0 | L2 | **merged(local main)** | pr-1-contracts @ e8ad4fd（经 ts-workspace @ 733b388 合入，merge 68db318） | forge 240 测试；覆盖 100%；slither H0/M0；控制器复跑 7 个变异全部抓住 |
+| PR-2 | 外部审计 | PR-1 | — | blocked(user) | pr-2-9-10-docs @ 617e9f8（送审包文档已合入，merge ff33265） | 需用户选审计方，非自动化 |
+| PR-3 | 付款程序 | PR-1 接口 | L2 | **merged(local main)** | pr-3-relayer @ 4a44bcc（merge c1c883f） | 第 3 轮最终复审通过；21 文件 / 254 测试；变异 82/82 |
+| PR-4 | 风控 | — | — | **cancelled** | pr-4-risk @ 8fa4902（不合并，仅存档） | 用户决定（2026-11-02）：风控只靠白名单，DESIGN v0.9.5 §7 / §13 |
+| PR-5 | 用户页 | PR-1 接口 | L2 | **merged(local main)** | pr-5-user-page @ 38fc077（merge 263e1ab） | 271 测试；aligner 3 轮 + r4 文档；控制器复跑变异全部抓住 |
+| PR-6 | 管理后台+离线工具 | PR-1/3 | L2 | **merged(local main)** | pr-6-admin @ 1e4dbd1（merge 17ec8a9） | 第 3 轮最终复审通过；admin-web 85 测试、offline-check 30 测试；v0.9.5 删除受控集合页 |
+| PR-7 | 监控 | PR-1 事件 | L2 | **merged(local main)** | pr-7-watcher @ 0428934（merge 1a2af08） | 合入时 17 文件 / 170 测试；v0.9.5 清理（cleanup-controlled）删除受控集合 1 个用例后 169 |
+| PR-8 | 迁移与旧单 | PR-1 | L2 | **merged(local main)** | pr-8-legacy @ c2bc66d（merge b344a20） | 控制器核实；13 文件 / 160 测试；第 3 轮按「只靠白名单」删除受控集合参数 |
+| PR-9 | 测试网联调 | PR-3、PR-5～PR-8 | L2 | blocked(dep/user) | 计划文档已合入（pr-2-9-10-docs） | 需测试网资金，须用户授权 |
+| PR-10 | 主网上线 | PR-2/9 | L2 | blocked(user) | 手册已合入（pr-2-9-10-docs） | 部署与注资须用户亲自授权 |
+| — | DESIGN v0.9.5 | — | — | merged(local main) | docs-v095 @ 3237397（merge 0f0e45c） | SaveBridge；风控只靠白名单；Workers 静态资源 |
+| — | v0.9.5 代码清理 | PR-3/6/7/8 | — | 待 Gate2 | cleanup-controlled | 删除 relayer `controlled_set` 表与 WAIT `index`、watcher 受控集合监控，文档同步 |
+
+> 「merged(local main)」= 已合入本地 `main`（以 `git log --merges main` 为准）；均**未推送**。各 PR 的 HEAD 与测试数取自分支最终提交与各自 NOTES。
 
 ## 技术栈（总控定）
 TypeScript + pnpm workspace（Node ≥ 22）+ viem + vitest。`packages/abi` 由 `scripts/gen-abi.sh` 从 PR-1 合约生成。服务测试用 anvil（本地，非真实网络）+ PGlite（测试用 Postgres）。分支叠加：pr-1-contracts → ts-workspace → 各车道分支。

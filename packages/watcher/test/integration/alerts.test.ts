@@ -139,7 +139,7 @@ describe("§9.3 alert drills", () => {
     expect((r.detail["counts"] as Record<string, number>)["WHITELIST_BATCH"]).toBe(1);
   });
 
-  it("legacy vault / relayer activity and controlled-address fund moves → level 2; controlled set change → level 2", async () => {
+  it("legacy vault / relayer activity → level 2", async () => {
     const t = await makeWatcher(H, {
       config: (c) => {
         c.legacyAddresses = [
@@ -147,12 +147,10 @@ describe("§9.3 alert drills", () => {
           { chain: "bsc", address: H.bsc.token, label: "旧金库合约（模拟）" },
         ];
       },
-      controlled: [{ address: ACCOUNTS.attacker.address, label: "受控（模拟）" }],
     });
     await H.settle();
     await t.w.tick(); // baseline nonces
     await H.wantos.write(ACCOUNTS.user3, "transfer", [ACCOUNTS.user1.address, E(1)], H.wantos.token);
-    await H.wantos.write(ACCOUNTS.user1, "transfer", [ACCOUNTS.attacker.address, E(1)], H.wantos.token);
     await H.bsc.write(ACCOUNTS.user1, "transfer", [ACCOUNTS.user2.address, E(1)], H.bsc.token);
     await H.settle();
     t.clock.now += 300;
@@ -160,13 +158,6 @@ describe("§9.3 alert drills", () => {
     const legacy = t.sink.alerts.filter((a) => a.code === "LEGACY_ACTIVITY");
     expect(legacy.map((a) => a.chain).sort()).toEqual(["bsc", "wantos", "wantos"]); // bsc contract log, wantos transfer, wantos nonce
     expect(legacy.every((a) => a.level === 2)).toBe(true);
-    expect(levelOf(t, "CONTROLLED_FUNDS_MOVED")).toBe(2);
-    t.controlled.list = [{ address: ACCOUNTS.user2.address, label: "new" }];
-    t.clock.now += 300;
-    await t.w.tick();
-    const ch = t.sink.alerts.find((a) => a.code === "CONTROLLED_SET_CHANGED")!;
-    expect(ch.level).toBe(2);
-    expect(ch.detail["added"]).toEqual([ACCOUNTS.user2.address.toLowerCase()]);
   });
 
   it("gas below threshold → level 2 (deduped, re-arms after recovery)", async () => {
