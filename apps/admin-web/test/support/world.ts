@@ -1,7 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import {
   createPublicClient,
   createTestClient,
@@ -53,7 +54,9 @@ interface Node {
 
 async function startAnvil(chainId: number): Promise<Node> {
   const port = await freePort();
-  const proc = spawn("anvil", ["--host", "127.0.0.1", "--port", String(port), "--chain-id", String(chainId), "--silent"], { stdio: "ignore" });
+  // --config-out carries a unique marker so leftover processes of THIS suite can be found by PID (never pkill -f).
+  const marker = join(tmpdir(), `wantos-admin-web-anvil-${process.pid}-${port}.json`);
+  const proc = spawn("anvil", ["--host", "127.0.0.1", "--port", String(port), "--chain-id", String(chainId), "--silent", "--config-out", marker], { stdio: "ignore" });
   const url = `http://127.0.0.1:${port}`;
   const transport = http(url, { retryCount: 0 });
   const client = createPublicClient({ transport, pollingInterval: 50 }) as PublicClient;
