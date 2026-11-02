@@ -131,6 +131,7 @@ step_keygen() {
   else
     (umask 077; printf '%s' "$p1" >"$SB_CREDSTORE/$name-pass")
   fi
+  chmod 0600 "$SB_CREDSTORE/$name-pass"
   printf '%s' "$p1" | runuser -u "$SB_USER" -- env -i PATH=/opt/node/bin:/usr/bin:/bin HOME=/nonexistent \
     sh -c "cd '$SB_OPT/current/packages/ops' && exec node --import tsx src/keygenCli.ts create --out '$out' --label '$name'"
   unset p1 p2
