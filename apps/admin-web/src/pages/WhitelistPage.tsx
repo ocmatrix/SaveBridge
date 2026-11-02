@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { formatUnits, getAddress, type Address } from "viem";
 import { chainNow, erc20Abi } from "../lib/chain";
 import { SIDE_NAME, SIDES, type Side } from "../lib/config";
@@ -47,9 +47,16 @@ export function WhitelistPage() {
   const [histErr, setHistErr] = useState<string | null>(null);
 
   /** Any change to what would be signed (list, selection, batch, add/remove) voids the prepared job and its hashes. */
+  // Generation counter: every form change bumps it; an in-flight prepare/run whose generation is stale is discarded
+  // (round-2 A-1). The form is also locked while preparing/running, so this is the second line of defence.
+  const gen = useRef(0);
+  const [preparing, setPreparing] = useState(false);
+  const [formNote, setFormNote] = useState<string | null>(null);
   const resetJob = () => {
+    gen.current++;
     setJob(null);
     setJobBatch(0);
+    setFormNote(null);
   };
   const pages = useMemo(() => chunk(parsed.addresses), [parsed]);
   const pageAddrs = pages[page] ?? [];
@@ -131,21 +138,39 @@ export function WhitelistPage() {
   })();
 
   const prepare = async () => {
-    resetJob(); // never leave the previous batch's hashes on screen if this fails
-    const deadline = (await chainNow(chains.bsc)) + DEADLINE_AHEAD_S;
-    const j = await prepareJob(chains, batch, allowed, deadline);
-    setJob(j);
-    setJobBatch(batchIdx + 1);
+    const g = ++gen.current;
+    // never leave the previous batch's hashes on screen if this fails
+    setJob(null);
+    setJobBatch(0);
+    setFormNote(null);
+    setPreparing(true);
+    try {
+      const deadline = (await chainNow(chains.bsc)) + DEADLINE_AHEAD_S;
+      const j = await prepareJob(chains, batch, allowed, deadline);
+      if (g !== gen.current) {
+        setFormNote("准备期间表单已改动，请重新准备");
+        return;
+      }
+      setJob(j);
+      setJobBatch(batchIdx + 1);
+    } finally {
+      setPreparing(false);
+    }
   };
   const run = async () => {
     if (!job || !signer) return;
+    const g = gen.current;
+    const live = () => g === gen.current;
     setRunning(true);
     try {
-      setJob(await runJob(job, { chains, signer, onProgress: setJob }));
+      const done = await runJob(job, { chains, signer, onProgress: (j) => live() && setJob(j), shouldStop: () => !live() });
+      if (live()) setJob(done);
+      else setFormNote("签名期间表单已改动，已停止；请重新准备");
     } finally {
       setRunning(false);
     }
   };
+  const locked = preparing || running;
   const loadHistory = async () => {
     try {
       setHistErr(null);
@@ -155,11 +180,13 @@ export function WhitelistPage() {
       setHistErr((e as Error).message);
     }
   };
-  const exportSelected = () => {
-    const url = URL.createObjectURL(new Blob([batch.map((a) => getAddress(a)).join("\n") + "\n"], { type: "text/plain" }));
+  /** Exports the PREPARED batch (contents and file name from the job, never from the form). */
+  const exportPrepared = () => {
+    if (!job) return;
+    const url = URL.createObjectURL(new Blob([job.addresses.map((a) => getAddress(a)).join("\n") + "\n"], { type: "text/plain" }));
     const a = document.createElement("a");
     a.href = url;
-    a.download = `whitelist-${allowed ? "add" : "remove"}-batch${batchIdx + 1}.txt`;
+    a.download = `whitelist-${job.allowed ? "add" : "remove"}-batch${jobBatch}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -179,18 +206,19 @@ export function WhitelistPage() {
           type="file"
           accept=".csv,.txt,text/plain,text/csv"
           aria-label="选择地址文件"
+          disabled={locked}
           onChange={(e) => {
             const f = e.target.files?.[0];
             if (f) void f.text().then(setText);
           }}
         />
-        <textarea aria-label="地址列表" rows={6} value={text} onChange={(e) => setText(e.target.value)} placeholder="0x…" />
+        <textarea aria-label="地址列表" disabled={locked} rows={6} value={text} onChange={(e) => setText(e.target.value)} placeholder="0x…" />
         <fieldset>
           <label>
-            <input type="radio" name="mode" checked={allowed} onChange={() => (setAllowed(true), resetJob())} /> 添加
+            <input type="radio" name="mode" disabled={locked} checked={allowed} onChange={() => (setAllowed(true), resetJob())} /> 添加
           </label>
           <label>
-            <input type="radio" name="mode" checked={!allowed} onChange={() => (setAllowed(false), resetJob())} /> 移除
+            <input type="radio" name="mode" disabled={locked} checked={!allowed} onChange={() => (setAllowed(false), resetJob())} /> 移除
           </label>
         </fieldset>
         {parsed.errors.length > 0 && (
@@ -246,7 +274,7 @@ export function WhitelistPage() {
                 return (
                   <tr key={a} data-testid={`row-${a}`}>
                     <td>
-                      <input type="checkbox" aria-label={`选择 ${a}`} checked={!unchecked.has(a)} onChange={(e) => toggle(a, e.target.checked)} />
+                      <input type="checkbox" disabled={locked} aria-label={`选择 ${a}`} checked={!unchecked.has(a)} onChange={(e) => toggle(a, e.target.checked)} />
                     </td>
                     <td>
                       <Addr a={a} />
@@ -274,7 +302,7 @@ export function WhitelistPage() {
           <p>
             共 {selected.length} 个地址，分 {batches.length} 批（每批 ≤ {MAX_BATCH}）。
             {batches.length > 1 && (
-              <select aria-label="选择批次" value={batchIdx} onChange={(e) => (setBatchIdx(Number(e.target.value)), resetJob())}>
+              <select aria-label="选择批次" disabled={locked} value={batchIdx} onChange={(e) => (setBatchIdx(Number(e.target.value)), resetJob())}>
                 {batches.map((b, i) => (
                   <option key={i} value={i}>
                     第 {i + 1} 批（{b.length} 个）
@@ -282,9 +310,10 @@ export function WhitelistPage() {
                 ))}
               </select>
             )}
-            <button type="button" onClick={exportSelected}>
-              导出本批清单（txt）
+            <button type="button" onClick={exportPrepared} disabled={!ready}>
+              导出已准备批次的清单（txt）
             </button>
+            <span className="hint">（仅供对照查看；离线核对请用你自己的原始文件）</span>
           </p>
           <p>
             操作：<strong data-testid="op">{opAllowed ? "添加" : "移除"}</strong>；写入顺序：{writeOrder(opAllowed).map((s) => SIDE_NAME[s]).join(" → ")}
@@ -292,7 +321,12 @@ export function WhitelistPage() {
           <p className="hint" data-testid="d1-note">
             每批在每条链上要在钱包里确认两次：一次签名（EIP-712）+ 一次发交易（applyWhitelistBatch），两条链共 4 次（提交服务接通前，见 PR6-NOTES D1）。白名单钱包需要在两条链上都备 gas（BSC 上 BNB、WANTOS 上 WANT）。
           </p>
-          <ActionButton label="准备本批（生成 deadline 与哈希）" gate={bothGate} run={prepare} />
+          <ActionButton label="准备本批（生成 deadline 与哈希）" gate={running ? { ok: false, reason: "签名写入进行中" } : bothGate} run={prepare} />
+          {formNote && (
+            <p className="err" role="alert">
+              {formNote}
+            </p>
+          )}
           {ready && (
             <div className="hashes" data-testid="hashes">
               <p>
@@ -300,9 +334,9 @@ export function WhitelistPage() {
                 <code>{String(ready.deadline)}</code>（{ts(ready.deadline)}）
               </p>
               {writeOrder(ready.allowed).map((s) => (
-                <p key={s}>
-                  {SIDE_NAME[s]}（chainId {chains[s].cfg.chainId}，nonce {String(ready.runs[s].nonce)}）<br />
-                  domain hash <code>{ready.runs[s].hashes!.domainHash}</code>
+                <p key={s} data-testid={`chain-${s}`}>
+                  {SIDE_NAME[s]}（chainId {chains[s].cfg.chainId}，nonce <span data-testid={`nonce-${s}`}>{String(ready.runs[s].nonce)}</span>）<br />
+                  domain hash <code data-testid={`domain-${s}`}>{ready.runs[s].hashes!.domainHash}</code>
                   <br />
                   message hash <code data-testid={`msg-${s}`}>{ready.runs[s].hashes!.messageHash}</code>
                 </p>

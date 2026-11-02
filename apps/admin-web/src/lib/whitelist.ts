@@ -84,7 +84,11 @@ export async function preview(ctx: ChainCtx, job: BatchJob): Promise<BatchHashes
  * target state; otherwise sign (reusing a still-valid signature for the current nonce) and submit. Stops at the
  * first failure so the order is never violated; calling it again retries only what is not done.
  */
-export async function runJob(job: BatchJob, o: { chains: Chains; signer: Signer; onProgress?: (j: BatchJob) => void }): Promise<BatchJob> {
+export async function runJob(
+  job: BatchJob,
+  o: { chains: Chains; signer: Signer; onProgress?: (j: BatchJob) => void; /** checked before every chain, signature and submission */ shouldStop?: () => boolean },
+): Promise<BatchJob> {
+  const stop = () => o.shouldStop?.() === true;
   let cur: BatchJob = { ...job, runs: { bsc: { ...job.runs.bsc }, wantos: { ...job.runs.wantos } } };
   const set = (side: Side, r: Partial<ChainRun>) => {
     cur = { ...cur, runs: { ...cur.runs, [side]: { ...cur.runs[side], ...r } } };
@@ -93,6 +97,7 @@ export async function runJob(job: BatchJob, o: { chains: Chains; signer: Signer;
   for (const side of writeOrder(job.allowed)) {
     const run = cur.runs[side];
     if (run.status === "done" || run.status === "skipped") continue;
+    if (stop()) return cur;
     const ctx = o.chains[side];
     try {
       const states = await readWhitelisted(ctx, cur.addresses);
@@ -110,9 +115,11 @@ export async function runJob(job: BatchJob, o: { chains: Chains; signer: Signer;
       if (hashes.digest !== run.hashes.digest) throw new PrepareAgain("待签内容与准备时显示的哈希不一致");
       let signature = run.signature;
       if (!signature) {
+        if (stop()) return cur;
         set(side, { status: "signing", error: undefined });
         signature = await o.signer.signTypedData(ctx.cfg.chainId, batchTypedData(input));
       }
+      if (stop()) return cur; // the form changed while the wallet was open: never submit a batch no longer on screen
       set(side, { status: "submitting", nonce, hashes, signature, error: undefined });
       const txHash = await send(ctx, o.signer, {
         address: ctx.cfg.bridge,

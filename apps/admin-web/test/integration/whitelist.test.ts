@@ -102,6 +102,22 @@ describe("whitelist batch write (two chains, §4.4 order)", () => {
     expect(s.log).toEqual([]);
   });
 
+  it("shouldStop: checked before each chain, before signing and after signing — nothing is submitted once it says stop", async () => {
+    const s = localSigner(w, w.act.wl);
+    const list = addrs("st", 1);
+    const job0 = await prepareJob(w.chains, list, true, await deadline());
+    s.log.length = 0;
+    expect((await runJob(job0, { chains: w.chains, signer: s, shouldStop: () => true })).runs.bsc.status).toBe("pending");
+    expect(s.log).toEqual([]);
+    // stop flips while the wallet is signing → the signature is never submitted
+    let stop = false;
+    const signing: typeof s = { ...s, signTypedData: async (c, td) => { const r = await s.signTypedData(c, td); stop = true; return r; } };
+    const j = await runJob(job0, { chains: w.chains, signer: signing, shouldStop: () => stop });
+    expect(s.log).toEqual([`sign712:${BSC_ID}`]);
+    expect(j.runs.bsc.status).toBe("signing");
+    expect(await readWhitelisted(w.chains.bsc, list)).toEqual([false]);
+  });
+
   it("a non-whitelist wallet cannot write: contract rejects the signature (InvalidSigner), nothing changes", async () => {
     for (const who of [w.act.stranger, w.act.admin]) {
       const s = localSigner(w, who);
