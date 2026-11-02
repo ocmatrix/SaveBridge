@@ -97,4 +97,14 @@ if grep -q 'PATH=/opt/node-v[0-9.]*/bin:.* /opt/node-v[0-9.]*/bin/corepack prepa
   [[ "$(SIM_SYSTEMD=249 cred_property)" == LoadCredential && "$(SIM_SYSTEMD=257 cred_property)" == LoadCredentialEncrypted ]] || { echo "FAIL [cred_property]"; exit 1; }
   echo "ok   [unit]: systemd 249 -> LoadCredential=, 257 -> LoadCredentialEncrypted= (same credential names)" ) || fail=1
 
+# Node's default 250 ms per-address connect attempt is shorter than the HK/Osaka -> EU round trip, so fetch() to
+# hc-ping.com / far RPC providers times out (ETIMEDOUT) while curl works. Every service unit (and the one-tick
+# dry-run) must switch the autoselection off.
+( cd "$ROOT"
+  for f in deploy/rpc3-watcher/files/savebridge-watcher.service deploy/ss02-payout/files/savebridge-relayer.service; do
+    grep -q '^Environment=NODE_OPTIONS=--no-network-family-autoselection$' "$f" || { echo "FAIL [node-family]: $f lacks NODE_OPTIONS=--no-network-family-autoselection"; exit 1; }
+  done
+  grep -q 'NODE_OPTIONS=--no-network-family-autoselection' deploy/rpc3-watcher/deploy.sh || { echo "FAIL [node-family]: dry-run-service does not pass NODE_OPTIONS"; exit 1; }
+  echo "ok   [node-family]: units and dry-run-service disable Node family autoselection" ) || fail=1
+
 exit "$fail"

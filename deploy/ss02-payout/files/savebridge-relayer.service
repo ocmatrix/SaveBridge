@@ -16,6 +16,7 @@ User=savebridge
 Group=savebridge
 WorkingDirectory=/opt/savebridge/current/packages/relayer
 Environment=NODE_ENV=production
+Environment=NODE_OPTIONS=--no-network-family-autoselection
 Environment=RELAYER_CONFIG=/etc/savebridge/relayer.json
 Environment=RELAYER_DATABASE_URL=postgresql:///savebridge?host=/var/run/postgresql
 # RPC URLs (may embed provider API keys): root-owned 0600 file, read by systemd before dropping privileges

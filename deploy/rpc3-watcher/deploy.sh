@@ -94,7 +94,7 @@ step_dry_run_service() {
   require_root
   local creds=() c
   for c in pauser-bsc-pass pauser-wantos-pass telegram-bot-token telegram-chat-id heartbeat-url; do creds+=(-p "$(cred_property)=$c:$SB_CREDSTORE/$c"); done
-  run systemd-run --wait --pipe --uid="$SB_USER" --gid="$SB_USER" -p EnvironmentFile=/etc/savebridge-watcher/rpc.env "${creds[@]}" \
+  run systemd-run --wait --pipe --uid="$SB_USER" --gid="$SB_USER" -p EnvironmentFile=/etc/savebridge-watcher/rpc.env -p Environment=NODE_OPTIONS=--no-network-family-autoselection "${creds[@]}" \
     -p WorkingDirectory="$SB_OPT/current/packages/watcher" /opt/node/bin/node --import tsx src/main.ts --config "$SB_ETC/watcher.json" --dry-run --once
 }
 

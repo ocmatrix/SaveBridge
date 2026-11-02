@@ -14,6 +14,7 @@ User=savebridge-watcher
 Group=savebridge-watcher
 WorkingDirectory=/opt/savebridge-watcher/current/packages/watcher
 Environment=NODE_ENV=production
+Environment=NODE_OPTIONS=--no-network-family-autoselection
 EnvironmentFile=/etc/savebridge-watcher/rpc.env
 ExecStart=/opt/node/bin/node --max-old-space-size=256 --import tsx src/main.ts --config /etc/savebridge-watcher/watcher.json
 LoadCredentialEncrypted=pauser-bsc-pass:/etc/credstore.encrypted/pauser-bsc-pass
