@@ -6,6 +6,9 @@ import { parseAddressList } from "../../src/lib/normalize";
 import { readWhitelisted } from "../../src/lib/whitelist";
 import { localSigner, startWorld, type World } from "../support/world";
 import { renderApp } from "./render";
+import { render } from "@testing-library/react";
+import { App } from "../../src/App";
+import { invalidateNonce } from "../../src/lib/whitelist";
 
 let w: World;
 beforeAll(async () => {
@@ -66,6 +69,8 @@ describe("whitelist page", () => {
     const selected = parseAddressList(plain.join("\n")).addresses;
     expect(lh).toHaveTextContent(tool.listHash(selected));
     expect(screen.getByTestId("count")).toHaveTextContent("2");
+    expect(screen.getByTestId("d1-note")).toHaveTextContent("两条链共 4 次");
+    expect(screen.getByTestId("d1-note")).toHaveTextContent(/BNB.*WANT/);
     expect(screen.getByText(/--expect-list-hash/)).toHaveTextContent(tool.listHash(selected));
 
     fireEvent.click(screen.getByRole("button", { name: "签名并写入两条链" }));
@@ -105,5 +110,92 @@ describe("whitelist page", () => {
     await waitFor(() => expect(screen.getByTestId("progress")).toHaveTextContent(/WANTOS：已写入/), { timeout: 20_000 });
     expect(await readWhitelisted(w.chains.wantos, parseAddressList(list.join("\n")).addresses)).toEqual([true]);
     cleanup();
+  });
+
+  it("A1: switching 添加/移除 after preparing voids the prepared batch; the remove must be prepared (and signed) again", async () => {
+    const wl = localSigner(w, w.act.wl);
+    const list = [keccak256(toBytes("a1x")).slice(0, 42), keccak256(toBytes("a1y")).slice(0, 42)];
+    const sorted = parseAddressList(list.join("\n")).addresses;
+    renderApp(w, wl);
+    paste(list.join("\n"));
+    await waitFor(() => expect(prepareBtn()).toBeEnabled());
+    fireEvent.click(prepareBtn());
+    await screen.findByTestId("listHash");
+    fireEvent.click(screen.getByRole("button", { name: "签名并写入两条链" }));
+    await waitFor(() => expect(screen.getByTestId("progress")).toHaveTextContent(/BSC：已写入.*WANTOS：已写入/s), { timeout: 20_000 });
+    // both addresses now whitelisted. Prepare again under 添加, then switch to 移除.
+    fireEvent.click(prepareBtn());
+    await screen.findByTestId("listHash");
+    expect(screen.getByTestId("offline-cmd")).toHaveTextContent("--action add");
+    fireEvent.click(screen.getByLabelText("移除", { selector: "input" }) ?? screen.getByRole("radio", { name: /移除/ }));
+    expect(screen.getByTestId("op")).toHaveTextContent("移除");
+    expect(screen.queryByTestId("hashes")).toBeNull();
+    expect(screen.queryByTestId("offline-cmd")).toBeNull();
+    expect(screen.queryByRole("button", { name: /签名并写入|重试/ })).toBeNull(); // must prepare again
+    fireEvent.click(prepareBtn());
+    await screen.findByTestId("listHash");
+    expect(screen.getByTestId("offline-cmd")).toHaveTextContent("--action remove");
+    wl.log.length = 0;
+    fireEvent.click(screen.getByRole("button", { name: "签名并写入两条链" }));
+    await waitFor(() => expect(screen.getByTestId("progress")).toHaveTextContent(/WANTOS：已写入.*BSC：已写入/s), { timeout: 20_000 });
+    expect(wl.log.filter((x) => x.startsWith("sign712")).length).toBe(2); // really signed
+    expect(await readWhitelisted(w.chains.bsc, sorted)).toEqual([false, false]);
+    expect(await readWhitelisted(w.chains.wantos, sorted)).toEqual([false, false]);
+  });
+
+  it("A2: the page's own offline command (multi-batch, batch 2) makes the tool print exactly the message hashes on screen", async () => {
+    const list = Array.from({ length: 501 }, (_, i) => keccak256(toBytes(`a2-${i}`)).slice(0, 42));
+    const rawFile = list.join("\n");
+    renderApp(w, localSigner(w, w.act.wl));
+    paste(rawFile);
+    const sel = await screen.findByLabelText("选择批次");
+    fireEvent.change(sel, { target: { value: "1" } });
+    await waitFor(() => expect(prepareBtn()).toBeEnabled());
+    fireEvent.click(prepareBtn());
+    await screen.findByTestId("listHash", {}, { timeout: 20_000 });
+    const cmd = screen.getByTestId("offline-cmd").textContent!;
+    expect(cmd).toContain("--batch 2");
+    expect(cmd).toContain("--deadline ");
+    const argv = cmd.split(/\s+/).slice(2).map((t) => (t === "<原始文件>" ? "raw.txt" : t));
+    const r = tool.runCli([...argv, "--json"], () => rawFile);
+    expect(r.code).toBe(0);
+    const out = JSON.parse(r.out);
+    expect(out.match).toBe(true);
+    expect(out.batches[0].bsc.messageHash).toBe(screen.getByTestId("msg-bsc").textContent);
+    expect(out.batches[0].wantos.messageHash).toBe(screen.getByTestId("msg-wantos").textContent);
+    expect(out.batches[0].count).toBe(1);
+  }, 60_000);
+
+  it("B2: nonce moved after preparing → run stops, retry disabled until prepared again; a failed prepare clears old hashes", async () => {
+    const wl = localSigner(w, w.act.wl);
+    let failBlocks = false;
+    const wrap = (c: typeof w.chains.bsc) => ({
+      ...c,
+      client: new Proxy(c.client, {
+        get(t, k, r) {
+          if (k === "getBlock" && failBlocks) return () => Promise.reject(new Error("rpc down"));
+          return Reflect.get(t, k, r);
+        },
+      }),
+    });
+    const chains = { bsc: wrap(w.chains.bsc), wantos: wrap(w.chains.wantos) };
+    render(<App cfg={w.cfg} chains={chains} signer={wl} initialPath="/" />);
+    paste(keccak256(toBytes("b2c")).slice(0, 42));
+    await waitFor(() => expect(prepareBtn()).toBeEnabled());
+    fireEvent.click(prepareBtn());
+    await screen.findByTestId("listHash");
+    // the nonce moves (e.g. another batch landed) → stop, no signature
+    await invalidateNonce(w.chains.bsc, wl);
+    wl.log.length = 0;
+    fireEvent.click(screen.getByRole("button", { name: "签名并写入两条链" }));
+    await waitFor(() => expect(screen.getByTestId("progress")).toHaveTextContent(/BSC：失败.*重新「准备本批」/s), { timeout: 20_000 });
+    expect(wl.log.filter((x) => x.startsWith("sign712"))).toEqual([]);
+    expect(screen.getByRole("button", { name: "重试未完成的链" })).toBeDisabled();
+    expect(screen.getByText("需要重新准备本批并重新离线核对")).toBeInTheDocument();
+    // a failing prepare must not leave the previous hashes on screen
+    failBlocks = true;
+    fireEvent.click(prepareBtn());
+    await waitFor(() => expect(screen.queryByTestId("hashes")).toBeNull());
+    expect(await screen.findByText(/rpc down/)).toBeInTheDocument();
   });
 });

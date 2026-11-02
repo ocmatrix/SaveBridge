@@ -3,6 +3,8 @@ import { describeError, send, chainNow, type ChainCtx, type Chains, type Signer 
 import { SIDE_NAME, type Side } from "./config";
 import { batchHashes, batchTypedData, type BatchHashes } from "./normalize";
 
+class PrepareAgain extends Error {}
+
 /** DESIGN §4.4: add → BSC first then WANTOS; remove → WANTOS first then BSC. */
 export function writeOrder(allowed: boolean): Side[] {
   return allowed ? ["bsc", "wantos"] : ["wantos", "bsc"];
@@ -17,6 +19,8 @@ export interface ChainRun {
   txHash?: Hex;
   error?: string;
   note?: string;
+  /** set when the batch must be prepared again (nonce moved or deadline too close) — retry is not allowed */
+  needsPrepare?: boolean;
 }
 
 /** One batch (≤ 500 addresses) written to both chains, resumable after a partial failure. */
@@ -34,6 +38,21 @@ export const DEADLINE_AHEAD_S = 23n * 3600n;
 
 export function newJob(addresses: string[], allowed: boolean, deadline: bigint): BatchJob {
   return { addresses, allowed, deadline, runs: { bsc: { status: "pending" }, wantos: { status: "pending" } } };
+}
+
+/**
+ * Prepare a batch: read each chain's current nonce and fix the hashes the owner checks offline and on the hardware
+ * wallet. Signing later uses exactly these nonces; if a chain's nonce moves, the run stops and asks to prepare again
+ * (never re-signs silently with hashes nobody checked).
+ */
+export async function prepareJob(chains: Chains, addresses: string[], allowed: boolean, deadline: bigint): Promise<BatchJob> {
+  const job = newJob(addresses, allowed, deadline);
+  for (const side of ["bsc", "wantos"] as Side[]) {
+    const pv = await preview(chains[side], job);
+    const { nonce, ...hashes } = pv;
+    job.runs[side] = { status: "pending", nonce, hashes };
+  }
+  return job;
 }
 
 export const isComplete = (j: BatchJob) => (["bsc", "wantos"] as Side[]).every((s) => j.runs[s].status === "done" || j.runs[s].status === "skipped");
@@ -82,14 +101,16 @@ export async function runJob(job: BatchJob, o: { chains: Chains; signer: Signer;
         continue;
       }
       const now = await chainNow(ctx);
-      if (cur.deadline <= now + DEADLINE_MARGIN_S) throw new Error("签名有效期已到，请重新准备这一批（新的 deadline 需要重新离线核对）");
+      if (cur.deadline <= now + DEADLINE_MARGIN_S) throw new PrepareAgain("签名有效期快到或已过");
+      if (run.nonce === undefined || !run.hashes) throw new PrepareAgain("本批未准备（没有核对过的 nonce 与哈希）");
       const nonce = await readNonce(ctx);
+      if (nonce !== run.nonce) throw new PrepareAgain(`链上批次 nonce 已从 ${run.nonce} 变为 ${nonce}，已核对的哈希作废`);
+      const input = { side, chainId: ctx.cfg.chainId, bridge: ctx.cfg.bridge, addresses: cur.addresses, allowed: cur.allowed, nonce, deadline: cur.deadline };
+      const hashes = batchHashes(input);
+      if (hashes.digest !== run.hashes.digest) throw new PrepareAgain("待签内容与准备时显示的哈希不一致");
       let signature = run.signature;
-      let hashes = run.hashes;
-      if (!signature || run.nonce !== nonce) {
-        const input = { side, chainId: ctx.cfg.chainId, bridge: ctx.cfg.bridge, addresses: cur.addresses, allowed: cur.allowed, nonce, deadline: cur.deadline };
-        hashes = batchHashes(input);
-        set(side, { status: "signing", nonce, hashes, signature: undefined, error: undefined });
+      if (!signature) {
+        set(side, { status: "signing", error: undefined });
         signature = await o.signer.signTypedData(ctx.cfg.chainId, batchTypedData(input));
       }
       set(side, { status: "submitting", nonce, hashes, signature, error: undefined });
@@ -101,6 +122,10 @@ export async function runJob(job: BatchJob, o: { chains: Chains; signer: Signer;
       });
       set(side, { status: "done", txHash, note: undefined });
     } catch (e) {
+      if (e instanceof PrepareAgain) {
+        set(side, { status: "failed", needsPrepare: true, signature: undefined, error: `${SIDE_NAME[side]}：${e.message}。请重新「准备本批」并重新离线核对后再签` });
+        return cur;
+      }
       set(side, { status: "failed", error: `${SIDE_NAME[side]}：${describeError(e)}` });
       return cur;
     }

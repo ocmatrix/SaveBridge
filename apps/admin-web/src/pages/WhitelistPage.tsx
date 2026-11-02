@@ -11,8 +11,7 @@ import {
   diffChains,
   invalidateNonce,
   isComplete,
-  newJob,
-  preview,
+  prepareJob,
   readWhitelisted,
   runJob,
   whitelistHistory,
@@ -44,11 +43,16 @@ export function WhitelistPage() {
   const [apiNote, setApiNote] = useState<string | null>(null);
   const [batchIdx, setBatchIdx] = useState(0);
   const [job, setJob] = useState<BatchJob | null>(null);
-  const [pv, setPv] = useState<Partial<Record<Side, Awaited<ReturnType<typeof preview>>>>>({});
+  const [jobBatch, setJobBatch] = useState(0); // 1-based batch number the prepared job belongs to
   const [running, setRunning] = useState(false);
   const [hist, setHist] = useState<Record<Side, WhitelistHistory> | null>(null);
   const [histErr, setHistErr] = useState<string | null>(null);
 
+  /** Any change to what would be signed (list, selection, batch, add/remove) voids the prepared job and its hashes. */
+  const resetJob = () => {
+    setJob(null);
+    setJobBatch(0);
+  };
   const pages = useMemo(() => chunk(parsed.addresses), [parsed]);
   const pageAddrs = pages[page] ?? [];
 
@@ -57,7 +61,7 @@ export function WhitelistPage() {
   useEffect(() => {
     setUnchecked(new Set(parsed.addresses.filter((a) => !defaultChecked(flagsFor(a, { controlled, isContract: false })))));
     setPage(0);
-    setJob(null);
+    resetJob();
     setBatchIdx(0);
   }, [parsed, controlled]);
 
@@ -122,7 +126,7 @@ export function WhitelistPage() {
       else n.add(a);
       return n;
     });
-    setJob(null);
+    resetJob();
   };
 
   const writeGate = (s: Side): Gate =>
@@ -142,11 +146,11 @@ export function WhitelistPage() {
   })();
 
   const prepare = async () => {
+    resetJob(); // never leave the previous batch's hashes on screen if this fails
     const deadline = (await chainNow(chains.bsc)) + DEADLINE_AHEAD_S;
-    const j = newJob(batch, allowed, deadline);
+    const j = await prepareJob(chains, batch, allowed, deadline);
     setJob(j);
-    const [b, w] = await Promise.all([preview(chains.bsc, j), preview(chains.wantos, j)]);
-    setPv({ bsc: b, wantos: w });
+    setJobBatch(batchIdx + 1);
   };
   const run = async () => {
     if (!job || !signer) return;
@@ -174,9 +178,13 @@ export function WhitelistPage() {
     a.click();
     URL.revokeObjectURL(url);
   };
-  const offlineCmd = job && pv.bsc && pv.wantos
-    ? `node offline-check.mjs <原始文件> --action ${allowed ? "add" : "remove"} --contract ${cfg.bsc.bridge} --bsc-chain-id ${cfg.bsc.chainId} --wantos-chain-id ${cfg.wantos.chainId} --bsc-nonce ${pv.bsc.nonce} --wantos-nonce ${pv.wantos.nonce} --deadline ${job.deadline} --expect-list-hash ${pv.bsc.listHash}`
+  // Everything shown for checking comes from the prepared job (what will actually be signed), never from the form.
+  const ready = job && job.runs.bsc.hashes && job.runs.wantos.hashes && job.runs.bsc.nonce !== undefined && job.runs.wantos.nonce !== undefined ? job : null;
+  const offlineCmd = ready
+    ? `node offline-check.mjs <原始文件> --action ${ready.allowed ? "add" : "remove"} --contract ${cfg.bsc.bridge} --bsc-chain-id ${cfg.bsc.chainId} --wantos-chain-id ${cfg.wantos.chainId} --batch ${jobBatch} --bsc-nonce ${ready.runs.bsc.nonce} --wantos-nonce ${ready.runs.wantos.nonce} --deadline ${ready.deadline} --expect-list-hash ${ready.runs.bsc.hashes!.listHash}`
     : null;
+  const opAllowed = job ? job.allowed : allowed;
+  const needsPrepare = !!job && (job.runs.bsc.needsPrepare || job.runs.wantos.needsPrepare);
 
   return (
     <div>
@@ -194,10 +202,10 @@ export function WhitelistPage() {
         <textarea aria-label="地址列表" rows={6} value={text} onChange={(e) => setText(e.target.value)} placeholder="0x…" />
         <fieldset>
           <label>
-            <input type="radio" name="mode" checked={allowed} onChange={() => setAllowed(true)} /> 添加
+            <input type="radio" name="mode" checked={allowed} onChange={() => (setAllowed(true), resetJob())} /> 添加
           </label>
           <label>
-            <input type="radio" name="mode" checked={!allowed} onChange={() => setAllowed(false)} /> 移除
+            <input type="radio" name="mode" checked={!allowed} onChange={() => (setAllowed(false), resetJob())} /> 移除
           </label>
         </fieldset>
         {parsed.errors.length > 0 && (
@@ -247,7 +255,7 @@ export function WhitelistPage() {
                     return n;
                   });
                   setConfirmRed(null);
-                  setJob(null);
+                  resetJob();
                 }}
               >
                 确认勾选
@@ -304,7 +312,7 @@ export function WhitelistPage() {
           <p>
             共 {selected.length} 个地址，分 {batches.length} 批（每批 ≤ {MAX_BATCH}）。
             {batches.length > 1 && (
-              <select aria-label="选择批次" value={batchIdx} onChange={(e) => (setBatchIdx(Number(e.target.value)), setJob(null))}>
+              <select aria-label="选择批次" value={batchIdx} onChange={(e) => (setBatchIdx(Number(e.target.value)), resetJob())}>
                 {batches.map((b, i) => (
                   <option key={i} value={i}>
                     第 {i + 1} 批（{b.length} 个）
@@ -317,30 +325,33 @@ export function WhitelistPage() {
             </button>
           </p>
           <p>
-            操作：<strong>{allowed ? "添加" : "移除"}</strong>；写入顺序：{writeOrder(allowed).map((s) => SIDE_NAME[s]).join(" → ")}
+            操作：<strong data-testid="op">{opAllowed ? "添加" : "移除"}</strong>；写入顺序：{writeOrder(opAllowed).map((s) => SIDE_NAME[s]).join(" → ")}
+          </p>
+          <p className="hint" data-testid="d1-note">
+            每批在每条链上要在钱包里确认两次：一次签名（EIP-712）+ 一次发交易（applyWhitelistBatch），两条链共 4 次（提交服务接通前，见 PR6-NOTES D1）。白名单钱包需要在两条链上都备 gas（BSC 上 BNB、WANTOS 上 WANT）。
           </p>
           <ActionButton label="准备本批（生成 deadline 与哈希）" gate={bothGate} run={prepare} />
-          {job && pv.bsc && pv.wantos && (
+          {ready && (
             <div className="hashes" data-testid="hashes">
               <p>
-                listHash <code data-testid="listHash">{pv.bsc.listHash}</code>　count <code data-testid="count">{pv.bsc.count}</code>　deadline{" "}
-                <code>{String(job.deadline)}</code>（{ts(job.deadline)}）
+                第 {jobBatch} 批　listHash <code data-testid="listHash">{ready.runs.bsc.hashes!.listHash}</code>　count <code data-testid="count">{ready.runs.bsc.hashes!.count}</code>　deadline{" "}
+                <code>{String(ready.deadline)}</code>（{ts(ready.deadline)}）
               </p>
-              {writeOrder(allowed).map((s) => (
+              {writeOrder(ready.allowed).map((s) => (
                 <p key={s}>
-                  {SIDE_NAME[s]}（chainId {chains[s].cfg.chainId}，nonce {String(pv[s]!.nonce)}）<br />
-                  domain hash <code>{pv[s]!.domainHash}</code>
+                  {SIDE_NAME[s]}（chainId {chains[s].cfg.chainId}，nonce {String(ready.runs[s].nonce)}）<br />
+                  domain hash <code>{ready.runs[s].hashes!.domainHash}</code>
                   <br />
-                  message hash <code data-testid={`msg-${s}`}>{pv[s]!.messageHash}</code>
+                  message hash <code data-testid={`msg-${s}`}>{ready.runs[s].hashes!.messageHash}</code>
                 </p>
               ))}
               <p className="hint">在另一台设备离线运行（结果一致才签）：</p>
-              <pre>{offlineCmd}</pre>
+              <pre data-testid="offline-cmd">{offlineCmd}</pre>
             </div>
           )}
           {job && (
             <div>
-              <ActionButton label={isComplete(job) ? "已完成" : job.runs.bsc.status === "pending" && job.runs.wantos.status === "pending" ? "签名并写入两条链" : "重试未完成的链"} gate={isComplete(job) || running ? { ok: false, reason: isComplete(job) ? "两条链都已完成" : "进行中" } : bothGate} run={run} />
+              <ActionButton label={isComplete(job) ? "已完成" : job.runs.bsc.status === "pending" && job.runs.wantos.status === "pending" ? "签名并写入两条链" : "重试未完成的链"} gate={isComplete(job) || running || needsPrepare ? { ok: false, reason: isComplete(job) ? "两条链都已完成" : needsPrepare ? "需要重新准备本批并重新离线核对" : "进行中" } : bothGate} run={run} />
               <ul data-testid="progress">
                 {writeOrder(job.allowed).map((s) => (
                   <li key={s}>
