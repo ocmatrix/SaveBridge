@@ -1,0 +1,32 @@
+{
+  "_comment": "WANTON (chainId 1345) RPC template for PR-9 — NOT connected in this round. Access is only via VPC / SSH tunnel to rpc-test; never a public endpoint. Placeholders only, no URLs or secrets here.",
+  "chainId": 1345,
+  "connected": false,
+  "note": "not connected in this round",
+  "access": {
+    "kind": "ssh-tunnel-or-vpc",
+    "target": "rpc-test",
+    "example": "ssh -L <local-port>:127.0.0.1:8545 <rpc-test-host>  →  WANTON_RPC_PRIMARY=http://127.0.0.1:<local-port>"
+  },
+  "env": {
+    "WANTON_RPC_PRIMARY": "<tunnel/VPC url to rpc-test>",
+    "WANTON_RPC_CROSSCHECK_1": "<second tunnel/VPC url>"
+  },
+  "relayer": {
+    "wantos": {
+      "chainId": 1345,
+      "primaryRpcUrlEnv": "WANTON_RPC_PRIMARY",
+      "crossCheckRpcUrlEnvs": ["WANTON_RPC_CROSSCHECK_1"],
+      "confirmations": 6
+    }
+  },
+  "watcher": {
+    "chains": {
+      "wantos": {
+        "chainId": 1345,
+        "rpcUrls": ["${WANTON_RPC_PRIMARY}", "${WANTON_RPC_CROSSCHECK_1}"],
+        "head": { "kind": "confirmations", "confirmations": 6 }
+      }
+    }
+  }
+}
