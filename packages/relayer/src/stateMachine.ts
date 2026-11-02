@@ -15,13 +15,13 @@ export const ALL_STATUSES = [
 ] as const;
 export type OrderStatus = (typeof ALL_STATUSES)[number];
 
-/** §6.3 WAITING reasons: 索引、白名单、额度、储备、暂停、金额超限. */
-export const WAIT_REASONS = ["index", "whitelist", "quota", "reserve", "paused", "amount_limit"] as const;
+/** §6.3 WAITING reasons: 白名单、额度、储备、暂停、金额超限 (v0.9.5: "index" removed — never produced by PR-3). */
+export const WAIT_REASONS = ["whitelist", "quota", "reserve", "paused", "amount_limit"] as const;
 export type WaitReason = (typeof WAIT_REASONS)[number];
 export type ReviewLevel = "audit" | "freeze";
 
 export function waitReasonsFor(direction: Direction): readonly WaitReason[] {
-  // §6.3 B2W: 储备、额度、暂停；没有白名单原因. "index" is kept for B2W too (data-source not ready).
+  // §6.3 B2W: 储备、额度、暂停；没有白名单原因.
   return direction === "B2W" ? WAIT_REASONS.filter((r) => r !== "whitelist" && r !== "amount_limit") : WAIT_REASONS;
 }
 
@@ -70,7 +70,9 @@ const H = 60 * MIN;
 /** Alert thresholds per state (ms after entering the state). Unspecified values are PR3-NOTES deviations. */
 export const DEFAULT_TIMEOUTS = {
   detectedMs: 10 * MIN,
-  waiting: { index: 10 * MIN, whitelist: 30 * MIN, reserve: 0, quota: 6 * H, paused: 1 * H, amount_limit: 0 } as Record<WaitReason, number>,
+  waiting: { whitelist: 30 * MIN, reserve: 0, quota: 6 * H, paused: 1 * H, amount_limit: 0 } as Record<WaitReason, number>,
+  /** WAITING with a missing / unrecognised reason (e.g. a legacy row): same 10-minute threshold as before. */
+  waitingUnknownMs: 10 * MIN,
   review: { audit: 72 * H, freeze: 7 * 24 * H } as Record<ReviewLevel, number>,
   submittedMs: 30 * MIN,
   queuedGraceMs: 30 * MIN,
@@ -95,7 +97,7 @@ export function timeoutFor(o: TimeoutInput, t: Timeouts = DEFAULT_TIMEOUTS): num
     case "DETECTED":
       return t.detectedMs;
     case "WAITING":
-      return t.waiting[(o.reason as WaitReason) ?? "index"] ?? t.waiting.index;
+      return (o.reason ? t.waiting[o.reason as WaitReason] : undefined) ?? t.waitingUnknownMs;
     case "REVIEW":
       return t.review[(o.reviewLevel as ReviewLevel) ?? "audit"] ?? t.review.audit;
     case "SUBMITTED":

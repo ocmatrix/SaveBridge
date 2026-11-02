@@ -19,7 +19,6 @@ create table if not exists orders (
 create table if not exists tx_attempts (id bigserial primary key, event_key bytea, chain_id int, nonce bigint,
   tx_hash bytea, gas_price numeric, raw_tx bytea, state text, created_at timestamptz default now());
 create table if not exists chain_cursor (chain_id int primary key, last_processed_block bigint, last_block_hash bytea);
-create table if not exists controlled_set (addr bytea primary key, label text, added_at timestamptz default now());
 create table if not exists audit_log (id bigserial primary key, actor text, action text, payload jsonb, at timestamptz default now());
 `,
   },

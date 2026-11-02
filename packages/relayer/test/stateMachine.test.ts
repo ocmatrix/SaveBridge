@@ -89,8 +89,9 @@ describe("order state machine (DESIGN §6.3)", () => {
   });
 
   describe("timeouts: every state has an alert threshold", () => {
-    it("§6.3 values: index 10m, whitelist 30m, reserve immediate, review 72h, freeze 7d", () => {
-      expect(timeoutFor({ status: "WAITING", reason: "index" })).toBe(10 * MIN);
+    it("§6.3 values: unknown/missing reason 10m, whitelist 30m, reserve immediate, review 72h, freeze 7d", () => {
+      expect(timeoutFor({ status: "WAITING", reason: "index" })).toBe(10 * MIN); // legacy reason → unknown-reason fallback
+      expect(timeoutFor({ status: "WAITING", reason: null })).toBe(10 * MIN);
       expect(timeoutFor({ status: "WAITING", reason: "whitelist" })).toBe(30 * MIN);
       expect(timeoutFor({ status: "WAITING", reason: "reserve" })).toBe(0);
       expect(timeoutFor({ status: "REVIEW", reviewLevel: "audit" })).toBe(72 * H);

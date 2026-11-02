@@ -11,9 +11,10 @@ describe("migrations (DESIGN §6.5)", () => {
       "select table_name from information_schema.tables where table_schema = 'public' order by table_name",
     );
     const names = r.rows.map((x) => x.table_name);
-    for (const t of ["orders", "tx_attempts", "chain_cursor", "controlled_set", "audit_log", "schema_migrations"]) {
+    for (const t of ["orders", "tx_attempts", "chain_cursor", "audit_log", "schema_migrations"]) {
       expect(names).toContain(t);
     }
+    expect(names).not.toContain("controlled_set"); // v0.9.5: fund-source control set removed
     const applied = await db.query<{ n: number }>("select count(*)::int as n from schema_migrations");
     expect(applied.rows[0]!.n).toBe(MIGRATIONS.length);
   });

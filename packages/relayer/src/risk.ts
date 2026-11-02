@@ -4,7 +4,8 @@ import type { Order } from "./orders";
 import type { ReviewLevel, WaitReason } from "./stateMachine";
 
 /**
- * Risk hook (DESIGN §7; full fund-source tracing engine is PR-4 and will replace DefaultRiskEngine).
+ * Payout decision hook (DESIGN v0.9.5 §7: whitelist + quota + pause only, no fund-source checks).
+ * DefaultRiskEngine below is the on-chain default check; the interface stays replaceable (tests inject it).
  * AUTO = pay now (release); DELAY = queueRelease; REVIEW = owner decision; WAIT = retry later.
  */
 export type RiskDecision =
@@ -23,7 +24,7 @@ export interface RiskEngine {
 }
 
 /**
- * Default engine using only on-chain information (no fund-source tracing):
+ * Default engine using only on-chain information:
  * (The source-order re-read is a processor hard precondition, not part of the engine.)
  * W2B: BSC paused → both-chain whitelist →
  *      per-address cap (amount limit → REVIEW) → remaining daily/address quota → reserve →
