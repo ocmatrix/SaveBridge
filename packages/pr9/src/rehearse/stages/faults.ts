@@ -1,5 +1,8 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { PGlite } from "@electric-sql/pglite";
+import { PgliteDb } from "@bridge/relayer/src/db/pglite";
+import type { Db } from "@bridge/relayer/src/db/types";
 import { OrderRepo } from "@bridge/relayer/src/orders";
 import type { Address } from "viem";
 import { tok, type Ctx } from "../ctx";
@@ -73,7 +76,11 @@ export async function stageFaults(ctx: Ctx): Promise<void> {
     ctx.check("F7", "重放同一区段（回扫 300 块）：无重复订单（event_key 主键）", after === before, `${before} → ${after}`);
   }
 
-  // F3 crash after signing, before broadcast
+  // F3 crash windows of the payout sender (PR-3 TxSender.send: simulate → sign → INSERT tx_attempts(raw,'signed')
+  //    in one DB tx → afterSign hook → broadcast). Both windows must end with exactly one payment.
+  const attempts = async (k: `0x${string}`) =>
+    (await r.db.query<{ state: string; tx_hash: Uint8Array }>("select state, tx_hash from tx_attempts where event_key = $1 order by id", [Buffer.from(k.slice(2), "hex")])).rows.map((x) => ({ state: x.state, hash: `0x${Buffer.from(x.tx_hash).toString("hex")}` }));
+  // F3a: crash AFTER the raw tx is persisted, BEFORE broadcast → restart re-broadcasts the same raw tx
   {
     await r.db.close();
     let crashed = false;
@@ -84,7 +91,7 @@ export async function stageFaults(ctx: Ctx): Promise<void> {
           afterSign: () => {
             if (!crashed) {
               crashed = true;
-              throw new Error("injected crash after sign");
+              throw new Error("injected crash after persist, before broadcast");
             }
           },
         },
@@ -93,13 +100,58 @@ export async function stageFaults(ctx: Ctx): Promise<void> {
     const u = keys.user(17);
     const bal0 = await ctx.tokenBalance("bsc", u.address);
     const id = await bridgeOut(ctx, u, tok(30));
-    for (let i = 0; i < 40 && !crashed; i++) await tolerantPump(ctx, { r, w }, 1); // until the relayer signs (6 WANTON confirmations first)
-    const signed = await r.db.query<{ state: string }>("select state from tx_attempts where event_key = $1", [Buffer.from(w2bKey(ctx, id).slice(2), "hex")]);
+    const k = w2bKey(ctx, id);
+    for (let i = 0; i < 60 && !crashed; i++) await tolerantPump(ctx, { r, w }, 1); // until the relayer signs (6 WANTON confirmations first)
+    const before = await attempts(k);
+    const paidBefore = Number((await ctx.view<readonly [Address, bigint, bigint, number]>("bsc", "payouts", [k]))[3]);
+    await r.db.close(); // the "crashed" process is gone; nothing else ran after the hook
+    r = await startRelayer(ctx, { dbDir: dbDir(ctx) }); // restart: recover() re-broadcasts the persisted raw tx as-is
+    const ok = await until(ctx, { r, w }, async () => (await status(k)) === "RELEASED", "F3a replay");
+    const after = await attempts(k);
+    const mined = after.filter((x) => x.state === "mined");
+    ctx.check(
+      "F3a",
+      "签名并落库后、广播前崩溃：崩溃时已有 1 行 signed 原始交易且链上未付；重启后原样重播同一哈希，只付一次",
+      crashed && before.length === 1 && before[0]!.state === "signed" && paidBefore === 0 && ok && after.length === 1 && mined.length === 1 && mined[0]!.hash === before[0]!.hash && (await ctx.tokenBalance("bsc", u.address)) === bal0 + tok(30),
+      `before restart: ${before.map((x) => `${x.state}:${x.hash.slice(0, 10)}`).join(",") || "none"}; after: ${after.map((x) => `${x.state}:${x.hash.slice(0, 10)}`).join(",")}`,
+    );
+  }
+  // F3b: crash BEFORE the raw tx is persisted (the signing DB transaction dies) → nothing broadcast, restart re-signs, pays once
+  {
     await r.db.close();
-    r = await startRelayer(ctx, { dbDir: dbDir(ctx) }); // restart: re-broadcast the persisted raw tx as-is
-    const ok = await until(ctx, { r, w }, async () => (await status(w2bKey(ctx, id))) === "RELEASED", "F3 replay");
-    const hashes = await r.db.query<{ n: string }>("select count(distinct tx_hash) as n from tx_attempts where event_key = $1", [Buffer.from(w2bKey(ctx, id).slice(2), "hex")]);
-    ctx.check("F3", "签名后广播前崩溃：重启后原样重播同一笔原始交易，只付一次", crashed && signed.rows.length === 1 && ok && Number(hashes.rows[0]!.n) === 1 && (await ctx.tokenBalance("bsc", u.address)) === bal0 + tok(30), `attempt state before restart: ${signed.rows.map((x) => x.state).join(",")}`);
+    let crashed = false;
+    const inner = new PgliteDb(new PGlite(dbDir(ctx)));
+    const failingInsert = (d: Db): Db => ({
+      query: async (sql, params) => {
+        if (!crashed && /insert into tx_attempts/i.test(sql)) {
+          crashed = true;
+          throw new Error("injected crash before the signed tx is persisted");
+        }
+        return d.query(sql, params);
+      },
+      tx: (fn) => d.tx((t) => fn(failingInsert(t))),
+      close: () => d.close(),
+    });
+    r = await startRelayer(ctx, { db: failingInsert(inner) });
+    const u = keys.user(22);
+    const bal0 = await ctx.tokenBalance("bsc", u.address);
+    const bscNonce0 = await ctx.chains.bsc.pub.getTransactionCount({ address: ctx.acct("bscRelayer").address });
+    const id = await bridgeOut(ctx, u, tok(30));
+    const k = w2bKey(ctx, id);
+    for (let i = 0; i < 60 && !crashed; i++) await tolerantPump(ctx, { r, w }, 1);
+    const before = await attempts(k);
+    await ctx.chains.bsc.mine(2);
+    const sentBefore = (await ctx.chains.bsc.pub.getTransactionCount({ address: ctx.acct("bscRelayer").address })) - bscNonce0;
+    await r.db.close();
+    r = await startRelayer(ctx, { dbDir: dbDir(ctx) });
+    const ok = await until(ctx, { r, w }, async () => (await status(k)) === "RELEASED", "F3b re-sign");
+    const after = await attempts(k);
+    ctx.check(
+      "F3b",
+      "落库前崩溃：无 tx_attempts 行、链上无交易；重启后重新签名，最终只付一次",
+      crashed && before.length === 0 && sentBefore === 0 && ok && after.filter((x) => x.state === "mined").length === 1 && (await ctx.tokenBalance("bsc", u.address)) === bal0 + tok(30),
+      `rows before restart ${before.length}, txs sent before restart ${sentBefore}; after: ${after.map((x) => x.state).join(",")}`,
+    );
   }
 
   // F4 RPC disagreement: one BSC RPC of the watcher (and relayer cross-check) hides events
