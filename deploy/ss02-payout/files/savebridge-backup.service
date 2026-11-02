@@ -1,0 +1,20 @@
+[Unit]
+Description=SaveBridge encrypted database backup (age)
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=savebridge
+Group=savebridge
+UMask=0077
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=30%
+MemoryMax=256M
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/backups/savebridge
+ReadOnlyPaths=/etc/savebridge
+ExecStart=/bin/sh -c 'f=/var/backups/savebridge/db-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).dump.age; pg_dump -Fc savebridge | age -R /etc/savebridge/backup-recipients.txt > "$f.part" && mv "$f.part" "$f"; find /var/backups/savebridge -name "db-*.dump.age" -mtime +14 -delete'
