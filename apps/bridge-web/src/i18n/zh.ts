@@ -20,7 +20,7 @@ export const zh = {
   "swap.recipient": "收款地址",
   "swap.edit": "修改",
   "cta.enterAmount": "输入金额",
-  "cta.closed": "跨链未开通",
+  "cta.closed": "未开通跨出",
   "cta.w2b": "跨出 {amount} USDT",
   "cta.b2w": "存入 {amount} USDT",
   "info.w2b": "今日剩余额度 {amount} USDT · 单笔 {min} ~ {max}",
@@ -36,7 +36,7 @@ export const zh = {
 
   "wl.label": "开通状态",
   "wl.open": "已开通",
-  "wl.closed": "跨链未开通，请联系客服",
+  "wl.closed": "未开通跨出，请联系客服",
   "wl.syncing": "开通同步中，请稍后刷新",
 
   "status.paused": "跨链桥维护中，暂停操作，请稍后再试",
@@ -58,7 +58,7 @@ export const zh = {
   "b2w.recipientInvalid": "收款地址无效",
   "b2w.confirmRecipient": "将存入 {amount} USDT，到账 WANTOS 地址：{to}",
   "b2w.eta": "BSC 存入后约 15 分钟排队，到账 WANTOS。",
-  "b2w.notOpenNote": "当前地址未开通跨链：存入可以到账 WANTOS，但从 WANTOS 跨回 BSC 需要先开通。",
+  "b2w.notOpenNote": "当前地址未开通跨出：存入后需先开通，才能从 WANTOS 转回 BSC。",
 
   "quota.today": "今日剩余额度",
   "quota.w2bAddr": "本地址今日可跨出：{amount} USDT",
@@ -93,10 +93,10 @@ export const zh = {
   "order.awaitingCredit": "BSC 已存入，等待 WANTOS 到账（约 15 分钟）",
   "order.viewTx": "查看交易",
 
-  "footer.notice": "仅白名单地址开通跨链",
+  "footer.notice": "仅白名单地址可从 WANTOS 跨出到 BSC",
   "footer.powered": "Powered by WANTOS",
 
-  "err.notWhitelisted": "跨链未开通，请联系客服",
+  "err.notWhitelisted": "未开通跨出，请联系客服",
   "err.paused": "跨链桥维护中，暂停操作，请稍后再试",
   "err.supplyCeiling": "WANTOS-USDT 发行量超过安全上限，跨出暂停，请稍后再试",
   "err.amountBelowMinimum": "金额 {amount} 低于最低限额 {limit} USDT",

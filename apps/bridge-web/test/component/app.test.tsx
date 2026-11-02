@@ -37,10 +37,10 @@ async function connect(user = userEvent.setup()) {
 const panel = (name: string) => screen.getByRole("region", { name });
 
 describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
-  it("not whitelisted → '跨链未开通，请联系客服' and bridge-out disabled", async () => {
+  it("not whitelisted → '未开通跨出，请联系客服' and bridge-out disabled", async () => {
     renderApp(env.cfg, KEYS.alice.address);
     await connect();
-    expect(await screen.findAllByText("跨链未开通，请联系客服", {}, T)).not.toHaveLength(0);
+    expect(await screen.findAllByText("未开通跨出，请联系客服", {}, T)).not.toHaveLength(0);
     const w2b = panel("WANTOS → BSC");
     await userEvent.type(within(w2b).getByLabelText("金额（USDT）"), "100");
     expect(submit(w2b)).toBeDisabled();
@@ -188,7 +188,7 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     expect(screen.getByRole("heading", { level: 1, name: "SafeBridge" })).toBeInTheDocument();
     const footer = screen.getByRole("contentinfo");
     const lines = Array.from(footer.querySelectorAll("small")).map((e) => e.textContent);
-    expect(lines).toEqual(["仅白名单地址开通跨链", "Powered by WANTOS"]);
+    expect(lines).toEqual(["仅白名单地址可从 WANTOS 跨出到 BSC", "Powered by WANTOS"]);
     expect(footer.textContent).not.toMatch(/0x[0-9a-fA-F]{8}/);
   });
 

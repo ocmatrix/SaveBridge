@@ -109,13 +109,13 @@ describe("W2B blockers (enabled first, then blocked)", () => {
     expectNotice(w2b, "开通同步中，请稍后刷新");
   });
 
-  it("not enabled on either chain → 跨链未开通", async () => {
+  it("not enabled on either chain → 未开通跨出", async () => {
     const { queryClient, w2b, btn } = await readyW2B();
     await whitelist(env, env.wantos, [KEYS.alice.address], false);
     await whitelist(env, env.bsc, [KEYS.alice.address], false);
     await refresh(queryClient);
     await waitFor(() => expect(btn).toBeDisabled(), T);
-    expectNotice(w2b, "跨链未开通，请联系客服");
+    expectNotice(w2b, "未开通跨出，请联系客服");
   });
 
   it("supplyCeiling exceeded", async () => {

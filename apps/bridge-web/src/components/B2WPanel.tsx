@@ -83,7 +83,6 @@ export function B2WPanel({ state, onDeposit, wallet, onFlip }: { state: BridgeSt
       {!address && <WalletNote wallet={wallet} />}
       {wrongNet && <NetworkPrompt target={cfg.bsc} />}
       {address && blocker && <p className="bar warn">{t(blocker)}</p>}
-      {address && state && state.wl !== "open" && <p className="bar">{t("b2w.notOpenNote")}</p>}
       <AmountBox
         side="from"
         tone="bsc"
@@ -146,6 +145,7 @@ export function B2WPanel({ state, onDeposit, wallet, onFlip }: { state: BridgeSt
       <PendingTx flow={flow} chain={cfg.bsc} />
       {flow.done && <p className="ok">{flow.done}</p>}
       {flow.error && <p className="error">{flow.error}</p>}
+      {address && state && state.wl !== "open" && <p className="bar note">{t("b2w.notOpenNote")}</p>}
       <button type="button" className="cta" data-testid="submit" disabled={address ? !canSubmit : wallet.connecting} onClick={() => (address ? void submit() : wallet.setOpen(true))}>
         {label}
       </button>

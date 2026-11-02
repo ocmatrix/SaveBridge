@@ -105,6 +105,7 @@ body { margin: 0; color: var(--text); }
 .info { color: var(--muted); font-size: 13px; margin: 28px 6px 0; line-height: 1.5; }
 .info + .info { margin-top: 6px; }
 .bar, .notice { border-radius: 18px; padding: 12px 16px; margin: 0 0 10px; font-size: 14px; font-weight: 500; line-height: 1.5; background: rgba(255, 255, 255, 0.55); border: 1px solid rgba(255, 255, 255, 0.7); }
+.bar.note { margin: 12px 0 0; }
 .bar.warn, .notice.warn { background: rgba(255, 196, 64, 0.3); color: var(--warn); font-weight: 600; }
 .notice .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .notice button, .notice a { font: inherit; font-size: 13px; font-weight: 600; }

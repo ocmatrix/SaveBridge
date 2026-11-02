@@ -22,7 +22,7 @@ export const en: Dict = {
   "swap.recipient": "Recipient",
   "swap.edit": "Edit",
   "cta.enterAmount": "Enter amount",
-  "cta.closed": "Not enabled",
+  "cta.closed": "Bridge-out not enabled",
   "cta.w2b": "Bridge out {amount} USDT",
   "cta.b2w": "Deposit {amount} USDT",
   "info.w2b": "Left today {amount} USDT · per tx {min} ~ {max}",
@@ -38,7 +38,7 @@ export const en: Dict = {
 
   "wl.label": "Bridge access",
   "wl.open": "Enabled",
-  "wl.closed": "Bridging is not enabled for this address. Please contact support.",
+  "wl.closed": "Bridging out is not enabled for this address. Please contact support.",
   "wl.syncing": "Access is being synchronised. Please refresh shortly.",
 
   "status.paused": "The bridge is under maintenance. Please try again later.",
@@ -60,7 +60,7 @@ export const en: Dict = {
   "b2w.recipientInvalid": "Invalid recipient address",
   "b2w.confirmRecipient": "Depositing {amount} USDT to WANTOS address: {to}",
   "b2w.eta": "After the BSC deposit, funds arrive on WANTOS after a ~15 minute queue.",
-  "b2w.notOpenNote": "This address is not enabled: a deposit will arrive on WANTOS, but bridging back to BSC requires access first.",
+  "b2w.notOpenNote": "Bridging out is not enabled for this address: after a deposit you need access before moving funds back to BSC.",
 
   "quota.today": "Remaining today",
   "quota.w2bAddr": "You can bridge out today: {amount} USDT",
@@ -95,7 +95,7 @@ export const en: Dict = {
   "order.awaitingCredit": "Deposited on BSC, awaiting WANTOS credit (~15 minutes)",
   "order.viewTx": "View transaction",
 
-  "footer.notice": "Bridging is enabled for whitelisted addresses only",
+  "footer.notice": "Only whitelisted addresses can bridge out from WANTOS to BSC",
   "footer.powered": "Powered by WANTOS",
 
   "err.notWhitelisted": "Bridging is not enabled for this address. Please contact support.",

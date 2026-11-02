@@ -55,10 +55,10 @@ describe("translateError", () => {
   const B = bscVaultV2Abi as Abi;
   const someone = "0x5555555555555555555555555555555555555555";
 
-  it("NotWhitelisted → '跨链未开通，请联系客服'", () => {
+  it("NotWhitelisted → '未开通跨出，请联系客服'", () => {
     const r = translateError(revertOf(W, "NotWhitelisted", [someone]), ctx);
     expect(r.key).toBe("err.notWhitelisted");
-    expect(describeError(r, "zh")).toBe("跨链未开通，请联系客服");
+    expect(describeError(r, "zh")).toBe("未开通跨出，请联系客服");
   });
 
   it("EnforcedPause → maintenance", () => {

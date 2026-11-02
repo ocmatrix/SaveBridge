@@ -47,13 +47,13 @@ export function AmountBox(props: {
   );
 }
 
-/** The round control between the two boxes: switches the direction. */
+/** The round control between the two boxes: a single arrow (USDT flows from the top box to the bottom one); tapping it switches the direction. */
 export function FlipButton({ onClick, disabled }: { onClick(): void; disabled?: boolean }) {
   const { t } = useI18n();
   return (
-    <button type="button" className="puck" aria-label={t("swap.flip")} disabled={disabled} onClick={onClick}>
+    <button type="button" className="puck" aria-label={t("swap.flip")} title={t("swap.flip")} disabled={disabled} onClick={onClick}>
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M8 4v16M4 16l4 4 4-4M16 20V4M12 8l4-4 4 4" />
+        <path d="M12 5v14M6 13l6 6 6-6" />
       </svg>
     </button>
   );
