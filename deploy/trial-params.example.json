@@ -1,0 +1,11 @@
+{
+  "_comment": "Trial-operation bridge parameters decided by the owner (2026-11-02). Daily caps are set to the CONTRACT MAXIMUM (DESIGN §5.5 ranges): they do not limit exposure. The REAL exposure = what is funded into the vaults (planned ~20,000-50,000 USDT). Amounts in USDT (18 decimals on both chains); wei values given for the deployment script. Parameters not listed here keep the DESIGN §5.5 initial values. Applied at contract deployment (owner-authorised step A3), not by these services.",
+  "bsc": {
+    "dailyCap": { "usdt": 500000, "wei": "500000000000000000000000" },
+    "perAddrDailyCap": { "usdt": 20000, "wei": "20000000000000000000000" }
+  },
+  "wantos": {
+    "b2wDailyCap": { "usdt": 200000, "wei": "200000000000000000000000" }
+  },
+  "plannedFunding": { "usdtMin": 20000, "usdtMax": 50000, "note": "exposure ceiling; owner decides the exact amounts at gates G7/G8" }
+}

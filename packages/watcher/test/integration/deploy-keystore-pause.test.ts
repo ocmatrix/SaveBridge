@@ -63,6 +63,7 @@ describe("watcher deploy wiring with a keystore PAUSER", () => {
       BSC_RPC_2: "https://bsc-b.example.org",
       BSC_RPC_3: "https://bsc-c.example.net",
       CREDENTIALS_DIRECTORY: cd,
+      PEER_BSC_RPC_HOSTS: "bsc.payout-provider.io",
     };
     const calls: Array<{ host: string; method: string }> = [];
     const transportFor = (url: string): Transport => {
@@ -125,7 +126,7 @@ describe("watcher deploy wiring with a keystore PAUSER", () => {
   it("the kms placeholder cannot sign (refuses to build a PAUSER)", async () => {
     const raw = JSON.parse(readFileSync(resolve(__dirname, "../../../../deploy/watcher.config.example.json"), "utf8"));
     raw.runtime.pauser = { kind: "kms" };
-    const env = { WANTOS_RPC3_LOCAL: "http://127.0.0.1:1", WANTOS_RPC1_READONLY: "https://rpc.wantos.io", WANTOS_RPC2_READONLY: "https://rpc2.wantos.io", BSC_RPC_1: "https://a.example", BSC_RPC_2: "https://b.example", BSC_RPC_3: "https://c.example" };
+    const env = { WANTOS_RPC3_LOCAL: "http://127.0.0.1:1", WANTOS_RPC1_READONLY: "https://rpc.wantos.io", WANTOS_RPC2_READONLY: "https://rpc2.wantos.io", BSC_RPC_1: "https://a.example", BSC_RPC_2: "https://b.example", BSC_RPC_3: "https://c.example", PEER_BSC_RPC_HOSTS: "payout.example.net" };
     await expect(buildPauseSenders(resolveDeployConfig(raw, env))).rejects.toThrow(/cannot sign/);
   });
 });

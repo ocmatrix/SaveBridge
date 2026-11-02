@@ -67,23 +67,29 @@
 | # | 内容 | 依据 | 说明 |
 |---|---|---|---|
 | D1 | 付款钥匙今天是本地加密 keystore，不是 KMS | DESIGN §6.1 | 用户决定；明天换 KMS；威胁见 §2 |
-| D2 | 告警只有 Telegram（即时消息）+ 外部心跳服务（电话 / 短信由该服务提供），没有直接的电话 / 短信通道 | §9.3 一级「电话 + 短信」 | 一级告警发不出去超过 10 分钟 → 停发心跳 → 外部服务打电话；外部服务需配置电话 / 短信通知（待确认 Q2） |
+| D2 | 告警只有 Telegram（即时消息）+ 外部心跳服务（Healthchecks.io 风格 ping URL，电话 / 短信由该服务提供），没有直接的电话 / 短信通道 | §9.3 一级「电话 + 短信」 | 心跳每 1 分钟、宽限 3–5 分钟；一级告警发不出去超过 5 分钟 → 停发心跳 → 外部服务打电话 / 发短信（配置见 `deploy/README.md` §6.1） |
 | D3 | 付款程序的一级告警没有 24h 重复（沿用 15 分钟去重）；监控侧有 | §9.3 | 付款程序侧的一级告警（重组、重复放款、心跳中断）同时会被监控以自己的码报告 |
 | D4 | ack 入口是服务器上的文件收件箱（`deploy.sh ack`），不是后台按钮 / Telegram 命令 | PR7 运维 3 | 不让 Telegram 机器人反向控制监控（攻击面）；待确认 Q3 |
 | D5 | PostgreSQL 监听 `localhost`（127.0.0.1 + ::1），付款程序用 unix socket + peer 认证（无密码） | 任务「仅监听 127.0.0.1」 | 比密码更少秘密；`::1` 也是回环 |
 | D6 | 运行时用 `node --import tsx` 直接跑 TypeScript（与仓库 `start` 脚本一致），服务器上 `pnpm install --frozen-lockfile --ignore-scripts --filter <包>...` | — | 锁文件含完整性哈希；未做打包产物 |
 
-## 7. 待确认
+## 7. 负责人已拍板（2026-11-02）
+
+- 试运营额度：BSC `dailyCap` 500,000、`perAddrDailyCap` 20,000，WANTOS `b2wDailyCap` 200,000（均为合约上限，`deploy/trial-params.example.json`）。**真实敞口 = 金库注资量，约 2–5 万 USDT。** 其余参数沿用 DESIGN §5.5 初值。
+- 外部心跳：Healthchecks.io 风格 ping URL（UptimeRobot 也可），URL 只走凭据文件；心跳 1 分钟、宽限 3–5 分钟；电话 / 短信在服务商侧配置（`deploy/README.md` §6.1）。
+- BSC 服务商：监控与付款程序必须互不相同；启动校验 `assertDistinctBscProviders`（`@bridge/ops`）在两边都强制：比较自己全部 BSC URL（含写端点）的注册域名与环境变量 `PEER_BSC_RPC_HOSTS`（对方主机名），重叠 / 缺失 / 填 URL 均拒启动。测试：`ops/test/rpcPolicy.test.ts`、`relayer/test/deployWiring.test.ts`、`watcher/test/unit/deploy.test.ts`；变异 P09 / R11 / R12 / W07。
+
+## 8. 上线前由主会话只读核实（不在本分支猜测）
+
+见 `deploy/README.md` §11：V1 付款程序经 `https://rpc3.wantos.io` 写入是否需 `X-Wantos-Key` 车道令牌 / 走哪条 lane；V2 rpc3 本机 RPC 端口；V3 监控 `pause()` 是否走 shim。
+
+## 9. 待确认（其余）
 
 | # | 事项 | 当前保守处理 |
 |---|---|---|
-| Q1 | ss02 访问 rpc3 的写入路径：`https://rpc3.wantos.io` 是否经 shim（是否需要 `X-Wantos-Key` 车道令牌）？付款程序的发送 client 不带自定义头 | 模板写 `WANTOS_RPC3=https://rpc3.wantos.io`；若需要令牌，需在 viem http transport 加 header（令牌走凭据），上线前确认 |
-| Q2 | 外部心跳服务选型（healthchecks.io 类）及其电话 / 短信通知；超时阈值（建议监控 10 min、付款程序 5 min） | 只需一个 HTTPS ping URL（凭据 `heartbeat-url`） |
 | Q3 | ack 入口形态（文件收件箱是否足够） | 文件收件箱 |
-| Q4 | rpc3 本机 WANTOS RPC 端口（模板 `127.0.0.1:8545`）与 pause() 是否应走 shim 的车道 | 直连本机节点（单笔 pause，非并发） |
-| Q5 | 监控与付款程序的 BSC 服务商是否互不相同（PR7：监控不与付款程序共用数据源） | 模板分别占位，部署时由负责人选定 |
 | Q6 | rpc3 的 Ubuntu / systemd 版本：< 250 时无 `LoadCredentialEncrypted`，凭据退化为 root 0600 明文文件 + `LoadCredential=` | 脚本自动退化并警告；单元需手工改一行 |
 | Q7 | `vm.swappiness=10`（全局）与新增 2 GB swap 是否可接受（ss02 是 SynStar 流量节点） | 仅在无 swap 时添加；可回退 |
-| Q8 | 每日额度「合约允许的较高值」的具体数：BSC `dailyCap` 上限 50 万、`perAddrDailyCap` 2 万；WANTOS `b2wDailyCap` 20 万、`w2bPerAddrDailyCap` 2 万（DESIGN §5.5 范围） | 不在本分支内设定（合约参数属部署步骤 A3） |
 | Q9 | Node 22 补丁版本（脚本默认 22.20.0）与发布钥匙指纹人工核对 | 部署时核对最新 22.x LTS，`NODE_SHA256` 可钉住 |
 | Q10 | 撤销 rpc1/rpc2 授权时是否接受「停服 / 暂停」而非单源运行 | 代码不提供单源模式；见 README §7 |
+| Q11 | 额度放宽后，其余参数（`largeThreshold`、`maxDepositPerTx`、`w2bPerAddrDailyCap` 等）是否也调整 | 沿用 DESIGN §5.5 初值；跨链约束仍满足（BSC `perAddrDailyCap` 20,000 ≥ WANTOS `w2bPerAddrDailyCap` 2,000；`maxDepositPerTx` 2,000 ≤ `b2wDailyCap` 200,000） |

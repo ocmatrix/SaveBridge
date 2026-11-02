@@ -188,3 +188,16 @@ describe("guarded transport", () => {
     expect(typeof rpcTransport("https://rpc3.wantos.io", { role: "write" })).toBe("function");
   });
 });
+
+describe("BSC provider separation between the two services", () => {
+  it("providerOf compares registrable domains; IPs as-is", async () => {
+    const { providerOf, assertDistinctBscProviders } = await import("../src/rpcPolicy");
+    expect(providerOf("https://bsc-a.Provider.com/key")).toBe("provider.com");
+    expect(providerOf("x.provider.com.:443")).toBe("provider.com");
+    expect(providerOf("1.2.3.4")).toBe("1.2.3.4");
+    expect(() => providerOf("bad host!")).toThrow(/invalid host/);
+    expect(() => assertDistinctBscProviders(["https://a.p1.io/k"], { PEER_BSC_RPC_HOSTS: "b.p1.io" })).toThrow(/used by both/);
+    expect(() => assertDistinctBscProviders(["https://a.p1.io/k"], { PEER_BSC_RPC_HOSTS: "p2.io,p3.net" })).not.toThrow();
+    expect(() => assertDistinctBscProviders(["https://a.p1.io/k"], {})).toThrow(/not set/);
+  });
+});

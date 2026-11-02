@@ -16,6 +16,7 @@ const ENV = {
   BSC_RPC_1: "https://bsc-a.example.com/k",
   BSC_RPC_2: "https://bsc-b.example.org",
   BSC_RPC_3: "https://bsc-c.example.net",
+  PEER_BSC_RPC_HOSTS: "bsc.payout-provider-a.io,payout-provider-b.com",
 };
 
 describe("watcher deploy config", () => {
@@ -63,6 +64,14 @@ describe("watcher deploy config", () => {
     const f = clone();
     f.minRpcAgreement = 1;
     expect(() => resolveDeployConfig(f, ENV)).toThrow(/minRpcAgreement must be ≥ 2/);
+  });
+
+  it("BSC providers must differ from the payout service's (fail-closed)", () => {
+    expect(() => resolveDeployConfig(EXAMPLE, { ...ENV, PEER_BSC_RPC_HOSTS: "x.example.ORG" })).toThrow(/example\.org .*used by both/);
+    expect(() => resolveDeployConfig(EXAMPLE, { ...ENV, PEER_BSC_RPC_HOSTS: undefined })).toThrow(/PEER_BSC_RPC_HOSTS is not set/);
+    const c = clone();
+    c.runtime.pauseWriteRpcEnv.bsc = "BSC_PAUSE";
+    expect(() => resolveDeployConfig(c, { ...ENV, BSC_PAUSE: "https://p.payout-provider-b.com" })).toThrow(/payout-provider-b\.com/);
   });
 
   it("low-frequency rules: tick >= 5 s; getLogs window must fit the rpc1/rpc2 limit", () => {

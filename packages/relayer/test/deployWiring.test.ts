@@ -29,6 +29,7 @@ const ENV = {
   BSC_RPC_1: "https://bsc-a.example.com/key1",
   BSC_RPC_2: "https://bsc-b.example.org",
   BSC_RPC_3: "https://bsc-c.example.net",
+  PEER_BSC_RPC_HOSTS: "bsc.watcher-provider-x.io, rpc.watcher-provider-y.com,z.watcher-provider-z.net",
 };
 
 describe("endpoint policy (read/write split, independence, rpc1/rpc2 read-only)", () => {
@@ -80,6 +81,22 @@ describe("endpoint policy (read/write split, independence, rpc1/rpc2 read-only)"
     });
     expect(resolveEndpoints(noExt, { ...ENV, W_OTHER: "https://wantos-node-b.example.com" }).usesExternalReadOnly).toBe(false);
     expect(() => resolveEndpoints(deployCfg(), { ...ENV, BSC_RPC_3: undefined })).toThrow(/BSC_RPC_3 is not set/);
+  });
+});
+
+describe("BSC providers must differ between the payout service and the watcher", () => {
+  it("refuses a provider shared with the watcher (same registrable domain, any sub-domain / case / port)", () => {
+    expect(() => resolveEndpoints(deployCfg(), { ...ENV, PEER_BSC_RPC_HOSTS: "other.io,NODE.Example.COM:443" })).toThrow(/example\.com .*used by both/);
+    expect(() => resolveEndpoints(deployCfg(), { ...ENV, PEER_BSC_RPC_HOSTS: "bsc-b.example.org" })).toThrow(/example\.org/);
+  });
+  it("refuses when the peer list is missing, empty or holds URLs (fail-closed)", () => {
+    expect(() => resolveEndpoints(deployCfg(), { ...ENV, PEER_BSC_RPC_HOSTS: undefined })).toThrow(/PEER_BSC_RPC_HOSTS is not set/);
+    expect(() => resolveEndpoints(deployCfg(), { ...ENV, PEER_BSC_RPC_HOSTS: "  " })).toThrow(/is not set/);
+    expect(() => resolveEndpoints(deployCfg(), { ...ENV, PEER_BSC_RPC_HOSTS: "https://x.io/key" })).toThrow(/host names only/);
+  });
+  it("also checks a separate BSC write endpoint", () => {
+    const c = deployCfg((x) => (x.bsc.writeRpcUrlEnv = "BSC_W"));
+    expect(() => resolveEndpoints(c, { ...ENV, BSC_W: "https://w.watcher-provider-x.io" })).toThrow(/watcher-provider-x\.io/);
   });
 });
 
