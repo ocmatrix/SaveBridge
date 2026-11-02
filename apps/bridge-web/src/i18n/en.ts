@@ -59,7 +59,7 @@ export const en: Dict = {
   "b2w.recipientHint": "Defaults to your address. Do not enter an exchange deposit address.",
   "b2w.recipientInvalid": "Invalid recipient address",
   "b2w.confirmRecipient": "Depositing {amount} USDT to WANTOS address: {to}",
-  "b2w.eta": "After the BSC deposit, funds arrive on WANTOS after a ~15 minute queue.",
+  "b2w.eta": "After the BSC deposit, funds arrive on WANTOS, usually within a few minutes.",
 
   "quota.today": "Remaining today",
   "quota.w2bAddr": "You can bridge out today: {amount} USDT",
@@ -81,7 +81,7 @@ export const en: Dict = {
   "step.send": "Step 2: submit the bridge transaction",
   "step.confirming": "Waiting for confirmation…",
   "step.w2bDone": "Submitted, order #{id}",
-  "step.b2wDone": "Deposited, deposit #{id}; arrives on WANTOS in ~15 minutes",
+  "step.b2wDone": "Deposited, deposit #{id}; waiting to arrive on WANTOS",
 
   "order.title": "My orders",
   "order.empty": "No orders yet",
@@ -91,7 +91,7 @@ export const en: Dict = {
   "order.completed": "Completed",
   "order.refunding": "Refund in progress",
   "order.refunded": "Refunded",
-  "order.awaitingCredit": "Deposited on BSC, awaiting WANTOS credit (~15 minutes)",
+  "order.awaitingCredit": "Deposited on BSC, awaiting WANTOS credit",
   "order.viewTx": "View transaction",
 
   "footer.notice": "Only whitelisted addresses can bridge out from WANTOS to BSC",
