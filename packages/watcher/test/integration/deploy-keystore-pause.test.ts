@@ -75,6 +75,14 @@ describe("watcher deploy wiring with a keystore PAUSER", () => {
     const rpc = buildGuardedRpc(d, { transportFor });
     const senders = await buildPauseSenders(d, { transportFor, env, minN: 2 ** 10 });
     expect(senders.wantos.address).toBe(ACCOUNTS.pauser.address);
+    // a pause() write endpoint serving another chain refuses to start
+    const wrongRaw = structuredClone(raw);
+    wrongRaw.runtime.pauseWriteRpcEnv.wantos = "BSC_RPC_2";
+    await expect(buildPauseSenders(resolveDeployConfig(wrongRaw, env), { transportFor, env, minN: 2 ** 10 })).rejects.toThrow(/serves chainId/);
+    // the same key for both chains is refused
+    const sameRaw = structuredClone(raw);
+    sameRaw.runtime.pauser = { kind: "local-keystore", wantos: await mk("same-a", pauserKey), bsc: await mk("same-b", pauserKey) };
+    await expect(buildPauseSenders(resolveDeployConfig(sameRaw, env), { transportFor, env, minN: 2 ** 10 })).rejects.toThrow(/must differ/);
 
     const sink = new MemoryAlertSink();
     const w = new Watcher({
