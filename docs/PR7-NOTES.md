@@ -99,7 +99,7 @@
 | `config/watcher.example.json` | 配置示例：RPC 全是 `*.example.invalid` 占位；桥 / 时间锁 / 钱包地址为占位；只出现 DESIGN 中的主网地址（USDT、旧金库、旧付款程序） |
 | `config/controlled-set.example.json` | 附录 A 受控集合（22 条），可加载 |
 | `test/helpers/harness.ts` | 两条本地 anvil（BSC 本地 chainId 5600、`--slots-in-an-epoch 1` 使 `finalized = latest − 2`；WANTOS 本地 13500）+ 用 `out/*.json` 字节码按 §5.1 nonce 0/1/2 部署两链（地址相同）+ EIP-712 白名单批次 |
-| `test/unit/*`、`test/integration/*` | 166 个测试，见 §0、§0b、§8 |
+| `test/unit/*`、`test/integration/*` | 170 个测试，见 §0、§0b、§8 |
 
 依赖：只依赖 `@bridge/abi` 与 `viem`；**不依赖 `@bridge/relayer`，不读付款程序数据库**。
 
@@ -278,7 +278,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 
 ## 8. 测试（DH L2）
 
-`pnpm -r typecheck` 通过；`pnpm -r test`：**17 个文件 / 166 个测试全部通过**（约 4 秒，两条本地 anvil）。变异重跑结果见 GATE2 第 2、3 次与最终报告。
+`pnpm -r typecheck` 通过；`pnpm -r test`：**17 个文件 / 170 个测试全部通过**（约 4 秒，两条本地 anvil）。变异重跑结果见 GATE2 第 2、3 次与最终报告。
 
 覆盖率（`vitest run --coverage`，`src/main.ts`、`src/index.ts` 除外）：语句 94.98%、分支 85.6%、函数 99.41%、行 96.55%。核心逻辑：`watcher.ts` 行 95.1% / 语句 94.3%，`verifier.ts` 行 98.6% / 语句 92.4%，`pauser.ts` 行 100% / 语句 93.9%，`rpc.ts` 100%，`alerts.ts` 100%。
 

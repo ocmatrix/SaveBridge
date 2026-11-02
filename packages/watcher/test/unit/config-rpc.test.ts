@@ -87,4 +87,39 @@ describe("MultiRpc consensus (condition ②: at least two RPCs agree)", () => {
   it("stableStringify is key-order independent and bigint-safe", () => {
     expect(stableStringify({ b: 1n, a: [2, { d: 1, c: 2 }] })).toBe(stableStringify({ a: [2, { c: 2, d: 1 }], b: 1n }));
   });
+
+  it("r4 item 2: dissent is a sliding window — interleaved agreements do not reset it (Z09)", async () => {
+    let lie = true;
+    const m = new MultiRpc("bsc", [{ label: "a", client: 1 as never }, { label: "b", client: 1 as never }, { label: "c", client: 1 as never }], 2);
+    const run = () => m.consensus(async (c, label) => (label === "c" && lie ? 99 : (c as unknown as number)), "probe");
+    for (let i = 0; i < 6; i++) {
+      lie = true;
+      await run(); // c dissents
+      lie = false;
+      await run(); // c agrees
+    }
+    expect(m.dissent.get("c")!.count).toBe(6);
+    expect(m.dissent.get("c")!.last).toBe("probe");
+    expect(m.dissent.get("a")?.count ?? 0).toBe(0);
+  });
+
+  it("r4 item 2: a null answer agreeing with a null majority is neutral, not an agreement (Z08)", async () => {
+    let mode: "lie" | "null" = "lie";
+    const m = new MultiRpc("bsc", [{ label: "a", client: 1 as never }, { label: "b", client: 1 as never }, { label: "c", client: 1 as never }], 2);
+    const run = () => m.consensus(async (_c, label) => (mode === "null" ? null : label === "c" ? 99 : 1));
+    for (let i = 0; i < 5; i++) await run();
+    mode = "null";
+    for (let i = 0; i < 30; i++) await run();
+    expect(m.dissent.get("c")!.count).toBe(5); // 30 "agreements on nothing" did not flush the window
+  });
+
+  it("r4 item 2: siding with a null majority in a DISPUTED read is neutral too (Z08)", async () => {
+    let phase = 1;
+    const m = new MultiRpc("bsc", [{ label: "a", client: 1 as never }, { label: "b", client: 1 as never }, { label: "c", client: 1 as never }], 2);
+    const run = () => m.consensus(async (_c, label) => (phase === 1 ? (label === "a" ? 99 : 1) : label === "c" ? 7 : null));
+    for (let i = 0; i < 5; i++) await run(); // a dissents 5×
+    phase = 2;
+    for (let i = 0; i < 30; i++) await run(); // a & b answer null (the "majority"), c something else
+    expect(m.dissent.get("a")!.count).toBe(5);
+  });
 });

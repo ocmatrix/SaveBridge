@@ -115,4 +115,25 @@ describe("round-4 hardening", () => {
     await t.w.tick();
     expect(t.w.state.derived.pending.map((p) => p.txHash)).toContain(r.hash);
   });
+
+  it("item 2 / Z07: many empty ranges per tick (where the stalled node 'agrees' on nothing) do not dilute its dissent", async () => {
+    let frozen: bigint | null = null;
+    const t = await makeWatcher(H, {
+      endpoints: { bsc: three(stalledNode(H.bsc, () => frozen), "stalled") },
+      config: (c) => void ((c.chains.bsc.maxLagBlocks = 5), (c.chains.bsc.maxBlockRange = 1), (c.maxRangesPerTick = 40)),
+    });
+    await H.settle();
+    await t.w.tick();
+    frozen = (await H.bsc.pub.getBlock({ blockTag: "finalized" })).number;
+    const r = await forge(72n);
+    await H.settle();
+    t.clock.now = r.timestamp + 400;
+    await t.w.tick();
+    for (let i = 0; i < 10; i++) {
+      await H.bsc.mine(15);
+      t.clock.now += 300;
+      await t.w.tick();
+    }
+    expect(t.sink.alerts.filter((a) => a.code === "RPC_DISSENTING").map((a) => a.detail["rpc"])).toContain("stalled");
+  });
 });
