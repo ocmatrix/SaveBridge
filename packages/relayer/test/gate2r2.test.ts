@@ -11,7 +11,7 @@ import { reviewMessage, ReviewService } from "../src/review";
 import { MemoryAlertSink } from "../src/alerts";
 import { Processor } from "../src/processor";
 import { Relayer } from "../src/relayer";
-import { toBytes } from "../src/bytes";
+import { fromBytes, toBytes } from "../src/bytes";
 import type { RiskEngine } from "../src/risk";
 import type { Hex } from "../src/types";
 
@@ -127,6 +127,30 @@ describe("Gate2 r2", () => {
     expect(await payoutStatus("bsc", wKey(1n))).toBe(0);
     expect(await balanceOf(world.bsc, world.b.token, world.act.user.address)).toBe(before);
     expect(sys.alerts.byKind("SIGNED_TX_SOURCE_MISMATCH").length).toBeGreaterThan(0);
+  });
+
+  it("A-1: if the abandoned ORIGINAL still gets mined (cancel lost), the outcome is resolved, not lost; owner is paged", async () => {
+    const sys = await buildRelayer(world, { risk: auto });
+    await bridgeOut(world, world.act.user, 100n * U);
+    await confirmWantos(world);
+    await world.bsc.testClient.setAutomine(false);
+    await sys.relayer.tick(); // release pending
+    await wan("requestRefund", [1n]);
+    sys.clock.now += 61_000;
+    await sys.relayer.tick(); // guard → abandon + cancel
+    const rows = await sys.db.query<{ tx_hash: Uint8Array; raw_tx: Uint8Array; action: string }>("select tx_hash, raw_tx, action from tx_attempts order by id");
+    expect(rows.rows.map((r) => r.action)).toEqual(["release", "cancel"]);
+    await world.bsc.testClient.dropTransaction({ hash: fromBytes(rows.rows[1]!.tx_hash)! });
+    await (world.bsc.publicClient as unknown as PublicClient).sendRawTransaction({ serializedTransaction: fromBytes(rows.rows[0]!.raw_tx)! });
+    await world.bsc.testClient.mine({ blocks: 1 });
+    await world.bsc.testClient.setAutomine(true);
+    await sys.relayer.tick();
+    expect((await sys.db.query<{ state: string }>("select state from tx_attempts order by id")).rows.map((r) => r.state)).toEqual(["mined", "replaced"]);
+    expect(sys.alerts.byKind("NONCE_MISMATCH")).toHaveLength(0);
+    await finalizeBsc(world);
+    await sys.relayer.tick();
+    expect((await new OrderRepo(sys.db).get(wKey(1n)))!.status).toBe("RELEASED");
+    expect(sys.alerts.byKind("PAYOUT_ALREADY_RELEASED")).toHaveLength(1);
   });
 
   it("A-1: guard read failure (RPC error) → nothing broadcast this tick, retried next tick", async () => {
@@ -271,6 +295,29 @@ describe("Gate2 r2", () => {
       expect((await db.query("select 1 from audit_log")).rows).toHaveLength(0);
       expect((await db.query("select 1 from review_signatures")).rows).toHaveLength(0);
       expect((await repo.get(key))!.approvedAt).toBeNull();
+    });
+
+    it("approve whose REVIEW scope changed between read and write (still REVIEW) records nothing", async () => {
+      const db = await newMigratedDb();
+      const repo = new OrderRepo(db);
+      const key = ("0x" + "13".repeat(32)) as Hex;
+      await repo.insertDetected({
+        eventKey: key, direction: "W2B", srcChain: 1, srcEventNonce: 1n, srcTxHash: key, srcBlockNumber: 1n, srcBlockHash: key,
+        userAddr: world.act.user.address, toAddr: world.act.user.address, amountWei: 1n,
+      });
+      await db.query("update orders set status = 'REVIEW', review_level = 'audit', reason = 'r1'");
+      const client = {
+        verifyMessage: async () => {
+          await db.query("update orders set review_level = 'freeze', reason = 'r2'"); // re-scoped meanwhile
+          return true;
+        },
+      };
+      const view = { adminWallet: async () => world.act.admin.address, payout: async () => ({ status: 0 }) };
+      const svc = new ReviewService({ db, alerts: new MemoryAlertSink(), now: () => new Date(), payoutView: () => ({ view: view as any, chainId: BSC_ID, client: client as any }) });
+      const exp = BigInt(Math.floor(Date.now() / 1000) + 600);
+      await expect(svc.decide({ eventKey: key, decision: "approve", expires: exp, signature: "0x00" })).rejects.toThrow(/changed/);
+      expect((await repo.get(key))!.approvedAt).toBeNull();
+      expect((await db.query("select 1 from audit_log")).rows).toHaveLength(0);
     });
   });
 
