@@ -173,8 +173,8 @@ interface RiskEngine { evaluate(order: Order, ctx: { outstandingWei: bigint }): 
 ## 5. 测试与覆盖率
 
 - 运行：`cd packages/relayer && npx vitest run`（或在仓库根用 pnpm 10：`pnpm -r typecheck`、`pnpm -r test`，见 Q8）。测试会在本机起 anvil 并在缺少 `out/` 时执行一次 `forge build`；不访问外部网络。
-- 结果（Gate2 第 1 轮后）：**20 个文件 / 233 个测试全部通过**；`pnpm -r typecheck` 通过。
-- 覆盖率（v8，`src/**`，不含 `main.ts`）：总计 语句 95.13% / 分支 87.82% / 函数 96.59% / 行 98.33%。核心：`classify.ts`、`eventKey.ts`、`chain/cursor.ts`、`db/migrations.ts`、`redact.ts` 100%；`stateMachine.ts` 100/89.2/100/100；`chain/sender.ts` 96.7/86.5/100/100；`chain/wantosScanner.ts` 94.6/92.3/100/98.7；`chain/bscScanner.ts` 93.4/77.5/93.8/98.3；`processor.ts` 90.3/83.1/100/94.7；`timelockExecutor.ts` 98.8/85.7/100/98.6。
+- 结果（Gate2 第 2 轮后）：**21 个文件 / 254 个测试全部通过**；`pnpm -r typecheck` 通过。
+- 覆盖率（v8，`src/**`，不含 `main.ts`）：总计 语句 95.18% / 分支 88.05% / 函数 96.72% / 行 98.24%。
 
 ### 5.1 DESIGN §13 PR-3 验收故障注入 ↔ 测试
 
@@ -238,6 +238,9 @@ interface RiskEngine { evaluate(order: Order, ctx: { outstandingWei: bigint }): 
 | N08–N11 | `approval scope: level and reason each void it on their own` | （同上） |
 | B3/N13 lastAttempt | `lastAttempt picks the latest (signer, nonce) group, resolved row first` | `lastAttemptFor` 不存在 / 跨钥匙按 nonce 选错行 |
 | B5 revert 原因读失败 | `B5: an RPC error while reading a mined revert's reason keeps SUBMITTED` | 被分类成 FAILED |
+| 存活变异 R8 / R11 | `A-1: if the abandoned ORIGINAL still gets mined (cancel lost)…`；`approve whose REVIEW scope changed between read and write…` | — |
+
+变异重跑（`scratchpad/mutr2/run3.py`，独立副本）：第 1 轮 58 个（A3 的模式随新查询更新）+ 第 2 轮 24 个，共 82 个。首轮 80 个被杀，R8、R11 存活；补上面两条测试后重跑，R8、R11 也被杀，**82/82**。aligner 探针在新代码上：P4 → BSC payouts=0、订单 REVIEW、告警 `SIGNED_TX_SOURCE_MISMATCH`；P5 → 重放被拒（`review signature already used`）。
 
 ## 7. 自查发现但未修的风险
 
