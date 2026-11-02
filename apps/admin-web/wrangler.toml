@@ -1,0 +1,6 @@
+# Cloudflare Pages project for admin.wanto.pro (Qbit account). PR-6 produces this file and dist/ only — NOT deployed.
+# Deploy (owner, later): pnpm build:prod && wrangler pages deploy dist --project-name wanto-admin
+# Cloudflare Access: protect admin.wanto.pro/* EXCEPT /handover (DESIGN §8.4) — configured in the Zero Trust dashboard.
+name = "wanto-admin"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-10-01"
