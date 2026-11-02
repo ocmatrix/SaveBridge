@@ -6,6 +6,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {BridgeTimelock} from "../src/BridgeTimelock.sol";
 import {BscVaultV2} from "../src/BscVaultV2.sol";
 import {WantosBridgeV2} from "../src/WantosBridgeV2.sol";
+import {BridgeBase} from "../src/BridgeBase.sol";
 
 /// @notice §5.1 deterministic deployment (CREATE, fresh deployer EOA, nonces 0/1/2) for one chain.
 /// @dev    WRITTEN ONLY. Real broadcasting requires explicit owner authorization (TRAIN.md boundary 1).
@@ -28,7 +29,41 @@ contract Deploy is Script {
         address proxy;
     }
 
-    function _preflight(address deployer) internal view returns (address tlPred, address implPred, address proxyPred) {
+    /// @notice PR-9 mainnet guard: refuse to deploy the testnet-fast variant (contracts/testnet-fast, windows in
+    ///         minutes). Before broadcasting, throw-away copies of the exact bytecode this script would deploy are
+    ///         created locally (outside the broadcast, never sent) and their window constants must be the
+    ///         production ones; `_post` re-checks the deployed timelock's MIN_DELAY immutable. `forge script`
+    ///         simulates the whole run before sending anything, so a mismatch never reaches a chain.
+    ///         Overridden only by the testnet-fast DeployFast script (chain-id gated).
+    function _requireBuildWindows() internal virtual {
+        BridgeTimelock t = new BridgeTimelock(address(this), address(this));
+        BridgeBase b = BridgeBase(address(new BscVaultV2()));
+        BridgeBase w = BridgeBase(address(new WantosBridgeV2()));
+        require(
+            t.MIN_DELAY() == 48 hours && t.getMinDelay() == 48 hours && t.MAX_DELAY() == 7 days
+                && t.EXPIRY_PERIOD() == 14 days && t.PENDING_ADMIN_TTL() == 7 days
+                && t.ADMIN_RECOVERY_DELAY() == 14 days && t.RECOVERY_COOLDOWN() == 3 days,
+            "Deploy: testnet-fast bytecode refused (timelock)"
+        );
+        _requireBaseWindows(b);
+        _requireBaseWindows(w);
+    }
+
+    function _requireBaseWindows(BridgeBase b) private view {
+        require(
+            b.MAX_SIGNATURE_TTL() == 24 hours && b.WL_TRANSFER_DELAY() == 48 hours && b.WL_TRANSFER_TTL() == 7 days
+                && b.WL_RECOVERY_DELAY() == 7 days && b.RECOVERY_COOLDOWN() == 3 days && b.REFUND_DELAY() == 24 hours,
+            "Deploy: testnet-fast bytecode refused (bridge)"
+        );
+    }
+
+    /// @dev Expected timelock MIN_DELAY of the build being deployed (production: 48h).
+    function _expectedMinDelay() internal pure virtual returns (uint256) {
+        return 48 hours;
+    }
+
+    function _preflight(address deployer) internal returns (address tlPred, address implPred, address proxyPred) {
+        _requireBuildWindows();
         require(vm.getNonce(deployer) == 0, "Deploy: deployer nonce must be 0");
         tlPred = vm.computeCreateAddress(deployer, 0);
         implPred = vm.computeCreateAddress(deployer, 1);
@@ -39,7 +74,8 @@ contract Deploy is Script {
         );
     }
 
-    function _post(Deployed memory d, address tlPred, address implPred, address proxyPred) internal pure {
+    function _post(Deployed memory d, address tlPred, address implPred, address proxyPred) internal view {
+        require(BridgeTimelock(payable(d.timelock)).MIN_DELAY() == _expectedMinDelay(), "Deploy: timelock MIN_DELAY mismatch");
         require(d.timelock == tlPred, "Deploy: timelock address mismatch");
         require(d.implementation == implPred, "Deploy: implementation address mismatch");
         require(d.proxy == proxyPred, "Deploy: proxy address mismatch");
@@ -98,7 +134,7 @@ contract Deploy is Script {
     /// Env: SIDE=BSC|WANTOS, DEPLOYER, ADMIN_WALLET, WHITELIST_MANAGER, RELAYER, PAUSER, TOKEN, PEER_CHAIN_ID,
     ///      BSC: DAILY_CAP, PER_ADDR_DAILY_CAP, LARGE_THRESHOLD, RELEASE_DELAY, MIN_DEPOSIT, MAX_DEPOSIT_PER_TX
     ///      WANTOS: W2B_MIN_AMOUNT, W2B_PER_ADDR_DAILY_CAP, B2W_DAILY_CAP, B2W_DELAY, SUPPLY_CEILING
-    function run() external returns (Deployed memory) {
+    function run() public virtual returns (Deployed memory) {
         Common memory c = Common({
             deployer: vm.envAddress("DEPLOYER"),
             adminWallet: vm.envAddress("ADMIN_WALLET"),
