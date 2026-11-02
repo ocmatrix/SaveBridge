@@ -172,7 +172,7 @@ node offline-check.mjs --decode 0x<calldata>
 | B3 | `run` 开头用 ref 防重入（双击自保） | `component/whitelist` › 双击只签 2 次、只发 2 笔。注：按钮在执行中本已禁用，所以去掉该守卫的变异 U03 仍绿（等价，守卫为纵深防御） |
 | T22/T23 | — | `component/race` › 准备中对禁用的单选 / 勾选框直接派发 click：结果要么被丢弃并提示，要么与表单一致（去掉代数守卫 → 两例均红） |
 
-验证：typecheck 通过；admin-web **88 通过**（unit 21、integration 33、component 34）；offline-check 30 通过（本轮未改）；构建通过。
+验证：typecheck 通过；admin-web **85 通过**（unit 21、integration 33、component 31）；offline-check 30 通过（本轮未改）；构建通过。
 
 ## 验证结果（本地，2026-11-02，第 2 轮修复后）
 
