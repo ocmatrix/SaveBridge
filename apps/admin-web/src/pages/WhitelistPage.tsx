@@ -15,6 +15,7 @@ import {
   prepareJob,
   readWhitelisted,
   runJob,
+  runJobShared,
   whitelistHistory,
   writeOrder,
   type BatchJob,
@@ -169,7 +170,8 @@ export function WhitelistPage() {
     const live = () => g === gen.current;
     setRunning(true);
     try {
-      const done = await runJob(job, { chains, signer, onProgress: (j) => live() && setJob(j), shouldStop: () => !live() });
+      const common = { chains, signer, onProgress: (j: BatchJob) => live() && setJob(j), shouldStop: () => !live() };
+      const done = cfg.submitApi ? await runJobShared(job, { ...common, submitApi: cfg.submitApi }) : await runJob(job, common);
       if (!live()) {
         setFormNote("签名期间表单已改动，已停止；请重新准备");
         return;
@@ -363,7 +365,9 @@ export function WhitelistPage() {
             操作：<strong data-testid="op">{opAllowed ? "添加" : "移除"}</strong>；写入顺序：{writeOrder(opAllowed).map((s) => SIDE_NAME[s]).join(" → ")}
           </p>
           <p className="hint" data-testid="d1-note">
-            每批在每条链上要在钱包里确认两次：一次签名（EIP-712）+ 一次发交易（applyWhitelistBatch），两条链共 4 次（提交服务接通前，见 PR6-NOTES D1）。白名单钱包需要在两条链上都备 gas（BSC 上 BNB、WANTOS 上 WANT）。
+            {cfg.submitApi
+              ? "只需在钱包里签名一次（EIP-712，无需切换网络）：同一份签名由提交服务按顺序写入两条链，白名单钱包不需要在 BSC 上备 gas。"
+              : "每批在每条链上要在钱包里确认两次：一次签名（EIP-712）+ 一次发交易（applyWhitelistBatch），两条链共 4 次（提交服务接通前，见 PR6-NOTES D1）。白名单钱包需要在两条链上都备 gas（BSC 上 BNB、WANTOS 上 WANT）。"}
           </p>
           <ActionButton label="准备本批（生成 deadline 与哈希）" gate={running ? { ok: false, reason: "签名写入进行中" } : bothGate} run={prepare} />
           {formNote && (

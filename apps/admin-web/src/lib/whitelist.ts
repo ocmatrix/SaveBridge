@@ -197,3 +197,84 @@ export function diffChains(bsc: readonly Address[], wantos: readonly Address[]):
   const w = new Set(wantos);
   return { onlyBsc: bsc.filter((a) => !w.has(a)), onlyWantos: wantos.filter((a) => !b.has(a)) };
 }
+
+// ------------------------------------------------------------------ one-signature flow (REDEPLOY-PLAN D3/D4)
+
+export interface SharedRunOpts {
+  chains: Chains;
+  signer: Signer;
+  /** Same-origin endpoint of the submission service (functions/api/whitelist.ts). */
+  submitApi: string;
+  onProgress?: (j: BatchJob) => void;
+  shouldStop?: () => boolean;
+  /** Injected in tests; defaults to the global fetch. */
+  fetchFn?: typeof fetch;
+}
+
+interface ServiceRun {
+  status: "done" | "skipped" | "failed" | "pending";
+  txHash?: Hex;
+  error?: string;
+  note?: string;
+}
+
+/**
+ * Whitelist write with ONE wallet signature and no network switch: the batch (chainless EIP-712 domain) is signed once
+ * and the service submits the same signature to both chains in the §4.4 order. Resumable: a stored signature is sent
+ * again after a failure, and a chain that already has the batch is skipped by the service.
+ */
+export async function runJobShared(job: BatchJob, o: SharedRunOpts): Promise<BatchJob> {
+  const stop = () => o.shouldStop?.() === true;
+  let cur: BatchJob = { ...job, runs: { bsc: { ...job.runs.bsc }, wantos: { ...job.runs.wantos } } };
+  const setBoth = (r: Partial<ChainRun>) => {
+    cur = { ...cur, runs: { bsc: { ...cur.runs.bsc, ...r }, wantos: { ...cur.runs.wantos, ...r } } };
+    o.onProgress?.(cur);
+  };
+  const setSide = (side: Side, r: Partial<ChainRun>) => {
+    cur = { ...cur, runs: { ...cur.runs, [side]: { ...cur.runs[side], ...r } } };
+    o.onProgress?.(cur);
+  };
+  const needPrepare = (msg: string) => {
+    setBoth({ status: "failed", needsPrepare: true, signature: undefined, error: `${msg}。请重新「准备本批」并重新离线核对后再签` });
+    return cur;
+  };
+  if (isComplete(cur) || stop()) return cur;
+  const { bsc, wantos } = cur.runs;
+  if (bsc.nonce === undefined || wantos.nonce === undefined || !bsc.hashes || !wantos.hashes) return needPrepare("本批未准备（没有核对过的 nonce 与哈希）");
+  if (bsc.nonce !== wantos.nonce) return needPrepare(`两条链的白名单 nonce 不一致（BSC ${bsc.nonce} / WANTOS ${wantos.nonce}），不能共用一份签名`);
+  if (bsc.hashes.digest !== wantos.hashes.digest) return needPrepare("两条链待签内容不一致");
+  try {
+    const now = await chainNow(o.chains.wantos);
+    if (cur.deadline <= now + DEADLINE_MARGIN_S) return needPrepare("签名有效期快到或已过");
+    const input = { side: "wantos" as Side, chainId: o.chains.wantos.cfg.chainId, bridge: o.chains.wantos.cfg.bridge, addresses: cur.addresses, allowed: cur.allowed, nonce: bsc.nonce, deadline: cur.deadline };
+    if (batchHashes(input).digest !== wantos.hashes.digest) return needPrepare("待签内容与准备时显示的哈希不一致");
+    let signature = bsc.signature ?? wantos.signature;
+    if (!signature) {
+      if (stop()) return cur;
+      setBoth({ status: "signing", error: undefined });
+      signature = await o.signer.signTypedData(o.chains.wantos.cfg.chainId, batchTypedData(input));
+    }
+    if (stop()) return cur; // the form changed while the wallet was open: never submit a batch no longer on screen
+    setBoth({ status: "submitting", signature, error: undefined });
+    const res = await (o.fetchFn ?? fetch)(o.submitApi, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ addresses: cur.addresses, allowed: cur.allowed, nonce: String(bsc.nonce), deadline: String(cur.deadline), signature }),
+    });
+    const body = (await res.json().catch(() => null)) as { ok?: boolean; error?: string; runs?: Record<Side, ServiceRun> } | null;
+    for (const side of ["bsc", "wantos"] as Side[]) {
+      const r = body?.runs?.[side];
+      if (r?.status === "done") setSide(side, { status: "done", txHash: r.txHash, error: undefined, note: undefined });
+      else if (r?.status === "skipped") setSide(side, { status: "skipped", error: undefined, note: r.note ?? "链上已是目标状态" });
+      else setSide(side, { status: r?.status === "failed" ? "failed" : "pending", error: r?.error ? `${SIDE_NAME[side]}：${r.error}` : undefined });
+    }
+    if (res.status === 409) {
+      // nonce moved / signature about to expire: the stored signature is stale for every chain that is not done
+      for (const side of ["bsc", "wantos"] as Side[]) if (cur.runs[side].status !== "done" && cur.runs[side].status !== "skipped") setSide(side, { needsPrepare: true, signature: undefined });
+    }
+    if (!isComplete(cur) && !body?.runs) setBoth({ status: "failed", error: body?.error ?? `提交服务返回 ${res.status}` });
+  } catch (e) {
+    setBoth({ status: "failed", error: describeError(e) });
+  }
+  return cur;
+}

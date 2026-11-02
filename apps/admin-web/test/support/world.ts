@@ -136,6 +136,7 @@ export async function startWorld(): Promise<World> {
       bsc: { side: "bsc", chainId: BSC_ID, rpcUrl: bn.url, bridge: b.bridge, fromBlock: 0n },
       adminApi: null,
       siweDomain: "admin.wanto.pro",
+      submitApi: null,
     };
     const chains = makeChains(cfg, (c, chain) => createPublicClient({ chain, transport: http(c.rpcUrl, { retryCount: 0 }), pollingInterval: 50 }) as PublicClient);
     return {
