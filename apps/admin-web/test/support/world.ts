@@ -195,7 +195,8 @@ export function localSigner(world: World, account: PrivateKeyAccount): LocalSign
     },
     async signTypedData(chainId, td) {
       check(`sign712:${chainId}`);
-      if (Number((td.domain as { chainId?: number | bigint }).chainId) !== chainId) throw new Error("wallet: chainId mismatch");
+      // the whitelist domain carries no chainId (one signature serves both chains); a wallet must not be handed one either
+      if ((td.domain as { chainId?: number | bigint }).chainId !== undefined) throw new Error("wallet: unexpected chainId in whitelist domain");
       return account.signTypedData(td as Parameters<PrivateKeyAccount["signTypedData"]>[0]);
     },
     async signMessage(message) {
