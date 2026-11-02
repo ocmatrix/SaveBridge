@@ -82,6 +82,10 @@ describe("validateManifest", () => {
     ["second vault header (P5)", (c) => c.replace("# cutoverT=", `# vault=${R(66)}\n# cutoverT=`), /duplicate key "vault"/],
     ["header key after the column line (P5)", (c) => c.replace(/(# bscChainId=\d+\n)([\s\S]*?oldKey,srcChainId[^\n]*\n)/, "$2$1"), /after the column line/],
     ["footer before rows (P5)", (c) => c.replace(/(oldKey,srcChainId[^\n]*\n)/, "$1# count=4\n"), /before the rows|duplicate key/],
+    ["footer moved above the column line (P5)", (c) => {
+      const foot = c.match(/# count=[^\n]*\n# total=[^\n]*\n/)![0];
+      return c.replace(foot, "").replace(/(oldKey,srcChainId)/, foot + "$1");
+    }, /footer key "count" before the rows/],
     ["row after footer (P5)", (c) => c.replace(/(# count=4\n)/, "$1" + c.split("\n").find((l) => l.startsWith("0x"))! + "\n"), /malformed row/],
     ["unknown key", (c) => c.replace("# cutoverT=", "# fee=1\n# cutoverT="), /unknown key/],
     ["stray comment", (c) => c.replace("# cutoverT=", "# hello\n# cutoverT="), /unexpected comment/],
