@@ -1,0 +1,242 @@
+{
+  "rulesVersion": 1,
+  "params": {
+    "contract": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+    "bscChainId": 31338,
+    "wantosChainId": 31337,
+    "bscNonce": 3,
+    "wantosNonce": 7,
+    "deadline": 1800000000
+  },
+  "cases": [
+    {
+      "name": "csv-with-header-and-extra-columns",
+      "text": "address,parent,label\n0x9272f360b98160c1662abb6d2df9e4f313b39502,0x00,a\n0x9dab17a9ad061cbda2bef607a6a330ee74076e90,0x00,b\n",
+      "allowed": true,
+      "batchSize": 500,
+      "expect": {
+        "addresses": [
+          "0x9272f360b98160c1662abb6d2df9e4f313b39502",
+          "0x9dab17a9ad061cbda2bef607a6a330ee74076e90"
+        ],
+        "errors": [],
+        "duplicates": [],
+        "headerSkipped": true
+      },
+      "batches": [
+        {
+          "count": 2,
+          "listHash": "0xb7fa1600561fc6f87e2eaf0cfc333cf2ff8d55d9e351cb0784a19d410b49334a",
+          "bsc": {
+            "nonce": "3",
+            "domainHash": "0x628089516ffbdf4489e7343a70a1890c3f7a847072ab81f390a0ca260faa7a42",
+            "messageHash": "0x22a4f369b941c6e82d633cd52bf394000190d05086cf71852fc014e9ba5a005f",
+            "digest": "0x25b953cf82359348511f3c1448103a31027b271695404a1215f8e5649b45dbe2"
+          },
+          "wantos": {
+            "nonce": "7",
+            "domainHash": "0x344b9b94cfcb47159e02926e982cbf9ab978f15124e013e42940c7b0509658ba",
+            "messageHash": "0x9e7cac8797d957373a44a0b3b419b55e5546cc7f5928f1effd41896aee350fbd",
+            "digest": "0x1dd9695fb07ee6d7ee3b6b3e1439bbf5aada736810646f4c0756fd81360398d3"
+          }
+        }
+      ]
+    },
+    {
+      "name": "unsorted-mixed-case-dupes-comments-crlf-bom-quotes",
+      "text": "﻿# 第一批\r\n0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF\r\n\r\n\"0x9dAb17a9Ad061cbDA2BeF607A6A330EE74076E90\"\r\n  0x0000000000000000000000000000000000000001  \r\n'0x7afc830d90f3080dc754618a9e4f71775815c3ad';x\r\n0x9DAB17A9AD061CBDA2BEF607A6A330EE74076E90\r\n0x9272f360b98160c1662abb6d2df9e4f313b39502\t🙂\r\n",
+      "allowed": true,
+      "batchSize": 500,
+      "expect": {
+        "addresses": [
+          "0x0000000000000000000000000000000000000001",
+          "0x7afc830d90f3080dc754618a9e4f71775815c3ad",
+          "0x9272f360b98160c1662abb6d2df9e4f313b39502",
+          "0x9dab17a9ad061cbda2bef607a6a330ee74076e90",
+          "0xffffffffffffffffffffffffffffffffffffffff"
+        ],
+        "errors": [],
+        "duplicates": [
+          {
+            "line": 7,
+            "address": "0x9dab17a9ad061cbda2bef607a6a330ee74076e90",
+            "firstLine": 4
+          }
+        ],
+        "headerSkipped": false
+      },
+      "batches": [
+        {
+          "count": 5,
+          "listHash": "0xc2c4d6c1e5266507383b72f838da46d67fbfba2aa83d57691e4e23ef68a0e187",
+          "bsc": {
+            "nonce": "3",
+            "domainHash": "0x628089516ffbdf4489e7343a70a1890c3f7a847072ab81f390a0ca260faa7a42",
+            "messageHash": "0x513839b4a3f48c2c01fd6ea9a7f3e25810c973ed8923754b3ea8f902e2ce1bc1",
+            "digest": "0x5e81bf41c511fb5d07f75140003fd72a092a3daeff0d9a827c1312dbd4fe0e9d"
+          },
+          "wantos": {
+            "nonce": "7",
+            "domainHash": "0x344b9b94cfcb47159e02926e982cbf9ab978f15124e013e42940c7b0509658ba",
+            "messageHash": "0x452b3ef2b97d3854ce00f583c09bb564b8dcf589c48691c32f9af24dd9df9a6b",
+            "digest": "0xc672f153376b203ae26765d17a8601e31c56821a28fdff77e8e5cc4493eb147a"
+          }
+        }
+      ]
+    },
+    {
+      "name": "errors-block-hashing",
+      "text": "0x9272f360b98160c1662abb6d2df9e4f313b39502\n0x9dab17a9Ad061cbDA2BeF607A6A330EE74076E90\n0x0000000000000000000000000000000000000000\n0x1234\nhello\n0X7afc830d90f3080dc754618a9e4f71775815c3ad\n",
+      "allowed": true,
+      "batchSize": 500,
+      "expect": {
+        "addresses": [
+          "0x9272f360b98160c1662abb6d2df9e4f313b39502"
+        ],
+        "errors": [
+          {
+            "line": 2,
+            "text": "0x9dab17a9Ad061cbDA2BeF607A6A330EE74076E90",
+            "reason": "checksum"
+          },
+          {
+            "line": 3,
+            "text": "0x0000000000000000000000000000000000000000",
+            "reason": "zero"
+          },
+          {
+            "line": 4,
+            "text": "0x1234",
+            "reason": "format"
+          },
+          {
+            "line": 5,
+            "text": "hello",
+            "reason": "format"
+          },
+          {
+            "line": 6,
+            "text": "0X7afc830d90f3080dc754618a9e4f71775815c3ad",
+            "reason": "format"
+          }
+        ],
+        "duplicates": [],
+        "headerSkipped": false
+      },
+      "batches": []
+    },
+    {
+      "name": "semicolon-and-space-separators-batches-of-2",
+      "text": "addr;note\n0xffffffffffffffffffffffffffffffffffffffff;z\n0x7afc830d90f3080dc754618a9e4f71775815c3ad x\n0x0000000000000000000000000000000000000001\n0x9272f360b98160c1662abb6d2df9e4f313b39502,y\n0x9dab17a9ad061cbda2bef607a6a330ee74076e90\n",
+      "allowed": true,
+      "batchSize": 2,
+      "expect": {
+        "addresses": [
+          "0x0000000000000000000000000000000000000001",
+          "0x7afc830d90f3080dc754618a9e4f71775815c3ad",
+          "0x9272f360b98160c1662abb6d2df9e4f313b39502",
+          "0x9dab17a9ad061cbda2bef607a6a330ee74076e90",
+          "0xffffffffffffffffffffffffffffffffffffffff"
+        ],
+        "errors": [],
+        "duplicates": [],
+        "headerSkipped": true
+      },
+      "batches": [
+        {
+          "count": 2,
+          "listHash": "0x5ff747623c7d9e369070226330c6874983e06d6dd483c95ae1ca85b7a52f24f9",
+          "bsc": {
+            "nonce": "3",
+            "domainHash": "0x628089516ffbdf4489e7343a70a1890c3f7a847072ab81f390a0ca260faa7a42",
+            "messageHash": "0x4cc03c8980cdc9faf85586392fbb7cc9bc33a94f85ff50fb9f49aca8d1491ca1",
+            "digest": "0x74e2c394d8c17a8b42f3d994a9274eff2801a7e2e73151e1fc87e9658d00b547"
+          },
+          "wantos": {
+            "nonce": "7",
+            "domainHash": "0x344b9b94cfcb47159e02926e982cbf9ab978f15124e013e42940c7b0509658ba",
+            "messageHash": "0xefea3631b44b82598590f8c631af090925e514a62ac8b5bc0304203b94a56f6d",
+            "digest": "0x714beb46967eb692c121c06b83231e2a2b2fbf4a66c5607e3d08f4d0b00a0da7"
+          }
+        },
+        {
+          "count": 2,
+          "listHash": "0xb7fa1600561fc6f87e2eaf0cfc333cf2ff8d55d9e351cb0784a19d410b49334a",
+          "bsc": {
+            "nonce": "4",
+            "domainHash": "0x628089516ffbdf4489e7343a70a1890c3f7a847072ab81f390a0ca260faa7a42",
+            "messageHash": "0xea58107e13c45aced5eaf91c1171ae9caa4f33b2821a14a8f63ab576be6bc317",
+            "digest": "0x687b0a6eb61243fecd20e868f06d2d7431cd994aeee453ff01cd92ddd509d244"
+          },
+          "wantos": {
+            "nonce": "8",
+            "domainHash": "0x344b9b94cfcb47159e02926e982cbf9ab978f15124e013e42940c7b0509658ba",
+            "messageHash": "0x7e9804280801ef2618467c3d588d05a8cb130592432d583562ce302bf46fce6c",
+            "digest": "0x63d614130ebf60454976a966948240fc165819745776c4889745a4efebd8060d"
+          }
+        },
+        {
+          "count": 1,
+          "listHash": "0xa4d15a9c9f6aacc38de3e1085a3f5cd925a1f7400ea672fcc8c0a6cfbf03ba6e",
+          "bsc": {
+            "nonce": "5",
+            "domainHash": "0x628089516ffbdf4489e7343a70a1890c3f7a847072ab81f390a0ca260faa7a42",
+            "messageHash": "0xd06f2386147e3f7f25d226e2a46f8249644bf4822c3d4c3bcf6ff2c73a16c449",
+            "digest": "0x2508393fd102a1198cff268e66ac8ee8c2e4bd4259065f90a2692c9ddabd20f4"
+          },
+          "wantos": {
+            "nonce": "9",
+            "domainHash": "0x344b9b94cfcb47159e02926e982cbf9ab978f15124e013e42940c7b0509658ba",
+            "messageHash": "0xa2797d172530e7f9954bd151b659016e59ebf379734a0153c3e78c8d39cdc920",
+            "digest": "0x9c0326eaeebf8305837846b8a1333c4cc7494e6c92cd1b2efc30ebdd97bd8203"
+          }
+        }
+      ]
+    },
+    {
+      "name": "header-only-is-empty",
+      "text": "address\n\n# nothing\n",
+      "allowed": true,
+      "batchSize": 500,
+      "expect": {
+        "addresses": [],
+        "errors": [],
+        "duplicates": [],
+        "headerSkipped": true
+      },
+      "batches": []
+    },
+    {
+      "name": "single-address-remove",
+      "text": "0x9272F360b98160c1662Abb6d2dF9e4F313B39502",
+      "allowed": false,
+      "batchSize": 500,
+      "expect": {
+        "addresses": [
+          "0x9272f360b98160c1662abb6d2df9e4f313b39502"
+        ],
+        "errors": [],
+        "duplicates": [],
+        "headerSkipped": false
+      },
+      "batches": [
+        {
+          "count": 1,
+          "listHash": "0x65acb5c033038fffb698e74da5783b5e887951a4a2abf5114ac8abe8b7d540b1",
+          "bsc": {
+            "nonce": "3",
+            "domainHash": "0x628089516ffbdf4489e7343a70a1890c3f7a847072ab81f390a0ca260faa7a42",
+            "messageHash": "0xf5af3ee06b0bdfecf92103fd9d01ebb6f11754e31142954ecc9e2b64fa09ff83",
+            "digest": "0xab868d7402bcd4520c7ba23fbaa620125974f2f9306e46be0458a7ecd3b3b19b"
+          },
+          "wantos": {
+            "nonce": "7",
+            "domainHash": "0x344b9b94cfcb47159e02926e982cbf9ab978f15124e013e42940c7b0509658ba",
+            "messageHash": "0x2f2fa935f58f15f7e534a91a2dc4d3493e30b6bbc23b1e520cfda035a71f0cdc",
+            "digest": "0x2d8f29c43bad8b5a70763623b808e6c37345b43e9095ac48acfd34e4d26da1ec"
+          }
+        }
+      ]
+    }
+  ]
+}
