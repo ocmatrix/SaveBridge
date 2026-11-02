@@ -207,6 +207,27 @@
       "batches": []
     },
     {
+      "name": "uppercase-0X-first-line-is-an-error-not-a-header",
+      "text": "0X9272f360b98160c1662abb6d2df9e4f313b39502\n0x9dab17a9ad061cbda2bef607a6a330ee74076e90\n",
+      "allowed": true,
+      "batchSize": 500,
+      "expect": {
+        "addresses": [
+          "0x9dab17a9ad061cbda2bef607a6a330ee74076e90"
+        ],
+        "errors": [
+          {
+            "line": 1,
+            "text": "0X9272f360b98160c1662abb6d2df9e4f313b39502",
+            "reason": "format"
+          }
+        ],
+        "duplicates": [],
+        "headerSkipped": false
+      },
+      "batches": []
+    },
+    {
       "name": "single-address-remove",
       "text": "0x9272F360b98160c1662Abb6d2dF9e4F313B39502",
       "allowed": false,

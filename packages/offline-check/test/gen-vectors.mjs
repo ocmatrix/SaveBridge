@@ -29,6 +29,8 @@ const cases = [
     text: "addr;note\n0xffffffffffffffffffffffffffffffffffffffff;z\n0x7afc830d90f3080dc754618a9e4f71775815c3ad x\n0x0000000000000000000000000000000000000001\n0x9272f360b98160c1662abb6d2df9e4f313b39502,y\n0x9dab17a9ad061cbda2bef607a6a330ee74076e90\n",
     expect: { addresses: [A4, A3, A1, A2, A5], errors: [], duplicates: [], headerSkipped: true } },
   { name: "header-only-is-empty", text: "address\n\n# nothing\n", expect: { addresses: [], errors: [], duplicates: [], headerSkipped: true } },
+  { name: "uppercase-0X-first-line-is-an-error-not-a-header", text: "0X9272f360b98160c1662abb6d2df9e4f313b39502\n0x9dab17a9ad061cbda2bef607a6a330ee74076e90\n",
+    expect: { addresses: [A2], errors: [{ line: 1, text: "0X9272f360b98160c1662abb6d2df9e4f313b39502", reason: "format" }], duplicates: [], headerSkipped: false } },
   { name: "single-address-remove", allowed: false, text: "0x9272F360b98160c1662Abb6d2dF9e4F313B39502", expect: { addresses: [A1], errors: [], duplicates: [], headerSkipped: false } },
 ];
 
