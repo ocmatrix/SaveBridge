@@ -63,7 +63,7 @@ step_system() {
   ensure_dir "$SB_STATE/keystore" 0700 "$SB_USER:$SB_USER"
   ensure_dir "$SB_STATE/ack" 0700 "$SB_USER:$SB_USER"
   ensure_dir "$SB_CREDSTORE" 0700 root:root
-  run apt-get install -y --no-install-recommends age curl gnupg xz-utils ca-certificates
+  run apt-get install -y --no-install-recommends age curl gnupg gpgv xz-utils ca-certificates
 }
 
 step_config() {
