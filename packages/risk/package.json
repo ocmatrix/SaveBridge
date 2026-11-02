@@ -1,0 +1,29 @@
+{
+  "name": "@bridge/risk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "mutate": "node scripts/mutate.mjs"
+  },
+  "dependencies": {
+    "@bridge/relayer": "workspace:*",
+    "viem": "^2.57.14"
+  },
+  "devDependencies": {
+    "@bridge/abi": "workspace:*",
+    "@electric-sql/pglite": "^0.5.14",
+    "@types/node": "^26.6.6",
+    "@vitest/coverage-v8": "^5.0.5",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}
