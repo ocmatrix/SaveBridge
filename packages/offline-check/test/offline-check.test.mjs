@@ -142,22 +142,90 @@ describe("CLI", () => {
     const j = oc.runCli([...base, "--json"], () => vectors.cases[0].text);
     expect(j.code).toBe(0);
     expect(JSON.parse(j.out).batches[0].listHash).toBe(v.listHash);
-    expect(oc.runCli([...base, "--json", "--expect-list-hash", "0x00"], () => vectors.cases[0].text).code).toBe(2);
+    expect(oc.runCli([...base, "--json", "--expect-list-hash", "0x" + "00".repeat(32)], () => vectors.cases[0].text).code).toBe(2);
     const e = oc.runCli(base, () => vectors.cases[2].text);
     expect(e.code).toBe(1);
     expect(e.out).toContain("第 2 行");
     expect(oc.runCli([...base, "--json"], () => vectors.cases[2].text).code).toBe(1);
     expect(oc.runCli(base, () => "address\n").out).toContain("没有地址");
-    expect(oc.runCli([], () => "").code).toBe(64);
-    expect(oc.runCli([file, "--action", "x"], () => "").code).toBe(64);
-    expect(oc.runCli([file, "--action", "add", "--contract", "0x1"], () => "").code).toBe(64);
-    expect(oc.runCli([file, "--action", "add", "--contract", P.contract, "--deadline", "1e9"], () => "").code).toBe(64);
-    expect(() => oc.runCli([file, "--action"], () => "")).toThrow();
-    const noNonce = oc.runCli([file, "--action", "remove", "--contract", P.contract], () => vectors.cases[1].text);
-    expect(noNonce.code).toBe(0);
-    expect(noNonce.out).toContain("缺 nonce/deadline");
-    expect(noNonce.out).toContain("第 7 行与第 4 行重复");
-    const errProc = spawnSync(process.execPath, [TOOL, join(dir, "missing.txt"), "--action", "add", "--contract", P.contract], { encoding: "utf8" });
+    const dup = oc.runCli([file, "--action", "remove", "--contract", P.contract, "--bsc-nonce", "1", "--wantos-nonce", "1", "--deadline", "9"], () => vectors.cases[1].text);
+    expect(dup.code).toBe(0);
+    expect(dup.out).toContain("第 7 行与第 4 行重复");
+    const errProc = spawnSync(process.execPath, [TOOL, join(dir, "missing.txt"), "--action", "add", "--contract", P.contract, "--bsc-nonce", "0", "--wantos-nonce", "0", "--deadline", "1"], { encoding: "utf8" });
     expect(errProc.status).toBe(1);
+  });
+
+  it("fail-closed argument parsing: every malformed invocation exits 64 (no hash printed as if OK)", () => {
+    const H = "0x" + "de".repeat(32);
+    const bad = [
+      [],
+      [...base.slice(1)], // no file
+      [...base, "extra.txt"], // two files
+      [...base, `--expect-list-hash=${H}`],
+      [...base, "--expect-listhash", H], // typo → unknown option
+      [...base, "--expect-list-hash", ""],
+      [...base, "--expect-list-hash", "0xdead"],
+      [...base, "--expect-list-hash"],
+      [...base, "--expect-list-hash", "--json"],
+      [...base, "--bsc-chain-id", "0"],
+      [...base, "--wantos-chain-id", "-1"],
+      [...base, "--batch-size", "0"],
+      [...base, "--batch-size", "501"],
+      [...base, "--batch", "0"],
+      [...base, "--batch", "1.5"],
+      [...base, "--batch", "9"], // out of range
+      [...base, "--deadline", "2"], // duplicate
+      [...base, "-x"],
+      [file, "--action", "x", "--contract", P.contract, "--bsc-nonce", "1", "--wantos-nonce", "1", "--deadline", "1"],
+      [file, "--action", "add", "--contract", "0x1", "--bsc-nonce", "1", "--wantos-nonce", "1", "--deadline", "1"],
+      [file, "--action", "add", "--contract", P.contract, "--wantos-nonce", "1", "--deadline", "1"], // missing bsc nonce
+      [file, "--action", "add", "--contract", P.contract, "--bsc-nonce", "1", "--deadline", "1"], // missing wantos nonce
+      [file, "--action", "add", "--contract", P.contract, "--bsc-nonce", "1", "--wantos-nonce", "1"], // missing deadline
+      [file, "--action", "add", "--contract", P.contract, "--bsc-nonce", "", "--wantos-nonce", "1", "--deadline", "1"],
+      [file, "--action", "add", "--contract", P.contract, "--bsc-nonce", "1", "--wantos-nonce", "1", "--deadline", "1e9"],
+      [file, "--action"],
+      ["--decode", "0x8456cb59", "--action", "add"],
+      ["--decode", "0x8456cb59", "x.txt"],
+    ];
+    for (const argv of bad) {
+      const r = oc.runCli(argv, () => vectors.cases[0].text);
+      expect(r.code, JSON.stringify(argv)).toBe(64);
+      expect(r.out).not.toContain("messageHash");
+    }
+    // the same through a real process
+    expect(spawnSync(process.execPath, [TOOL, ...base, `--expect-list-hash=${H}`]).status).toBe(64);
+    expect(oc.runCli(["--decode", "0x8456cb59", "--json"], () => "").code).toBe(0);
+    expect(oc.runCli(["-", "--action", "add", "--contract", P.contract, "--bsc-nonce", "1", "--wantos-nonce", "1", "--deadline", "1"], () => vectors.cases[0].text).code).toBe(0);
+  });
+
+  it("--batch K: only batch K, with the given nonce (no +i); multi-batch --expect requires --batch; text and --json agree", () => {
+    const text = vectors.cases[3].text; // 5 addresses, batch size 2 → 3 batches
+    const v3 = vectors.cases[3].batches;
+    const args = (extra) => [file, "--action", "add", "--contract", P.contract, "--bsc-chain-id", "31338", "--wantos-chain-id", "31337", "--bsc-nonce", "3", "--wantos-nonce", "7", "--deadline", "1800000000", "--batch-size", "2", ...extra];
+    // without --batch: batch 2 uses nonce 3+1 (vectors)
+    const all = JSON.parse(oc.runCli(args(["--json"]), () => text).out);
+    expect(all.batches[1].bsc.messageHash).toBe(v3[1].bsc.messageHash);
+    // with --batch 2 and nonce 4/8 → identical to the vector for batch 2
+    const one = oc.runCli([file, "--action", "add", "--contract", P.contract, "--bsc-chain-id", "31338", "--wantos-chain-id", "31337", "--bsc-nonce", "4", "--wantos-nonce", "8", "--deadline", "1800000000", "--batch-size", "2", "--batch", "2", "--json"], () => text);
+    expect(one.code).toBe(0);
+    const ob = JSON.parse(one.out);
+    expect(ob.batches.length).toBe(1);
+    expect(ob.batches[0].index).toBe(1);
+    expect(ob.batches[0].bsc.messageHash).toBe(v3[1].bsc.messageHash);
+    expect(ob.batches[0].wantos.messageHash).toBe(v3[1].wantos.messageHash);
+    // --batch 2 with nonce 3 → nonce used as-is (NOT 3+1)
+    const raw = JSON.parse(oc.runCli(args(["--batch", "2", "--json"]), () => text).out);
+    expect(raw.batches[0].bsc.nonce).toBe("3");
+    expect(raw.batches[0].bsc.messageHash).not.toBe(v3[1].bsc.messageHash);
+    // multi-batch + expect without --batch → 64
+    expect(oc.runCli(args(["--expect-list-hash", v3[1].listHash]), () => text).code).toBe(64);
+    expect(oc.runCli(args(["--expect-list-hash", v3[1].listHash, "--json"]), () => text).code).toBe(64);
+    // with --batch: hit → 0 in both modes, other batch's hash → 2 in both modes
+    for (const json of [[], ["--json"]]) {
+      expect(oc.runCli(args(["--batch", "2", "--expect-list-hash", v3[1].listHash, ...json]), () => text).code).toBe(0);
+      expect(oc.runCli(args(["--batch", "2", "--expect-list-hash", v3[0].listHash, ...json]), () => text).code).toBe(2);
+    }
+    expect(oc.runCli(args(["--batch", "2", "--expect-list-hash", v3[1].listHash]), () => text).out).toContain("只核对第 2/3 批");
+    expect(oc.computeBatches(text, { allowed: true, contract: P.contract, batchSize: 2, batch: 4 }).ok).toBe(false);
   });
 });

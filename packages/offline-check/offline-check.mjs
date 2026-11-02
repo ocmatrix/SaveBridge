@@ -10,12 +10,15 @@
 // 用法：
 //   node offline-check.mjs <地址文件|-> --action add|remove --contract 0x… \
 //        --bsc-nonce N --wantos-nonce M --deadline <unix 秒> \
-//        [--bsc-chain-id 56] [--wantos-chain-id 13555] [--batch-size 500] \
+//        [--batch K] [--bsc-chain-id 56] [--wantos-chain-id 13555] [--batch-size 500] \
 //        [--expect-list-hash 0x…] [--list] [--json]
-//   node offline-check.mjs --decode <calldata 0x…>      # 解码时间锁提议 / 管理交易的 calldata
+//   node offline-check.mjs --decode <calldata 0x…> [--json]   # 解码时间锁提议 / 管理交易的 calldata
 //
-//   多批时第 i 批（从 0 起）使用 nonce = 起始 nonce + i（与管理后台一致）。
+//   --batch K：只算第 K 批（从 1 起），直接使用给定的 nonce（= 管理后台「准备本批」时显示的 nonce）。
+//   不给 --batch 时算全部批次，第 i 批（从 0 起）nonce = 给定 nonce + i；此时多批不能用 --expect-list-hash。
 //   --expect-list-hash：与屏幕上的 listHash 比对，不一致退出码 2。
+//   参数严格校验（fail-closed）：未知选项、--x=y 写法、重复选项、多余的文件参数、空值、缺少 nonce/deadline、
+//   chainId / batch-size / batch 不是正整数、expect-list-hash 不是 0x+64 位十六进制 —— 一律退出码 64。
 //
 // 地址文件规则（rules v1，与管理后台完全相同，测试向量见 vectors.json）：
 //   R1 去掉 UTF-8 BOM；按 \r\n、\n、\r 分行（行号从 1 起）。
@@ -224,7 +227,8 @@ export function digest(domain, message) {
 
 /**
  * 完整核对：文本 → 批次 → 每批每条链的 domain / message / digest。
- * opts: { allowed, contract, deadline, bscNonce, wantosNonce, bscChainId=56, wantosChainId=13555, batchSize=500 }
+ * opts: { allowed, contract, deadline, bscNonce, wantosNonce, bscChainId=56, wantosChainId=13555, batchSize=500, batch? }
+ * batch（从 1 起）：只返回第 batch 批，nonce 直接用给定值；否则第 i 批 nonce = 给定值 + i。
  */
 export function computeBatches(text, opts) {
   const parsed = parseAddressList(text);
@@ -234,12 +238,16 @@ export function computeBatches(text, opts) {
     { key: "bsc", chainId: opts.bscChainId ?? 56, nonce: opts.bscNonce },
     { key: "wantos", chainId: opts.wantosChainId ?? 13555, nonce: opts.wantosNonce },
   ];
-  const batches = chunk(parsed.addresses, opts.batchSize ?? MAX_BATCH).map((addrs, i) => {
+  const all = chunk(parsed.addresses, opts.batchSize ?? MAX_BATCH);
+  if (opts.batch !== undefined && (!Number.isInteger(opts.batch) || opts.batch < 1 || opts.batch > all.length))
+    return { ok: false, ...parsed, errors: [{ line: 0, text: String(opts.batch), reason: "batch" }], batches: [] };
+  const picked = opts.batch !== undefined ? [[all[opts.batch - 1], opts.batch - 1]] : all.map((a, i) => [a, i]);
+  const batches = picked.map(([addrs, i]) => {
     const lh = listHash(addrs);
     const perChain = {};
     for (const c of chains) {
       const d = domainHash({ name: CONTRACT_NAME[c.key], chainId: c.chainId, verifyingContract: opts.contract });
-      const nonce = c.nonce === undefined ? undefined : BigInt(c.nonce) + BigInt(i);
+      const nonce = c.nonce === undefined ? undefined : BigInt(c.nonce) + (opts.batch !== undefined ? 0n : BigInt(i));
       const m =
         nonce === undefined || opts.deadline === undefined
           ? undefined
@@ -389,20 +397,35 @@ export function decodeCalldata(hex) {
 
 // ---------------------------------------------------------------- 命令行
 
+const VALUE_OPTS = new Set(["action", "contract", "bsc-nonce", "wantos-nonce", "deadline", "bsc-chain-id", "wantos-chain-id", "batch-size", "batch", "expect-list-hash", "decode"]);
+const FLAG_OPTS = new Set(["list", "json"]);
+
+/** 严格解析：返回 { o } 或 { error }（fail-closed）。 */
 function parseArgs(argv) {
   const o = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--list" || a === "--json") o[a.slice(2)] = true;
-    else if (a.startsWith("--")) {
-      if (i + 1 >= argv.length) throw new Error(`${a} 缺少值`);
-      o[a.slice(2)] = argv[++i];
+    if (a.startsWith("-") && a !== "-") {
+      if (!a.startsWith("--") || a.includes("=")) return { error: `不支持的写法 ${a}（请用 --选项 值）` };
+      const k = a.slice(2);
+      if (Object.prototype.hasOwnProperty.call(o, k)) return { error: `选项重复：${a}` };
+      if (FLAG_OPTS.has(k)) o[k] = true;
+      else if (VALUE_OPTS.has(k)) {
+        const v = argv[i + 1];
+        if (v === undefined || v.trim() === "" || (v.startsWith("--") && v.length > 2)) return { error: `${a} 缺少值` };
+        o[k] = v;
+        i++;
+      } else return { error: `未知选项 ${a}` };
     } else o._.push(a);
   }
-  return o;
+  return { o };
 }
 
-const REASON = { format: "格式错误（应为 0x + 40 位十六进制）", checksum: "大小写校验和（EIP-55）错误", zero: "零地址", empty: "文件里没有地址" };
+const POS_INT = /^[1-9]\d*$/;
+const DEC = /^\d+$/;
+const HASH32 = /^0x[0-9a-fA-F]{64}$/;
+
+const REASON = { format: "格式错误（应为 0x + 40 位十六进制）", checksum: "大小写校验和（EIP-55）错误", zero: "零地址", empty: "文件里没有地址", batch: "--batch 超出批次范围" };
 
 function fmtDecoded(d, indent = "") {
   if (!d.signature) return `${indent}未知函数 selector ${d.selector}`;
@@ -418,62 +441,74 @@ function fmtDecoded(d, indent = "") {
 
 /** 运行命令行；返回 { code, out }（便于测试）。readFile 由调用方提供。 */
 export function runCli(argv, readFile) {
-  const a = parseArgs(argv);
-  if (a.decode) {
+  const usage = (msg) => ({ code: 64, out: `${msg}\n用法见文件开头注释：node offline-check.mjs <地址文件> --action add|remove --contract 0x… --bsc-nonce N --wantos-nonce M --deadline T [--batch K]` });
+  const p = parseArgs(argv);
+  if (p.error) return usage(p.error);
+  const a = p.o;
+  if (a.decode !== undefined) {
+    const extra = Object.keys(a).filter((k) => k !== "_" && k !== "decode" && k !== "json");
+    if (extra.length || a._.length) return usage("--decode 只能与 --json 一起用");
     const d = decodeCalldata(a.decode);
     return { code: d.signature ? 0 : 1, out: a.json ? JSON.stringify(d, null, 2) : fmtDecoded(d) };
   }
+  if (a._.length !== 1) return usage(a._.length === 0 ? "缺少地址文件" : `只能给一个地址文件（收到 ${a._.length} 个）`);
   const file = a._[0];
-  if (!file) return { code: 64, out: "用法见文件开头注释：node offline-check.mjs <地址文件> --action add|remove --contract 0x… --bsc-nonce N --wantos-nonce M --deadline T" };
-  if (a.action !== "add" && a.action !== "remove") return { code: 64, out: "--action 必须是 add 或 remove" };
+  if (a.action !== "add" && a.action !== "remove") return usage("--action 必须是 add 或 remove");
   const contract = a.contract;
-  if (!contract || !/^0x[0-9a-fA-F]{40}$/.test(contract)) return { code: 64, out: "--contract 必须是桥合约地址（两条链相同）" };
-  const num = (k) => (a[k] === undefined ? undefined : /^\d+$/.test(a[k]) ? BigInt(a[k]) : NaN);
+  if (!contract || !/^0x[0-9a-fA-F]{40}$/.test(contract)) return usage("--contract 必须是桥合约地址（两条链相同）");
+  for (const k of ["bsc-nonce", "wantos-nonce", "deadline"]) {
+    if (a[k] === undefined) return usage(`缺少 --${k}（核对必须给出与屏幕相同的 nonce 和 deadline）`);
+    if (!DEC.test(a[k])) return usage(`--${k} 必须是十进制整数`);
+  }
+  for (const k of ["bsc-chain-id", "wantos-chain-id", "batch-size", "batch"]) if (a[k] !== undefined && !POS_INT.test(a[k])) return usage(`--${k} 必须是正整数`);
+  if (a["expect-list-hash"] !== undefined && !HASH32.test(a["expect-list-hash"])) return usage("--expect-list-hash 必须是 0x + 64 位十六进制");
+  const batchSize = a["batch-size"] ? Number(a["batch-size"]) : MAX_BATCH;
+  if (batchSize > MAX_BATCH) return usage(`--batch-size 不得超过 ${MAX_BATCH}`);
   const opts = {
     allowed: a.action === "add",
     contract,
-    deadline: num("deadline"),
-    bscNonce: num("bsc-nonce"),
-    wantosNonce: num("wantos-nonce"),
+    deadline: BigInt(a.deadline),
+    bscNonce: BigInt(a["bsc-nonce"]),
+    wantosNonce: BigInt(a["wantos-nonce"]),
     bscChainId: a["bsc-chain-id"] ? Number(a["bsc-chain-id"]) : 56,
     wantosChainId: a["wantos-chain-id"] ? Number(a["wantos-chain-id"]) : 13555,
-    batchSize: a["batch-size"] ? Number(a["batch-size"]) : MAX_BATCH,
+    batchSize,
+    batch: a.batch !== undefined ? Number(a.batch) : undefined,
   };
-  for (const k of ["deadline", "bscNonce", "wantosNonce"]) if (Number.isNaN(opts[k])) return { code: 64, out: `${k} 必须是十进制整数` };
   const r = computeBatches(readFile(file), opts);
+  if (r.ok && opts.batch === undefined && r.batches.length > 1 && a["expect-list-hash"] !== undefined)
+    return usage(`共 ${r.batches.length} 批：与屏幕比对时必须用 --batch 指定是第几批（nonce 用屏幕上显示的）`);
+  // 同一判定给文本与 --json 两种输出
+  const exp = a["expect-list-hash"]?.toLowerCase();
+  const hit = exp !== undefined && r.ok ? r.batches.find((b) => b.listHash === exp) : undefined;
+  const code = !r.ok ? (r.errors.some((e) => e.reason === "batch") ? 64 : 1) : exp !== undefined && !hit ? 2 : 0;
   if (a.json) {
     const replacer = (_k, v) => (typeof v === "bigint" ? v.toString() : v);
-    const mismatch = a["expect-list-hash"] && !(r.batches.length === 1 && r.batches[0].listHash === a["expect-list-hash"].toLowerCase());
-    return { code: !r.ok ? 1 : mismatch ? 2 : 0, out: JSON.stringify({ rulesVersion: RULES_VERSION, ...r }, replacer, 2) };
+    return { code, out: JSON.stringify({ rulesVersion: RULES_VERSION, expectListHash: exp ?? null, match: exp === undefined ? null : !!hit, ...r }, replacer, 2) };
   }
   const out = [`WANTOS 桥 v2 离线核对（rules v${RULES_VERSION}）`];
   if (!r.ok) {
-    out.push("❌ 文件有错误，拒绝计算哈希：");
-    for (const e of r.errors) out.push(`  第 ${e.line} 行  ${e.text}  ${REASON[e.reason]}`);
-    return { code: 1, out: out.join("\n") };
+    out.push("❌ 拒绝计算哈希：");
+    for (const e of r.errors) out.push(e.reason === "batch" ? `  ${REASON.batch}（${e.text}）` : `  第 ${e.line} 行  ${e.text}  ${REASON[e.reason]}`);
+    return { code, out: out.join("\n") };
   }
   out.push(`地址 ${r.addresses.length} 个（去重后）；重复 ${r.duplicates.length} 个；表头${r.headerSkipped ? "已跳过" : "无"}`);
   for (const d of r.duplicates) out.push(`  提示：第 ${d.line} 行与第 ${d.firstLine} 行重复 ${d.address}`);
-  out.push(`操作 ${a.action === "add" ? "添加 (allowed=true)" : "移除 (allowed=false)"}；合约 ${toChecksum(contract.toLowerCase())}；deadline ${opts.deadline ?? "（未给）"}${opts.deadline !== undefined ? `（${new Date(Number(opts.deadline) * 1000).toISOString()}）` : ""}`);
-  out.push(`共 ${r.batches.length} 批（每批 ≤ ${opts.batchSize}）`);
-  let code = 0;
+  out.push(`操作 ${a.action === "add" ? "添加 (allowed=true)" : "移除 (allowed=false)"}；合约 ${toChecksum(contract.toLowerCase())}；deadline ${opts.deadline}（${new Date(Number(opts.deadline) * 1000).toISOString()}）`);
+  const total = chunk(r.addresses, batchSize).length;
+  out.push(opts.batch !== undefined ? `只核对第 ${opts.batch}/${total} 批（nonce 按给定值）` : `共 ${total} 批（每批 ≤ ${batchSize}；第 i 批 nonce = 给定值 + i）`);
   for (const b of r.batches) {
-    out.push("", `第 ${b.index + 1}/${r.batches.length} 批  count = ${b.count}`, `  listHash    ${b.listHash}`);
+    out.push("", `第 ${b.index + 1}/${total} 批  count = ${b.count}`, `  listHash    ${b.listHash}`);
     for (const k of ["bsc", "wantos"]) {
       const c = b[k];
-      out.push(`  ${k === "bsc" ? "BSC   " : "WANTOS"} chainId ${c.chainId}  nonce ${c.nonce ?? "（未给）"}`);
+      out.push(`  ${k === "bsc" ? "BSC   " : "WANTOS"} chainId ${c.chainId}  nonce ${c.nonce}`);
       out.push(`    domainHash  ${c.domainHash}`);
-      out.push(`    messageHash ${c.messageHash ?? "（缺 nonce/deadline）"}`);
-      out.push(`    digest      ${c.digest ?? "（缺 nonce/deadline）"}`);
+      out.push(`    messageHash ${c.messageHash}`);
+      out.push(`    digest      ${c.digest}`);
     }
     if (a.list) for (const x of b.addresses) out.push(`    ${toChecksum(x)}`);
   }
-  if (a["expect-list-hash"]) {
-    const exp = a["expect-list-hash"].toLowerCase();
-    const hit = r.batches.find((b) => b.listHash === exp);
-    out.push("", hit ? `✅ 屏幕 listHash 与第 ${hit.index + 1} 批一致` : `❌ 屏幕 listHash ${exp} 与本文件任何一批都不一致 —— 不要签名`);
-    if (!hit) code = 2;
-  }
+  if (exp !== undefined) out.push("", hit ? `✅ 屏幕 listHash 与第 ${hit.index + 1} 批一致` : `❌ 屏幕 listHash ${exp} 与${opts.batch !== undefined ? `第 ${opts.batch} 批` : "本文件任何一批"}都不一致 —— 不要签名`);
   return { code, out: out.join("\n") };
 }
 

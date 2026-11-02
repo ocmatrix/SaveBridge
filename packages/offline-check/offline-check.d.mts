@@ -26,7 +26,7 @@ export interface ChainHashes { chainId: number; nonce?: string; domainHash: stri
 export interface Batch { index: number; count: number; listHash: string; addresses: string[]; bsc: ChainHashes; wantos: ChainHashes }
 export declare function computeBatches(
   text: string,
-  opts: { allowed: boolean; contract: string; deadline?: bigint | number; bscNonce?: bigint | number; wantosNonce?: bigint | number; bscChainId?: number; wantosChainId?: number; batchSize?: number },
+  opts: { allowed: boolean; contract: string; deadline?: bigint | number; bscNonce?: bigint | number; wantosNonce?: bigint | number; bscChainId?: number; wantosChainId?: number; batchSize?: number; batch?: number },
 ): Parsed & { ok: boolean; batches: Batch[] };
 export interface Decoded { selector: string; signature: string | null; args: { type: string; value: unknown; label?: string; inner?: Decoded | (Decoded | null)[] }[] }
 export declare function decodeCalldata(hex: string): Decoded;
