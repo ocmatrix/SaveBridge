@@ -48,6 +48,8 @@ export interface DecodedLog {
    * Unconfirmed logs may only have conservative effects (new checks, alerts) — never change state.
    */
   confirmed: boolean;
+  /** A-α: reported (in any variant) by ≥ minRpcAgreement RPCs — a single RPC cannot fabricate it. */
+  attested?: boolean;
 }
 
 export function decodeLog(abi: Abi, log: Log): { name: string; args: Record<string, unknown> } | null {

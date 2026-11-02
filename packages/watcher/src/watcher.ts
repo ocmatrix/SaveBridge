@@ -1,6 +1,6 @@
 import { bridgeTimelockAbi } from "@bridge/abi";
 import { getAbiItem, type Abi, type AbiEvent, type Address, type Hex, type Log, type PublicClient } from "viem";
-import { AlertManager, type AlertCode, type AlertSink } from "./alerts.js";
+import { ALERT_LEVELS, AlertManager, type AlertCode, type AlertSink } from "./alerts.js";
 import type { ControlledEntry, WatcherConfig } from "./config.js";
 import { PAUSER_ROLE, bridgeAbiOf, computeEventKey, decodeLog, describeCall, erc20Abi, type DecodedLog } from "./events.js";
 import type { Heartbeat, RelayerProbe } from "./heartbeat.js";
@@ -149,7 +149,19 @@ export class Watcher {
   /** S-3: while handling an UNCONFIRMED log, alerts are collected here and folded into the range's level-2 RPC_DISAGREE. */
   private unconfirmedAlerts: Array<{ code: string; title: string }> | null = null;
 
+  /** A-α: set while handling a contested log (attested by ≥ minAgree RPCs, content disputed). */
+  private contested: (Record<string, unknown> & { chain: ChainName; log: string }) | null = null;
+
   private raise(code: AlertCode, title: string, o: { chain?: ChainName; detail?: Record<string, unknown>; key?: string } = {}): Promise<boolean> {
+    if (this.contested !== null && ALERT_LEVELS[code] === 1) {
+      const ctx = this.contested;
+      return this.alerts.raise("EVENT_CONTESTED", {
+        title: `${ctx.chain} 一级事件内容有争议（≥${this.d.rpc[ctx.chain].minAgree} 个 RPC 上报、内容不一致），未改状态，请人工核对：${title}`,
+        chain: ctx.chain,
+        detail: { originalCode: code, originalTitle: title, ...ctx },
+        key: `contested:${ctx.chain}:${ctx.log}`,
+      });
+    }
     if (this.unconfirmedAlerts !== null) {
       this.unconfirmedAlerts.push({ code, title });
       return Promise.resolve(true);
@@ -468,7 +480,7 @@ export class Watcher {
     const end = blocks.get(to)!;
     // A log is confirmed iff exactly one variant exists at its position and ≥ minAgree RPCs reported it
     // (a 1-vs-1 tie is NOT confirmed). Logs whose block hash is not the agreed one (stale fork) are dropped.
-    const logs: Array<Entry & { confirmed: boolean }> = [];
+    const logs: Array<Entry & { confirmed: boolean; attested: boolean; contest: Record<string, unknown> & { log: string } }> = [];
     const suspicious: Array<Record<string, unknown>> = [...dupes];
     const unconfirmed: Array<Record<string, unknown>> = [];
     for (const [k, u] of union) {
@@ -480,11 +492,15 @@ export class Watcher {
       });
       if (variants.length === 0) continue;
       const confirmed = variants.length === 1 && variants[0]!.labels.size >= rpc.minAgree;
+      // A-α (r4): reported by ≥ minAgree RPCs in total (a single liar cannot fabricate that) but with
+      // differing content → "contested": still no state change, but its level-1 meaning is NOT folded away.
+      const attested = new Set(variants.flatMap((v) => [...v.labels])).size >= rpc.minAgree;
+      const contest = { log: k, variants: variants.map((v) => ({ reportedBy: [...v.labels], topics: v.entry.log.topics, data: v.entry.log.data })) };
       if (!confirmed || u.labels.size < res.ok.length) suspicious.push({ log: k, reportedBy: [...u.labels], variants: variants.length });
       for (const v of variants) {
         if (!confirmed)
           unconfirmed.push({ log: k, block: String(v.entry.log.blockNumber), address: v.entry.log.address, topic0: v.entry.log.topics[0], data: v.entry.log.data, reportedBy: [...v.labels] });
-        logs.push({ ...v.entry, confirmed });
+        logs.push({ ...v.entry, confirmed, attested, contest });
       }
     }
     // r3: per-RPC dissent on logs — missing a confirmed log or reporting an unconfirmed/stale variant
@@ -504,9 +520,10 @@ export class Watcher {
     try {
       const abiFor = (s: DecodedLog["source"]): Abi => (s === "bridge" ? bridgeAbiOf(c) : s === "timelock" ? (bridgeTimelockAbi as Abi) : (erc20Abi as Abi));
       const folded: Array<{ code: string; title: string }> = [];
-      for (const { source, log, confirmed } of logs) {
-        this.unconfirmedAlerts = confirmed ? null : folded;
-        const meta = { address: log.address, block: log.blockNumber!, blockHash: log.blockHash!, txHash: log.transactionHash!, logIndex: log.logIndex!, timestamp: blocks.get(log.blockNumber!)!.timestamp, confirmed };
+      for (const { source, log, confirmed, attested, contest } of logs) {
+        this.unconfirmedAlerts = confirmed || attested ? null : folded;
+        this.contested = !confirmed && attested ? { chain: c, ...contest } : null;
+        const meta = { address: log.address, block: log.blockNumber!, blockHash: log.blockHash!, txHash: log.transactionHash!, logIndex: log.logIndex!, timestamp: blocks.get(log.blockNumber!)!.timestamp, confirmed, attested };
         if (source === "legacy") {
           await this.onLegacyLog(c, { source, name: "log", args: { topic0: log.topics[0] }, ...meta });
           continue;
@@ -519,6 +536,7 @@ export class Watcher {
         else await this.onTransfer(c, l);
       }
       this.unconfirmedAlerts = null;
+      this.contested = null;
       if (suspicious.length > 0)
         await this.raise("RPC_DISAGREE", `${c} 区块 ${from}-${to}：各 RPC 返回的事件不一致（${suspicious.length} 处）；未确认的事件只建核对项、其告警并入本条（二级），不改状态`, {
           chain: c,
@@ -528,6 +546,7 @@ export class Watcher {
         });
     } catch (e) {
       this.unconfirmedAlerts = null;
+      this.contested = null;
       this.state.derived = before;
       this.newOps.splice(newOpsBefore);
       throw e;
@@ -661,9 +680,13 @@ export class Watcher {
     const ops = this.state.derived.timelockOps;
     switch (l.name) {
       case "CallScheduled": {
-        // S-4: an unconfirmed proposal creates no op (it would linger forever) and no level-1 push;
-        // it is listed in the range's RPC_DISAGREE (unconfirmed logs)
-        if (!l.confirmed) return;
+        // S-4: an unconfirmed proposal creates no op (it would linger forever). If it is CONTESTED
+        // (attested by ≥ minAgree RPCs, content disputed) it is still pushed at level 1 (A-α);
+        // if only < minAgree RPCs report it, it is just listed in the range's RPC_DISAGREE.
+        if (!l.confirmed) {
+          if (l.attested) await this.raise("TIMELOCK_PROPOSED", `${c} 时间锁提议（内容有争议）`, { chain: c, detail: this.evDetail(l) });
+          return;
+        }
         const cfg = this.cfg.chains[c];
         const op = (ops[id] ??= { chain: c, id: a["id"] as Hex, readyAt: l.timestamp + Number(a["delay"]), calls: [], remindersSent: [] });
         const call = describeCall(a["target"] as Address, a["data"] as Hex, cfg.bridge, cfg.timelock, c);
