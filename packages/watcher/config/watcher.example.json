@@ -1,0 +1,56 @@
+{
+  "_comment": "EXAMPLE ONLY. RPC URLs are placeholders (*.example.invalid) - replace with the owner's chosen independent endpoints on server B. Bridge/timelock/wallet addresses are placeholders until PR-10 deployment. No secrets belong in this file: the PAUSER key lives in the signer adapter (KMS), alert/heartbeat tokens are referenced by name.",
+  "dataDir": "./data",
+  "minRpcAgreement": 2,
+  "chains": {
+    "bsc": {
+      "chainId": 56,
+      "rpcUrls": ["https://bsc-rpc-a.example.invalid", "https://bsc-rpc-b.example.invalid", "https://bsc-rpc-c.example.invalid"],
+      "bridge": "0x00000000000000000000000000000000000b0001",
+      "timelock": "0x00000000000000000000000000000000000b0002",
+      "token": "0x55d398326f99059fF775485246999027B3197955",
+      "startBlock": "0",
+      "head": { "kind": "finalized" },
+      "maxBlockRange": 2000,
+      "maxLagBlocks": 200
+    },
+    "wantos": {
+      "chainId": 13555,
+      "rpcUrls": ["https://wantos-selfnode.example.invalid", "https://wantos-rpc-b.example.invalid", "https://wantos-rpc-c.example.invalid"],
+      "bridge": "0x00000000000000000000000000000000000b0001",
+      "timelock": "0x00000000000000000000000000000000000b0002",
+      "token": "0xc74F2e7fBdA2af9D1fc26b85E341229063Dc0873",
+      "startBlock": "0",
+      "head": { "kind": "confirmations", "confirmations": 6 },
+      "maxBlockRange": 2000,
+      "maxLagBlocks": 60
+    }
+  },
+  "grace": { "w2bSeconds": 300, "b2wBeforeEtaSeconds": 180, "refundBeforeExecSeconds": 7200, "depositRefundBeforeExecSeconds": 7200 },
+  "mintAlertThreshold": "10000000000000000000000",
+  "reconcile": { "intervalSeconds": 3600, "toleranceWei": { "bsc": "1000000000000000000", "wantos": "1000000000000000000" }, "wantosLowBalanceWei": null },
+  "heartbeatIntervalSeconds": 300,
+  "gasCheckIntervalSeconds": 300,
+  "wantosStallSeconds": 60,
+  "maxClockSkewSeconds": 60,
+  "cursorStallSeconds": 600,
+  "rpcDissentThreshold": 5,
+  "pauseRetry": { "attempts": 5, "backoffMs": 3000 },
+  "timelockRemindersSeconds": [86400, 21600],
+  "dailyCapReportRatioBps": 7000,
+  "gasWatch": [
+    { "chain": "bsc", "address": "0x00000000000000000000000000000000000a0001", "label": "管理钱包", "minWei": "5000000000000000" },
+    { "chain": "bsc", "address": "0x00000000000000000000000000000000000a0002", "label": "白名单钱包", "minWei": "5000000000000000" },
+    { "chain": "bsc", "address": "0x00000000000000000000000000000000000a0003", "label": "暂停钥匙", "minWei": "5000000000000000" },
+    { "chain": "wantos", "address": "0x00000000000000000000000000000000000a0001", "label": "管理钱包", "minWei": "1000000000000000000" },
+    { "chain": "wantos", "address": "0x00000000000000000000000000000000000a0002", "label": "白名单钱包", "minWei": "1000000000000000000" },
+    { "chain": "wantos", "address": "0x00000000000000000000000000000000000a0003", "label": "暂停钥匙", "minWei": "1000000000000000000" }
+  ],
+  "legacyAddresses": [
+    { "chain": "wantos", "address": "0x8dFd39E98f478688A41Cdbe40bc544d672F0A9E3", "label": "旧 WANTOS 金库 0x8dFd" },
+    { "chain": "wantos", "address": "0x9dAb17a9Ad061cbDA2BeF607A6A330EE74076E90", "label": "旧付款程序 0x9dab" },
+    { "chain": "bsc", "address": "0x9dAb17a9Ad061cbDA2BeF607A6A330EE74076E90", "label": "旧付款程序 0x9dab" },
+    { "chain": "bsc", "address": "0xeC6E356a2E986D6A9b103217B9d215c8a6F37139", "label": "旧 BSC 金库 0xec6e" }
+  ],
+  "controlledSetFile": "./controlled-set.json"
+}
