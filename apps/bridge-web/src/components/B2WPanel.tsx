@@ -1,15 +1,17 @@
 import { useEffect, useId, useState } from "react";
 import { useConnection } from "wagmi";
-import { getAddress } from "viem";
+import { formatUnits, getAddress } from "viem";
 import { useDeps, useI18n } from "../context";
 import type { BridgeState } from "../lib/reader";
 import { formatAmount, parseAmountInput, validateB2W, validRecipient } from "../lib/amount";
 import { depositFlow } from "../lib/flows";
 import type { I18nKey } from "../i18n";
-import { AmountField } from "./AmountField";
+import type { WalletState } from "../wallet/useAutoConnect";
+import { AmountBox, FlipButton, short } from "./AmountBox";
 import { NetworkPrompt } from "./NetworkPrompt";
 import { useFlow } from "./useFlow";
 import { PendingTx, StepLine } from "./StepLine";
+import { WalletNote } from "./WalletNote";
 
 /** Deposits are disabled while either side is paused (conservative: the credit could not be processed). */
 export function b2wBlocker(st: BridgeState): I18nKey | null {
@@ -18,13 +20,14 @@ export function b2wBlocker(st: BridgeState): I18nKey | null {
   return null;
 }
 
-export function B2WPanel({ state, onDeposit }: { state: BridgeState | undefined; onDeposit(nonce: bigint): void }) {
+export function B2WPanel({ state, onDeposit, wallet, onFlip }: { state: BridgeState | undefined; onDeposit(nonce: bigint): void; wallet: WalletState; onFlip(): void }) {
   const { cfg } = useDeps();
   const { t } = useI18n();
   const recipientId = useId();
   const { address, chainId } = useConnection();
   const [input, setInput] = useState("");
   const [recipient, setRecipient] = useState("");
+  const [editing, setEditing] = useState(false);
   const dec = state?.bsc.decimals ?? 18;
   const flow = useFlow(cfg.bsc.id, dec, "b2w");
   const f = (v: bigint) => formatAmount(v, dec);
@@ -52,6 +55,8 @@ export function B2WPanel({ state, onDeposit }: { state: BridgeState | undefined;
       : null;
   const canSubmit = !!address && !!state && !wrongNet && !blocker && recipientOk && !!parsed?.ok && !problem && !flow.busy && !flow.pending;
   const maxAmount = state ? [state.b2wRemaining, state.bsc.balance, state.bsc.maxDepositPerTx].reduce((a, b) => (a < b ? a : b)) : null;
+  const amountText = parsed?.ok ? f(parsed.value) : "";
+  const customRecipient = !!address && recipientOk && getAddress(recipient) !== getAddress(address);
 
   async function submit() {
     if (!address || !parsed?.ok || !recipientOk) return;
@@ -63,35 +68,86 @@ export function B2WPanel({ state, onDeposit }: { state: BridgeState | undefined;
     }
   }
 
+  const label = !address
+    ? wallet.connecting
+      ? t("wallet.connecting")
+      : t("cta.noWallet", { app: cfg.appName })
+    : canSubmit
+      ? t("cta.b2w", { amount: amountText })
+      : parsed?.ok && !problem
+        ? t("b2w.submit")
+        : t("cta.enterAmount");
+
   return (
     <section className="panel" aria-label={t("tab.b2w")}>
-      <p className="desc">{t("b2w.desc")}</p>
-      {!address && <p className="notice">{t("wallet.connectFirst")}</p>}
+      {!address && <WalletNote wallet={wallet} />}
       {wrongNet && <NetworkPrompt target={cfg.bsc} />}
-      {address && blocker && <p className="notice warn">{t(blocker)}</p>}
-      {address && state && state.wl !== "open" && <p className="notice">{t("b2w.notOpenNote")}</p>}
-      {state && (
-        <div className="quota">
-          <div>{t("quota.b2wGlobal", { amount: f(state.b2wRemaining) })}</div>
-          <small>{t("quota.limits", { min: f(state.bsc.minDeposit), max: f(state.bsc.maxDepositPerTx) })}</small>
+      {address && blocker && <p className="bar warn">{t(blocker)}</p>}
+      {address && state && state.wl !== "open" && <p className="bar">{t("b2w.notOpenNote")}</p>}
+      <AmountBox
+        side="from"
+        tone="bsc"
+        chainName={cfg.bsc.name}
+        top={
+          address && state ? (
+            <>
+              <span>{t("amount.balance", { amount: f(state.bsc.balance) })}</span>
+              {maxAmount !== null && maxAmount > 0n && (
+                <button type="button" className="chip" disabled={flow.busy} onClick={() => setInput(formatUnits(maxAmount, dec))}>
+                  {t("amount.max")}
+                </button>
+              )}
+            </>
+          ) : null
+        }
+        inputLabel={t("amount.label")}
+        value={input}
+        onChange={setInput}
+        disabled={!address || flow.busy}
+      />
+      <FlipButton onClick={onFlip} disabled={flow.busy} />
+      <AmountBox
+        side="to"
+        tone="wantos"
+        chainName={cfg.wantos.name}
+        top={
+          address ? (
+            <>
+              <span>
+                {t("swap.recipient")} {recipientOk ? short(getAddress(recipient)) : "—"}
+              </span>
+              <button type="button" className="chip" disabled={flow.busy} aria-expanded={editing} onClick={() => setEditing((e) => !e)}>
+                {t("swap.edit")}
+              </button>
+            </>
+          ) : null
+        }
+        inputLabel={t("amount.receive")}
+        value={amountText}
+        readOnly
+      />
+      {editing && (
+        <div className="field">
+          <label htmlFor={recipientId}>{t("b2w.recipient")}</label>
+          <input id={recipientId} autoComplete="off" spellCheck={false} value={recipient} disabled={flow.busy} onChange={(e) => setRecipient(e.target.value.trim())} />
+          <small className="warn-text">{t("b2w.recipientHint")}</small>
+          {recipient && !recipientOk && <p className="error">{t("b2w.recipientInvalid")}</p>}
         </div>
       )}
-      <div className="field">
-        <label htmlFor={recipientId}>{t("b2w.recipient")}</label>
-        <input id={recipientId} autoComplete="off" spellCheck={false} value={recipient} disabled={flow.busy} onChange={(e) => setRecipient(e.target.value.trim())} />
-        <small className="warn-text">{t("b2w.recipientHint")}</small>
-        {recipient && !recipientOk && <p className="error">{t("b2w.recipientInvalid")}</p>}
-      </div>
-      <AmountField value={input} onChange={setInput} balance={address && state ? state.bsc.balance : null} max={address ? maxAmount : null} decimals={dec} disabled={flow.busy} />
+      {state && <p className="info">{t("info.b2w", { amount: f(state.b2wRemaining), min: f(state.bsc.minDeposit), max: f(state.bsc.maxDepositPerTx) })}</p>}
       {problem && <p className="error">{t(problem.key, problem.params)}</p>}
-      <p className="hint">{t("b2w.eta")}</p>
-      <StepLine flow={flow} amount={parsed?.ok ? f(parsed.value) : ""} />
+      {canSubmit && !flow.step && (
+        <p className="info">
+          {t("steps.hint")}。{t("amount.approveNote", { amount: amountText })} {t("b2w.eta")}
+        </p>
+      )}
+      {customRecipient && parsed?.ok && <p className="confirm">{t("b2w.confirmRecipient", { amount: amountText, to: getAddress(recipient) })}</p>}
+      <StepLine flow={flow} amount={amountText} />
       <PendingTx flow={flow} chain={cfg.bsc} />
       {flow.done && <p className="ok">{flow.done}</p>}
       {flow.error && <p className="error">{flow.error}</p>}
-      {recipientOk && parsed?.ok && <p className="confirm">{t("b2w.confirmRecipient", { amount: f(parsed.value), to: getAddress(recipient) })}</p>}
-      <button type="button" className="primary" disabled={!canSubmit} onClick={() => void submit()}>
-        {t("b2w.submit")}
+      <button type="button" className="cta" data-testid="submit" disabled={!canSubmit} onClick={() => void submit()}>
+        {label}
       </button>
     </section>
   );

@@ -5,7 +5,7 @@ import { createWalletClient, encodeFunctionData, http, type Hex } from "viem";
 import { wantosBridgeV2Abi } from "@bridge/abi";
 import { KEYS, startEnv, whitelist, snapshot, type Env } from "../support/anvil";
 import { renderApp } from "./renderApp";
-import { T, connect, flaky, panel, toBsc, typeAmount } from "./helpers";
+import { T, connect, flaky, panel, submit, toBsc, typeAmount } from "./helpers";
 import { pendingKey, savePending, type PendingTx } from "../../src/lib/pendingTx";
 
 let env: Env;
@@ -46,9 +46,9 @@ describe("re-check outcomes (A2)", () => {
     const user = await connect();
     const w2b = panel("WANTOS → BSC");
     await within(w2b).findByText(new RegExp(hash), {}, T);
-    await screen.findByText(/本地址今日可跨出/, {}, T);
+    await screen.findByText(/今日剩余额度/, {}, T);
     await typeAmount(user, w2b, "100");
-    const btn = within(w2b).getByRole("button", { name: "跨出" });
+    const btn = submit(w2b);
     expect(btn).toBeDisabled();
     await user.click(within(w2b).getByRole("button", { name: "重新检查" }));
     await within(w2b).findByText("该交易已上链但被合约拒绝，资金未转出，可以重新提交", {}, T);
@@ -64,13 +64,13 @@ describe("re-check outcomes (A2)", () => {
     renderApp(env.cfg, KEYS.alice.address);
     const user = await connect();
     const w2b = panel("WANTOS → BSC");
-    await screen.findByText(/本地址今日可跨出/, {}, T);
+    await screen.findByText(/今日剩余额度/, {}, T);
     await typeAmount(user, w2b, "100");
     await user.click(within(w2b).getByRole("button", { name: "重新检查" }));
     await within(w2b).findByText("还没有查到这笔交易的结果。如果长时间没有结果，请到区块浏览器核对该哈希；关闭此标签页会重置本页的防重复锁，重置前请务必先核对。", {}, T);
     expect(within(w2b).queryByRole("button", { name: /解除/ })).toBeNull(); // no non-receipt unlock path
     expect(within(w2b).getByText(new RegExp(hash))).toBeInTheDocument();
-    expect(within(w2b).getByRole("button", { name: "跨出" })).toBeDisabled();
+    expect(submit(w2b)).toBeDisabled();
   });
 });
 
@@ -89,7 +89,7 @@ describe("B2W unconfirmed (A2, symmetric to W2B)", () => {
     const user = await connect();
     const b2w = await toBsc(user);
     await typeAmount(user, b2w, "50");
-    const btn = within(b2w).getByRole("button", { name: "存入" });
+    const btn = submit(b2w);
     await waitFor(() => expect(btn).toBeEnabled(), T);
     await user.click(btn);
     // the wallet has returned the deposit hash; the receipt wait is still hanging

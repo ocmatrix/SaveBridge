@@ -20,6 +20,7 @@ import {
   type Env,
 } from "../support/anvil";
 import { renderApp } from "./renderApp";
+import { submit, waitConnected } from "./helpers";
 
 let env: Env;
 let revert: () => Promise<void>;
@@ -40,9 +41,7 @@ const panel = (name: string) => screen.getByRole("region", { name });
 
 async function connect() {
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "连接钱包" }));
-  await user.click(await screen.findByRole("button", { name: "Mock Connector" }));
-  await screen.findByRole("button", { name: "断开" }, T);
+  await waitConnected();
   return user;
 }
 
@@ -52,10 +51,10 @@ async function readyW2B(amount = "100") {
   await whitelist(env, env.bsc, [KEYS.alice.address]);
   const r = renderApp(env.cfg, KEYS.alice.address);
   const user = await connect();
-  await screen.findByText(/本地址今日可跨出/, {}, T);
+  await screen.findByText(/今日剩余额度/, {}, T);
   const w2b = panel("WANTOS → BSC");
   await user.type(within(w2b).getByLabelText("金额（USDT）"), amount);
-  const btn = within(w2b).getByRole("button", { name: "跨出" });
+  const btn = submit(w2b);
   await waitFor(() => expect(btn).toBeEnabled(), T);
   return { ...r, user, w2b, btn };
 }
@@ -64,12 +63,11 @@ async function readyW2B(amount = "100") {
 async function readyB2W(amount = "100") {
   const r = renderApp(env.cfg, KEYS.alice.address);
   const user = await connect();
-  await user.click(screen.getByRole("tab", { name: "BSC → WANTOS" }));
+  await user.click(screen.getByRole("button", { name: "切换方向" }));
   const b2w = panel("BSC → WANTOS");
-  await user.click(await within(b2w).findByRole("button", { name: "切换到 BSC" }));
   await waitFor(() => expect(within(b2w).queryByText("当前网络不是 BSC，请切换")).toBeNull(), T);
   await user.type(within(b2w).getByLabelText("金额（USDT）"), amount);
-  const btn = within(b2w).getByRole("button", { name: "存入" });
+  const btn = submit(b2w);
   await waitFor(() => expect(btn).toBeEnabled(), T);
   return { ...r, user, b2w, btn };
 }
@@ -77,7 +75,7 @@ async function readyB2W(amount = "100") {
 /** The blocker notice itself (not only the amount-validation message) must be shown. */
 function expectNotice(scope: HTMLElement, text: string) {
   const els = within(scope).getAllByText(text);
-  expect(els.some((e) => e.classList.contains("notice"))).toBe(true);
+  expect(els.some((e) => e.classList.contains("bar") || e.classList.contains("notice"))).toBe(true);
 }
 
 async function refresh(qc: { invalidateQueries(): Promise<void> }) {
@@ -136,13 +134,13 @@ describe("W2B blockers (enabled first, then blocked)", () => {
     expectNotice(w2b, "今日额度已用完，请明天（UTC 0 点后）再试");
   });
 
-  it("wallet moved to the wrong network", async () => {
-    const { wagmiConfig, w2b, btn } = await readyW2B();
+  it("wallet moved to the other chain → switched back on its own, button enabled again", async () => {
+    const { wagmiConfig, btn } = await readyW2B();
     await act(async () => {
       await switchChain(wagmiConfig, { chainId: 56 });
     });
-    await waitFor(() => expect(btn).toBeDisabled(), T);
-    expect(within(w2b).getByText("当前网络不是 WANTOS，请切换")).toBeInTheDocument();
+    await waitFor(() => expect(wagmiConfig.state.chainId).toBe(13555), T);
+    await waitFor(() => expect(btn).toBeEnabled(), T);
   });
 });
 

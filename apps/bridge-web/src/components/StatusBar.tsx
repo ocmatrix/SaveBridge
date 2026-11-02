@@ -1,26 +1,22 @@
 import { useI18n } from "../context";
 import { DecimalsMismatchError, type BridgeState } from "../lib/reader";
 
-export function StatusBar({ state, connected, loading, error, onRefresh }: { state: BridgeState | undefined; connected: boolean; loading: boolean; error: unknown; onRefresh(): void }) {
+/**
+ * Read problems at the top of the card. Pause / ceiling / whitelist reasons are shown by the panel itself
+ * (they are what disables its button), so they are not repeated here.
+ */
+export function StatusBar({ state, loading, error, onRefresh }: { state: BridgeState | undefined; loading: boolean; error: unknown; onRefresh(): void }) {
   const { t } = useI18n();
   return (
     <div className="statusbar">
-      {loading && <p>{t("status.loading")}</p>}
-      {error instanceof DecimalsMismatchError && <p className="notice warn">{t("status.decimalsMismatch")}</p>}
+      {loading && !state && <p className="muted">{t("status.loading")}</p>}
+      {error instanceof DecimalsMismatchError && <p className="bar warn">{t("status.decimalsMismatch")}</p>}
       {!!error && !(error instanceof DecimalsMismatchError) && (
         <p className="error">
           {t("status.readError")}{" "}
           <button type="button" className="link" onClick={onRefresh}>
             {t("status.refresh")}
           </button>
-        </p>
-      )}
-      {state && (state.wantos.paused || state.bsc.paused) && <p className="notice warn">{t("status.paused")}</p>}
-      {state && state.supplyCeilingHit && <p className="notice warn">{t("status.supplyCeiling")}</p>}
-      {state && connected && (
-        <p className={`wl wl-${state.wl}`}>
-          <span>{t("wl.label")}：</span>
-          {t(state.wl === "open" ? "wl.open" : state.wl === "syncing" ? "wl.syncing" : "wl.closed")}
         </p>
       )}
     </div>

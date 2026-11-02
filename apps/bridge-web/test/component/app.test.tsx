@@ -1,10 +1,16 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient } from "@tanstack/react-query";
+import { App } from "../../src/App";
+import { createWagmiConfig } from "../../src/wallet/wagmi";
+import { makeClients } from "../../src/lib/clients";
+import { ChainStatusProvider } from "../../src/lib/statusProvider";
 import userEvent from "@testing-library/user-event";
 import { KEYS, U, startEnv, whitelist, snapshot, relayerRelease, type Env } from "../support/anvil";
 import { renderApp } from "./renderApp";
 import type { StatusProvider } from "../../src/lib/statusProvider";
 import { bscVaultV2Abi } from "@bridge/abi";
+import { submit, waitConnected } from "./helpers";
 
 let env: Env;
 let revert: () => Promise<void>;
@@ -24,9 +30,7 @@ afterEach(async () => {
 const T = { timeout: 15_000 };
 
 async function connect(user = userEvent.setup()) {
-  await user.click(await screen.findByRole("button", { name: "连接钱包" }));
-  await user.click(await screen.findByRole("button", { name: "Mock Connector" }));
-  await screen.findByRole("button", { name: "断开" }, T);
+  await waitConnected();
   return user;
 }
 
@@ -39,7 +43,7 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     expect(await screen.findAllByText("跨链未开通，请联系客服", {}, T)).not.toHaveLength(0);
     const w2b = panel("WANTOS → BSC");
     await userEvent.type(within(w2b).getByLabelText("金额（USDT）"), "100");
-    expect(within(w2b).getByRole("button", { name: "跨出" })).toBeDisabled();
+    expect(submit(w2b)).toBeDisabled();
   });
 
   it("whitelisted → full W2B through the UI: exact approve, bridgeOut, order shows 处理中 then 已到账", async () => {
@@ -48,16 +52,17 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     const { queryClient } = renderApp(env.cfg, KEYS.alice.address);
     const user = await connect();
     const w2b = panel("WANTOS → BSC");
-    await screen.findByText("本地址今日可跨出：2,000 USDT", {}, T);
+    await screen.findByText(/今日剩余额度 2,000 USDT/, {}, T);
     await user.type(within(w2b).getByLabelText("金额（USDT）"), "123.5");
-    const btn = within(w2b).getByRole("button", { name: "跨出" });
+    const btn = submit(w2b);
     await waitFor(() => expect(btn).toBeEnabled(), T);
+    expect(btn).toHaveTextContent("跨出 123.5 USDT");
     await user.click(btn);
     await within(w2b).findByText("已提交，订单 #1", {}, T);
     const orders = await screen.findByRole("region", { name: "我的订单" }, T);
     await within(orders).findByText("WANTOS → BSC 订单 #1", {}, T);
     expect(within(orders).getByText("处理中")).toBeInTheDocument();
-    await screen.findByText("本地址今日可跨出：1,876.5 USDT", {}, T);
+    await screen.findByText(/今日剩余额度 1,876.5 USDT/, {}, T);
 
     await relayerRelease(env, 1n, KEYS.alice.address, 1235n * 10n ** 17n);
     await queryClient.invalidateQueries();
@@ -67,16 +72,15 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
   it("B2W deposit through the UI after switching network: shows awaiting-credit progress", async () => {
     renderApp(env.cfg, KEYS.alice.address);
     const user = await connect();
-    await user.click(screen.getByRole("tab", { name: "BSC → WANTOS" }));
+    await user.click(screen.getByRole("button", { name: "切换方向" }));
     const b2w = panel("BSC → WANTOS");
-    // wallet starts on WANTOS → must switch
-    expect(await within(b2w).findByText("当前网络不是 BSC，请切换", {}, T)).toBeInTheDocument();
-    await user.click(within(b2w).getByRole("button", { name: "切换到 BSC" }));
+    // the wallet starts on WANTOS and is switched to BSC on its own
     await waitFor(() => expect(within(b2w).queryByText("当前网络不是 BSC，请切换")).toBeNull(), T);
+    await user.click(within(b2w).getByRole("button", { name: "修改" })); // the recipient defaults to the wallet; edit opens the field
     expect(within(b2w).getByLabelText("WANTOS 收款地址")).toHaveValue(KEYS.alice.address);
     expect(within(b2w).getByText("默认为当前地址。请勿填写交易所充值地址。")).toBeInTheDocument();
     await user.type(within(b2w).getByLabelText("金额（USDT）"), "50");
-    const btn = within(b2w).getByRole("button", { name: "存入" });
+    const btn = submit(b2w);
     await waitFor(() => expect(btn).toBeEnabled(), T);
     await user.click(btn);
     await within(b2w).findByText("已存入，存入编号 #1，约 15 分钟到账 WANTOS", {}, T);
@@ -88,16 +92,16 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
   it("B2W to another recipient: confirm line shows bob's checksum address and the chain records bob (A1)", async () => {
     renderApp(env.cfg, KEYS.alice.address);
     const user = await connect();
-    await user.click(screen.getByRole("tab", { name: "BSC → WANTOS" }));
+    await user.click(screen.getByRole("button", { name: "切换方向" }));
     const b2w = panel("BSC → WANTOS");
-    await user.click(await within(b2w).findByRole("button", { name: "切换到 BSC" }));
     await waitFor(() => expect(within(b2w).queryByText("当前网络不是 BSC，请切换")).toBeNull(), T);
+    await user.click(within(b2w).getByRole("button", { name: "修改" })); // the recipient defaults to the wallet; edit opens the field
     const r = within(b2w).getByLabelText("WANTOS 收款地址");
     await user.clear(r);
     await user.type(r, KEYS.bob.address.toLowerCase());
     await user.type(within(b2w).getByLabelText("金额（USDT）"), "25");
     expect(await within(b2w).findByText(`将存入 25 USDT，到账 WANTOS 地址：${KEYS.bob.address}`)).toBeInTheDocument();
-    const btn = within(b2w).getByRole("button", { name: "存入" });
+    const btn = submit(b2w);
     await waitFor(() => expect(btn).toBeEnabled(), T);
     await user.click(btn);
     await within(b2w).findByText("已存入，存入编号 #1，约 15 分钟到账 WANTOS", {}, T);
@@ -110,33 +114,68 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
   it("B2W rejects an invalid / zero recipient", async () => {
     renderApp(env.cfg, KEYS.alice.address);
     const user = await connect();
-    await user.click(screen.getByRole("tab", { name: "BSC → WANTOS" }));
+    await user.click(screen.getByRole("button", { name: "切换方向" }));
     const b2w = panel("BSC → WANTOS");
-    await user.click(within(b2w).getByRole("button", { name: "切换到 BSC" }));
+    await waitFor(() => expect(within(b2w).queryByText("当前网络不是 BSC，请切换")).toBeNull(), T);
+    await user.click(within(b2w).getByRole("button", { name: "修改" })); // the recipient defaults to the wallet; edit opens the field
     const r = within(b2w).getByLabelText("WANTOS 收款地址");
     await user.clear(r);
     await user.type(r, "0x0000000000000000000000000000000000000000");
     await user.type(within(b2w).getByLabelText("金额（USDT）"), "50");
     expect(await within(b2w).findByText("收款地址无效")).toBeInTheDocument();
-    expect(within(b2w).getByRole("button", { name: "存入" })).toBeDisabled();
+    expect(submit(b2w)).toBeDisabled();
   });
 
-  it("wrong network → prompt to switch / add WANTOS", async () => {
+  it("wallet on the other chain → switched back on its own (both chains work by default)", async () => {
     await whitelist(env, env.wantos, [KEYS.alice.address]);
     await whitelist(env, env.bsc, [KEYS.alice.address]);
     const { wagmiConfig } = renderApp(env.cfg, KEYS.alice.address);
+    await connect();
+    const { switchChain } = await import("wagmi/actions");
+    await switchChain(wagmiConfig, { chainId: 56 });
+    await waitFor(() => expect(wagmiConfig.state.chainId).toBe(env.cfg.wantos.id), T);
+    await waitFor(() => expect(within(panel("WANTOS → BSC")).queryByText("当前网络不是 WANTOS，请切换")).toBeNull(), T);
+  });
+
+  it("switch refused by the wallet → prompt with switch / add buttons stays as the fallback", async () => {
+    await whitelist(env, env.wantos, [KEYS.alice.address]);
+    await whitelist(env, env.bsc, [KEYS.alice.address]);
+    const features: { switchChainError?: boolean } = {};
+    const { wagmiConfig } = renderApp(env.cfg, KEYS.alice.address, { mockFeatures: features });
     const user = await connect();
     const { switchChain } = await import("wagmi/actions");
+    // from the moment the wallet is on BSC it refuses every further switch (set before the page can react)
+    wagmiConfig.subscribe((st) => st.chainId, (id) => { if (id === 56) features.switchChainError = true; });
     await switchChain(wagmiConfig, { chainId: 56 });
     const w2b = panel("WANTOS → BSC");
     expect(await within(w2b).findByText("当前网络不是 WANTOS，请切换", {}, T)).toBeInTheDocument();
     expect(within(w2b).getByRole("button", { name: "添加 WANTOS 网络" })).toBeInTheDocument();
-    expect(within(w2b).getByRole("button", { name: "跨出" })).toBeDisabled();
+    expect(within(w2b).getByRole("button", { name: "切换到 WANTOS" })).toBeInTheDocument();
+    expect(submit(w2b)).toBeDisabled();
+    features.switchChainError = false;
     await user.click(within(w2b).getByRole("button", { name: "切换到 WANTOS" }));
     await waitFor(() => expect(within(w2b).queryByText("当前网络不是 WANTOS，请切换")).toBeNull(), T);
   });
 
-  it("footer always shows both bridge addresses from config", async () => {
+  it("no wallet in the browser (page opened outside the app) → tells to open it in the app, button stays disabled", async () => {
+    const clients = makeClients(env.cfg);
+    render(
+      <App
+        cfg={env.cfg}
+        clients={clients}
+        wagmiConfig={createWagmiConfig(env.cfg, { storage: null })}
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        statusProvider={new ChainStatusProvider(env.cfg, clients)}
+        initialLang="zh"
+      />,
+    );
+    expect(await screen.findByText(/未检测到钱包。请在 app 内打开本页。/, {}, T)).toBeInTheDocument();
+    const w2b = panel("WANTOS → BSC");
+    expect(submit(w2b)).toBeDisabled();
+    expect(submit(w2b)).toHaveTextContent("请在 app 内打开");
+  });
+
+  it("footer shows the bridge address from config (the same on both chains)", async () => {
     renderApp(env.cfg, KEYS.alice.address);
     const footer = screen.getByRole("contentinfo");
     expect(within(footer).getAllByText(env.cfg.wantos.bridge).length).toBeGreaterThan(0);

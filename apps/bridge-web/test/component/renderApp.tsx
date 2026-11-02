@@ -8,8 +8,8 @@ import { makeClients, type Clients } from "../../src/lib/clients";
 import { ChainStatusProvider, type StatusProvider } from "../../src/lib/statusProvider";
 import type { AppConfig } from "../../src/config";
 
-export function renderApp(cfg: AppConfig, account: Address | readonly [Address, ...Address[]], opts: { statusProvider?: StatusProvider; clients?: Clients } = {}) {
-  const wagmiConfig = createWagmiConfig(cfg, { connectors: [mock({ accounts: typeof account === "string" ? [account] : account })], storage: null });
+export function renderApp(cfg: AppConfig, account: Address | readonly [Address, ...Address[]], opts: { statusProvider?: StatusProvider; clients?: Clients; mockFeatures?: NonNullable<Parameters<typeof mock>[0]>["features"] } = {}) {
+  const wagmiConfig = createWagmiConfig(cfg, { connectors: [mock({ accounts: typeof account === "string" ? [account] : account, features: opts.mockFeatures })], storage: null });
   const clients = opts.clients ?? makeClients(cfg);
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const statusProvider = opts.statusProvider ?? new ChainStatusProvider(cfg, clients);

@@ -3,6 +3,9 @@ import { useDeps, useI18n } from "../context";
 import type { OrderView } from "../lib/statusProvider";
 import { formatAmount } from "../lib/amount";
 
+/** The most recent orders, at the bottom of the card. */
+export const RECENT_ORDERS = 3;
+
 export function Orders({ orders, decimals }: { orders: OrderView[] | undefined; decimals: { wantos: number; bsc: number } }) {
   const { cfg } = useDeps();
   const { t } = useI18n();
@@ -12,12 +15,12 @@ export function Orders({ orders, decimals }: { orders: OrderView[] | undefined; 
         {t("order.viewTx")}
       </a>
     ) : null;
+  const shown = orders?.slice(0, RECENT_ORDERS);
+  if (!shown?.length) return <section className="orders" aria-label={t("order.title")} hidden />;
   return (
     <section className="orders" aria-label={t("order.title")}>
-      <h2>{t("order.title")}</h2>
-      {!orders?.length && <p className="muted">{t("order.empty")}</p>}
       <ul>
-        {orders?.map((o) => {
+        {shown.map((o) => {
           const w2b = o.direction === "W2B";
           const dec = w2b ? decimals.wantos : decimals.bsc;
           return (
