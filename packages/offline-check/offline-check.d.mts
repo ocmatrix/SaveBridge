@@ -3,7 +3,6 @@ export declare const RULES_VERSION: number;
 export declare const MAX_BATCH: number;
 export declare const DOMAIN_TYPEHASH: string;
 export declare const BATCH_TYPEHASH: string;
-export declare const CONTRACT_NAME: { bsc: string; wantos: string };
 export declare const SELECTORS: Record<string, string>;
 export declare const KNOWN_ROLES: Record<string, string>;
 export declare function keccak256(bytes: Uint8Array): Uint8Array;
@@ -19,7 +18,8 @@ export interface Parsed { addresses: string[]; errors: ParseError[]; duplicates:
 export declare function parseAddressList(text: string): Parsed;
 export declare function chunk(addresses: string[], batchSize?: number): string[][];
 export declare function listHash(sorted: string[]): string;
-export declare function domainHash(d: { name: string; chainId: number | bigint; verifyingContract: string }): string;
+export declare const WL_DOMAIN_NAME: string;
+export declare function domainHash(d: { verifyingContract: string }): string;
 export declare function messageHash(m: { listHash: string; count: number; allowed: boolean; nonce: number | bigint; deadline: number | bigint }): string;
 export declare function digest(domain: string, message: string): string;
 export interface ChainHashes { chainId: number; nonce?: string; domainHash: string; messageHash?: string; digest?: string }

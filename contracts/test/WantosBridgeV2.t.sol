@@ -89,13 +89,12 @@ contract WantosBridgeV2Test is WantosFixture {
         }
     }
 
-    function test_domainNameIsWantosBridgeV2() public view {
+    function test_domainIsChainlessWhitelistDomain() public view {
         bytes32 domain = keccak256(
             abi.encode(
-                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                keccak256("WantosBridgeV2"),
+                keccak256("EIP712Domain(string name,string version,address verifyingContract)"),
+                keccak256("SaveBridgeWhitelist"),
                 keccak256("1"),
-                WANTOS_CHAIN,
                 address(bridge)
             )
         );
@@ -329,6 +328,46 @@ contract WantosBridgeV2Test is WantosFixture {
         bridge.executeRelease(9);
         assertEq(token.balanceOf(carol), 700 * U);
         assertEq(_bstatus(9), RELEASED);
+    }
+
+    /// Inbound (BSC -> WANTOS) without a waiting period: with `b2wDelay = 0` a release is paid in the same block.
+    /// Turns red if the lower bound of `b2wDelay` is restored (the setParams below would revert).
+    function test_b2w_zeroDelay_releasesInSameBlock() public {
+        WantosBridgeV2.Params memory p = bridge.params();
+        p.b2wDelay = 0;
+        _viaTimelock(address(bridge), abi.encodeCall(WantosBridgeV2.setParams, (p)));
+        assertEq(bridge.params().b2wDelay, 0);
+
+        vm.prank(relayer);
+        bridge.queueRelease(11, carol, 700 * U);
+        vm.prank(relayer);
+        bridge.executeRelease(11); // no warp: same block
+        assertEq(token.balanceOf(carol), 700 * U);
+        assertEq(_bstatus(11), RELEASED);
+
+        // the same source event can never be paid twice
+        bytes32 k = _bkey(11);
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(BridgeBase.BadPayoutStatus.selector, k, RELEASED));
+        bridge.queueRelease(11, carol, 700 * U);
+        assertEq(token.balanceOf(carol), 700 * U);
+    }
+
+    /// With `b2wDelay = 0` the admin wallet can still re-introduce a delay at once, but never lower it again.
+    function test_b2w_zeroDelay_adminCanOnlyRaise() public {
+        WantosBridgeV2.Params memory p = bridge.params();
+        p.b2wDelay = 0;
+        _viaTimelock(address(bridge), abi.encodeCall(WantosBridgeV2.setParams, (p)));
+
+        p.b2wDelay = 15 minutes;
+        vm.prank(admin);
+        bridge.setParams(p);
+        assertEq(bridge.params().b2wDelay, 15 minutes);
+
+        p.b2wDelay = 0;
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(BridgeBase.NotTightening.selector, 3));
+        bridge.setParams(p);
     }
 
     function test_b2w_capReplayVoid() public {

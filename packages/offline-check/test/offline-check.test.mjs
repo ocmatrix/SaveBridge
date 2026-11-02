@@ -17,7 +17,7 @@ describe("keccak256 (independent implementation) agrees with viem", () => {
   const inputs = [new Uint8Array(0), enc.encode("abc"), new Uint8Array(135).fill(7), new Uint8Array(136).fill(1), new Uint8Array(137).fill(255), new Uint8Array(1000).map((_, i) => i * 31)];
   for (const x of inputs) it(`len ${x.length}`, () => expect(oc.toHex(oc.keccak256(x))).toBe(viemKeccak(x)));
   it("typehashes equal PR1-NOTES §5.4", () => {
-    expect(oc.DOMAIN_TYPEHASH).toBe("0x8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f");
+    expect(oc.DOMAIN_TYPEHASH).toBe("0x91ab3d17e3a50a9d89e63fd30b92be7f5336b03b287bb946787a83a9d62a2766"); // no chainId (contracts: WL_DOMAIN_TYPEHASH)
     expect(oc.BATCH_TYPEHASH).toBe("0x5a100c8996927acc3ae2b696188b99aa517fc144b559fc238612fc884bec2a20");
   });
 });

@@ -227,10 +227,10 @@ describe("whitelist page", () => {
       await prepared();
       const sorted = parseAddressList(two.join("\n")).addresses;
       const deadline = BigInt(/--deadline (\d+)/.exec(screen.getByTestId("offline-cmd").textContent!)![1]!);
-      for (const [side, name, chainId] of [["bsc", "BscVaultV2", BSC_ID], ["wantos", "WantosBridgeV2", WANTOS_ID]] as const) {
+      for (const [side, chainId] of [["bsc", BSC_ID], ["wantos", WANTOS_ID]] as const) {
         const nonce = await readNonce(w.chains[side]);
         expect(screen.getByTestId(`nonce-${side}`)).toHaveTextContent(new RegExp(`^${nonce}$`));
-        expect(screen.getByTestId(`domain-${side}`)).toHaveTextContent(tool.domainHash({ name, chainId, verifyingContract: w.bridge }));
+        expect(screen.getByTestId(`domain-${side}`)).toHaveTextContent(tool.domainHash({ verifyingContract: w.bridge }));
         expect(screen.getByTestId(`msg-${side}`)).toHaveTextContent(tool.messageHash({ listHash: tool.listHash(sorted), count: 2, allowed: true, nonce, deadline }));
         expect(screen.getByTestId(`chain-${side}`)).toHaveTextContent(`chainId ${chainId}`);
       }

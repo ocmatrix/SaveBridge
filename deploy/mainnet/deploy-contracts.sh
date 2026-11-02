@@ -9,9 +9,9 @@ cd "$(git rev-parse --show-toplevel)"
 side="${1:-}"; mode="${2:-}"
 case "$side" in
   bsc)    RPC="${BSC_DEPLOY_RPC:-https://bsc-rpc.publicnode.com}"; CHAIN=56
-          FROZEN=021fa9a76f7ac5846561dc97301a4feb49b4836535277a041b4b2797bf45659f ;;
+          FROZEN=0cebc67aa62739b15ccc3b385f5545d657bd01f123005710d8685f71d96f502f ;;
   wantos) RPC="${WANTOS_DEPLOY_RPC:-https://rpc3.wantos.io}"; CHAIN=13555
-          FROZEN=15da2930c354c61266d08b4813f25eda666a417509c5bcd3f8c7a21a933e3a50 ;;
+          FROZEN=6067cc2a227707e649c42ad1529319a0eea3aaaf429cde07415e8c31330bfb71 ;;
   *) sed -n '2,7p' "$0"; exit 2 ;;
 esac
 unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy; export NO_PROXY='*'
@@ -29,7 +29,7 @@ bal="$(cast balance "$DEPLOYER" --rpc-url "$RPC")"; echo "deployer balance (wei)
 args=(contracts/script/Deploy.s.sol --rpc-url "$RPC" --sender "$DEPLOYER")
 if [[ "$mode" == "--broadcast" ]]; then
   echo "BROADCAST on chain $CHAIN. Enter the deployer keystore password when asked (typed by the owner)."
-  exec forge script "${args[@]}" --broadcast --slow --keystore "$HOME/.savebridge-deployer/deployer"
+  exec forge script "${args[@]}" --broadcast --slow --keystore "$HOME/.savebridge-deployer-new/deployer-20261103"
 fi
 echo "[dry-run] simulation only (add --broadcast to send):"
 forge script "${args[@]}" 2>&1 | grep -E "Script ran|Error|revert|Estimated|timelock|proxy" | cut -c1-220

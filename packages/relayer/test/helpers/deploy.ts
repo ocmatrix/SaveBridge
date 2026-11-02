@@ -138,7 +138,7 @@ export async function applyWhitelist(
   const deadline = blk.timestamp + 3600n;
   const listHash = keccak256(encodeAbiParameters([{ type: "address[]" }], [sorted]));
   const sig = await act.wl.signTypedData({
-    domain: { name: side === "bsc" ? "BscVaultV2" : "WantosBridgeV2", version: "1", chainId: a.chain.id, verifyingContract: bridge },
+    domain: { name: "SaveBridgeWhitelist", version: "1", verifyingContract: bridge },
     types: {
       WhitelistBatch: [
         { name: "listHash", type: "bytes32" },

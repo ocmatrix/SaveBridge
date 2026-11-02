@@ -88,7 +88,8 @@ export function listHash(sorted: readonly string[]): Hex {
   return keccak256(encodeAbiParameters([{ type: "address[]" }], [sorted as Address[]]));
 }
 
-export const CONTRACT_NAME: Record<Side, string> = { bsc: "BscVaultV2", wantos: "WantosBridgeV2" };
+/** Whitelist signing domain: no chainId, same name on both chains, so one signature is valid on BSC and WANTOS (contracts: WL_DOMAIN_*). */
+export const WL_DOMAIN_NAME = "SaveBridgeWhitelist";
 const BATCH_TYPES = {
   WhitelistBatch: [
     { name: "listHash", type: "bytes32" },
@@ -102,7 +103,6 @@ const DOMAIN_TYPES = {
   EIP712Domain: [
     { name: "name", type: "string" },
     { name: "version", type: "string" },
-    { name: "chainId", type: "uint256" },
     { name: "verifyingContract", type: "address" },
   ],
 } as const;
@@ -120,7 +120,7 @@ export interface BatchInput {
 /** EIP-712 typed data exactly as the contract verifies it (PR1-NOTES §5.4). */
 export function batchTypedData(b: BatchInput): TypedDataDefinition<typeof BATCH_TYPES, "WhitelistBatch"> {
   return {
-    domain: { name: CONTRACT_NAME[b.side], version: "1", chainId: b.chainId, verifyingContract: b.bridge },
+    domain: { name: WL_DOMAIN_NAME, version: "1", verifyingContract: b.bridge },
     types: BATCH_TYPES,
     primaryType: "WhitelistBatch",
     message: { listHash: listHash(b.addresses), count: b.addresses.length, allowed: b.allowed, nonce: b.nonce, deadline: b.deadline },
@@ -141,7 +141,7 @@ export function batchHashes(b: BatchInput): BatchHashes {
   return {
     listHash: td.message.listHash,
     count: td.message.count,
-    domainHash: hashDomain({ domain: { name: CONTRACT_NAME[b.side], version: "1", chainId: BigInt(b.chainId), verifyingContract: b.bridge }, types: DOMAIN_TYPES }),
+    domainHash: hashDomain({ domain: { name: WL_DOMAIN_NAME, version: "1", verifyingContract: b.bridge }, types: DOMAIN_TYPES }),
     messageHash: hashStruct({ data: td.message, primaryType: "WhitelistBatch", types: BATCH_TYPES }),
     digest: hashTypedData(td),
   };

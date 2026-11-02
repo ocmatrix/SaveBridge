@@ -154,10 +154,9 @@ contract BscVaultV2Test is BscFixture {
         bytes32 structHash = keccak256(abi.encode(typeHash, keccak256(abi.encode(a)), uint32(2), true, 5, 99));
         bytes32 domain = keccak256(
             abi.encode(
-                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                keccak256("BscVaultV2"),
+                keccak256("EIP712Domain(string name,string version,address verifyingContract)"),
+                keccak256("SaveBridgeWhitelist"),
                 keccak256("1"),
-                block.chainid,
                 address(vault)
             )
         );
@@ -182,14 +181,18 @@ contract BscVaultV2Test is BscFixture {
         vault.applyWhitelistBatch(a, true, 1, deadline, sig);
     }
 
-    function test_wl_crossChainRejected() public {
+    /// One whitelist signature serves both chains: the signing domain carries no chainId (D3, REDEPLOY-PLAN).
+    /// Turns red if chainId is added back to the domain.
+    function test_wl_sameSignatureValidOnAnyChain() public {
         address[] memory a = _one(alice);
         uint256 deadline = block.timestamp + 1 hours;
         vm.chainId(WANTOS_CHAIN);
-        bytes memory sig = _signBatch(vault, wlKey, a, true, 0, deadline); // domain bound to 13555
+        bytes32 digestOnWantos = vault.hashWhitelistBatch(a, true, 0, deadline);
+        bytes memory sig = _signBatch(vault, wlKey, a, true, 0, deadline);
         vm.chainId(BSC_CHAIN);
-        vm.expectRevert(); // recovers to a different signer
+        assertEq(vault.hashWhitelistBatch(a, true, 0, deadline), digestOnWantos);
         vault.applyWhitelistBatch(a, true, 0, deadline, sig);
+        assertTrue(vault.whitelisted(alice));
     }
 
     function test_wl_crossContractRejected() public {
@@ -200,10 +203,9 @@ contract BscVaultV2Test is BscFixture {
         bytes32 structHash = keccak256(abi.encode(typeHash, keccak256(abi.encode(a)), uint32(1), true, 0, deadline));
         bytes32 domain = keccak256(
             abi.encode(
-                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                keccak256("BscVaultV2"),
+                keccak256("EIP712Domain(string name,string version,address verifyingContract)"),
+                keccak256("SaveBridgeWhitelist"),
                 keccak256("1"),
-                block.chainid,
                 address(0xBEEF)
             )
         );
