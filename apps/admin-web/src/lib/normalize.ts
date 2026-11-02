@@ -141,7 +141,7 @@ export function batchHashes(b: BatchInput): BatchHashes {
   return {
     listHash: td.message.listHash,
     count: td.message.count,
-    domainHash: hashDomain({ domain: td.domain!, types: DOMAIN_TYPES }),
+    domainHash: hashDomain({ domain: { name: CONTRACT_NAME[b.side], version: "1", chainId: BigInt(b.chainId), verifyingContract: b.bridge }, types: DOMAIN_TYPES }),
     messageHash: hashStruct({ data: td.message, primaryType: "WhitelistBatch", types: BATCH_TYPES }),
     digest: hashTypedData(td),
   };

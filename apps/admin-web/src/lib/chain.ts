@@ -90,7 +90,7 @@ export function describeError(e: unknown): string {
     if (rev) {
       const name = rev.data?.errorName ?? decodeRevert(rev.raw)?.name;
       if (name) return `合约拒绝：${name}${rev.data?.args?.length ? `(${rev.data.args.map(String).join(", ")})` : ""}`;
-      return "合约拒绝（无原因数据）";
+      return rev.raw && rev.raw !== "0x" ? `合约拒绝（无法解码的原因 ${rev.raw.slice(0, 10)}）` : "合约拒绝（无原因数据）";
     }
     if (e.walk(isRejection)) return "钱包里拒绝了";
     return e.shortMessage || e.message;

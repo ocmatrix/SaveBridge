@@ -122,12 +122,12 @@ export interface WhitelistHistory {
 /** Log-scan step; public RPCs limit getLogs ranges. */
 export const LOG_STEP = 50_000n;
 
-export async function scanLogs(ctx: ChainCtx, event: AbiEvent, step = LOG_STEP) {
-  const latest = await ctx.client.getBlockNumber();
+export async function scanLogs(ctx: ChainCtx, event: AbiEvent, address: Address = ctx.cfg.bridge, step = LOG_STEP) {
+  const latest = await ctx.client.getBlockNumber({ cacheTime: 0 });
   const out = [];
   for (let from = ctx.cfg.fromBlock; from <= latest; from += step) {
     const to = from + step - 1n > latest ? latest : from + step - 1n;
-    out.push(...(await ctx.client.getLogs({ address: ctx.cfg.bridge, event, fromBlock: from, toBlock: to })));
+    out.push(...(await ctx.client.getLogs({ address, event, fromBlock: from, toBlock: to })));
   }
   return out;
 }
