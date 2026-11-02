@@ -6,11 +6,13 @@ import type { LegacySourceData, OldPayout, ScanEntry, ScanStatus, SourceOrder } 
 export interface ScanOptions {
   /** Cut-over time T (unix seconds). Orders at or after T are excluded (AFTER_T). */
   cutoverT: number;
-  /** oldKeys already paid on the new vault (`legacyPaid(oldKey) == true` or a `LegacyPaid` event). */
-  alreadyPaid?: ReadonlySet<string>;
-  /** Controlled-source addresses (DESIGN Appendix A). Orders touching them are CONTROLLED_RECIPIENT. */
-  controlled?: Iterable<string>;
 }
+
+/**
+ * Clock-skew allowance between the two chains: a loose payout counts against an order when it happened no earlier
+ * than `orderTime - LOOSE_TIME_SKEW_SECONDS` (B7). Rules that name the order's own tx are never time-filtered.
+ */
+export const LOOSE_TIME_SKEW_SECONDS = 600;
 
 export interface ScanResult {
   /** Every distinct order, sorted, with its status. */
@@ -40,7 +42,7 @@ export function compareSrc(a: { srcChainId: number; srcTxHash: string; srcLogInd
   return la - lb;
 }
 
-interface NormOrder {
+export interface NormOrder {
   key: Hex;
   o: SourceOrder;
   from: Address;
@@ -50,7 +52,8 @@ interface NormOrder {
   canon: string;
 }
 
-function normOrder(raw: SourceOrder): NormOrder {
+/** Normalised view of one old order (also used by the preflight to re-check a manifest row against the source). */
+export function normOrder(raw: SourceOrder): NormOrder {
   // hex case is normalised once, at the entry (B5)
   const o: SourceOrder = { ...raw, txHash: (typeof raw.txHash === "string" ? raw.txHash.toLowerCase() : raw.txHash) as Hex };
   if (!Number.isSafeInteger(o.srcChainId) || o.srcChainId <= 0) throw new Error(`bad srcChainId ${String(o.srcChainId)}`);
@@ -88,7 +91,6 @@ export function scanLegacy(data: LegacySourceData, opts: ScanOptions): ScanResul
   // 2. old payouts: dedupe, index linked sums; payouts not linked to a known order are "loose".
   const idx = indexOldPayouts(data.payouts, new Set(orders.keys()));
   duplicatesDropped += idx.duplicatesDropped;
-  const controlled = new Set([...(opts.controlled ?? [])].map((a) => a.toLowerCase()));
 
   // 3. classify.
   const entries: ScanEntry[] = [];
@@ -108,8 +110,6 @@ export function scanLegacy(data: LegacySourceData, opts: ScanOptions): ScanResul
       /* keep INVALID_AMOUNT */
     } else if (payee === zeroAddress) status = "INVALID_ZERO_ADDRESS";
     else if (amount === 0n) status = "INVALID_ZERO_AMOUNT";
-    else if (opts.alreadyPaid?.has(key)) status = "NEW_PAID";
-    else if ([from, payee, named].some((a) => controlled.has(a.toLowerCase()))) status = "CONTROLLED_RECIPIENT";
     else if (l && l.sum >= amount) {
       status = "OLD_PAID";
       if (!l.to.has(payee) || l.to.size > 1) note = `old payout went to ${[...l.to].join(",")}`;
@@ -127,15 +127,16 @@ export function scanLegacy(data: LegacySourceData, opts: ScanOptions): ScanResul
 }
 
 /**
- * A "loose" old payout (unlinked, or linked to an order we do not know) is a reason for manual review when it
- * went to any address of this order (any amount — the old bridge may have taken a fee), or when it names this
- * order's tx with another logIndex — unless it happened strictly before the order (it cannot be for it).
- * Payouts without a known time always count. Returns the reason, or null.
+ * A "loose" old payout (unlinked, or linked to an order we do not know) is a reason for manual review when:
+ * - it names this order's tx (with another or no logIndex) — no time filter, it points at this tx explicitly; or
+ * - it went to any address of this order (any amount — the old bridge may have taken a fee), at or after
+ *   `orderTime - LOOSE_TIME_SKEW_SECONDS` (earlier payouts cannot be for it). Payouts without a time always count.
+ * Returns the reason, or null.
  */
 export function looseHit(idx: OldPayoutIndex, txHash: string, addrs: Address[], orderTime: number): string | null {
   const tx = txHash.toLowerCase();
-  if ((idx.looseSrcTx.get(tx) ?? -1) >= orderTime) return `an old payout is linked to ${tx} with another logIndex`;
-  const hit = addrs.find((a) => (idx.looseTo.get(a) ?? -1) >= orderTime);
+  if (idx.looseSrcTx.has(tx)) return `an old payout names ${tx} without being linked to this order`;
+  const hit = addrs.find((a) => (idx.looseTo.get(a) ?? -Infinity) >= orderTime - LOOSE_TIME_SKEW_SECONDS);
   return hit ? `an old payout not linked to this order went to ${hit}` : null;
 }
 
@@ -144,8 +145,8 @@ export interface OldPayoutIndex {
   linked: Map<Hex, { sum: bigint; to: Set<string> }>;
   /** Recipient (checksummed) -> latest time of a loose payout to it (Infinity when the time is unknown). */
   looseTo: Map<string, number>;
-  /** Lower-case srcTxHash of payouts linked to an unknown order -> latest payout time (same tx, other logIndex = suspect). */
-  looseSrcTx: Map<string, number>;
+  /** Lower-case srcTxHash named by payouts not linked to a known order (other logIndex, or no logIndex at all). */
+  looseSrcTx: Set<string>;
   /** Linked payouts whose order is unknown. */
   orphans: OldPayout[];
   duplicatesDropped: number;
@@ -163,7 +164,7 @@ export function indexOldPayouts(payouts: OldPayout[], knownOrders: ReadonlySet<s
   const seen = new Map<string, string>();
   const linked = new Map<Hex, { sum: bigint; to: Set<string> }>();
   const looseTo = new Map<string, number>();
-  const looseSrcTx = new Map<string, number>();
+  const looseSrcTx = new Set<string>();
   const orphans: OldPayout[] = [];
   let duplicatesDropped = 0;
   for (const raw of payouts) {
@@ -174,10 +175,11 @@ export function indexOldPayouts(payouts: OldPayout[], knownOrders: ReadonlySet<s
     if (p.timestamp !== undefined && (!Number.isSafeInteger(p.timestamp) || p.timestamp <= 0)) throw new Error(`bad payout timestamp ${String(p.timestamp)}`);
     const to = addr(p.to, "payout to");
     const amount = parseAmount(p.amount);
-    const hasLink = p.srcTxHash !== undefined || p.srcLogIndex !== undefined;
-    const link = hasLink ? oldKey(p.srcTxHash as Hex, p.srcLogIndex as number) : null;
+    // a full link needs both fields; srcTxHash alone (some old formats) names a tx but no order -> loose by tx
+    if (p.srcTxHash !== undefined && !isTxHash(p.srcTxHash)) throw new Error(`bad payout srcTxHash ${String(p.srcTxHash)}`);
+    const link = p.srcTxHash !== undefined && p.srcLogIndex !== undefined ? oldKey(p.srcTxHash, p.srcLogIndex) : null;
     const id = `${p.chainId}|${p.txHash}|${p.logIndex}`;
-    const canon = JSON.stringify([to, amount.toString(), link]);
+    const canon = JSON.stringify([to, amount.toString(), link, p.srcTxHash ?? null]);
     const prev = seen.get(id);
     if (prev !== undefined) {
       if (prev !== canon) throw new Error(`conflicting duplicate payout ${p.txHash}#${p.logIndex}`);
@@ -194,10 +196,8 @@ export function indexOldPayouts(payouts: OldPayout[], knownOrders: ReadonlySet<s
     }
     const t = p.timestamp ?? Number.POSITIVE_INFINITY;
     later(looseTo, to, t);
-    if (link) {
-      orphans.push(p);
-      later(looseSrcTx, p.srcTxHash as string, t);
-    }
+    if (link) orphans.push(p);
+    if (p.srcTxHash !== undefined) looseSrcTx.add(p.srcTxHash);
   }
   return { linked, looseTo, looseSrcTx, orphans, duplicatesDropped };
 }

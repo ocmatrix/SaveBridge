@@ -1,4 +1,4 @@
-import { formatUnits, getAddress, parseAbiItem, type AbiEvent, type Address, type Hex, type PublicClient } from "viem";
+import { formatUnits, getAddress, isAddress, parseAbiItem, type AbiEvent, type Address, type Hex, type PublicClient } from "viem";
 import type { Direction, LegacySourceData, OldPayout, SourceOrder } from "./types.js";
 
 /**
@@ -12,7 +12,7 @@ export interface EventSpec {
   /** e.g. "event Transfer(address indexed from, address indexed to, uint256 value)" */
   event: string;
   fromBlock: bigint;
-  /** A block number, or "latest" (resolved with getBlockNumber when the load starts). */
+  /** Order specs: a block number (e.g. the block at T) or "latest". Payout specs: only "latest" (see PayoutEventSpec). */
   toBlock: bigint | "latest";
   /** Token decimals of the amount argument. */
   decimals: number;
@@ -28,6 +28,8 @@ export interface OrderEventSpec extends EventSpec {
 }
 
 export interface PayoutEventSpec extends EventSpec {
+  /** Always the current head: a late old-bridge payout is exactly what must not be missed. */
+  toBlock: "latest";
   fields: { to: string; amount: string; srcTxHash?: string; srcLogIndex?: string };
 }
 
@@ -40,11 +42,38 @@ export interface RpcSourceConfig {
 
 export type SourceClient = Pick<PublicClient, "getLogs" | "getBlock" | "readContract" | "getBlockNumber" | "getChainId">;
 
+class ConfigError extends Error {
+  constructor(msg: string) {
+    super(`rpc-config: ${msg}`);
+  }
+}
+
 /**
- * Payout specs must be read up to the current chain head (minus at most this many blocks): a late old-bridge
- * payout is exactly what the scan / preflight must not miss. Order specs may stop at T.
+ * Runtime check of an RPC source config (it usually comes from JSON, so the TypeScript types prove nothing).
+ * Block numbers must be real bigints; payout specs must read to "latest"; anything else is a config error.
  */
-export const MAX_PAYOUT_LAG_BLOCKS = 12n;
+export function checkRpcConfig(cfg: unknown): asserts cfg is RpcSourceConfig {
+  if (typeof cfg !== "object" || cfg === null) throw new ConfigError("not an object");
+  const c = cfg as Record<string, unknown>;
+  if (!Array.isArray(c["orders"]) || !Array.isArray(c["payouts"])) throw new ConfigError("orders[] and payouts[] are required");
+  if (c["chunk"] !== undefined && (typeof c["chunk"] !== "bigint" || c["chunk"] < 1n)) throw new ConfigError(`chunk must be a bigint ≥ 1, got ${String(c["chunk"])}`);
+  const specs = [...(c["orders"] as unknown[]).map((x, i) => ["order", x, i] as const), ...(c["payouts"] as unknown[]).map((x, i) => ["payout", x, i] as const)];
+  specs.forEach(([kind, x, i]) => {
+    const where = `${kind} spec #${i}`;
+    if (typeof x !== "object" || x === null) throw new ConfigError(`${where} is not an object`);
+    const s = x as Record<string, unknown>;
+    if (!Number.isSafeInteger(s["chainId"]) || (s["chainId"] as number) <= 0) throw new ConfigError(`${where}: bad chainId ${String(s["chainId"])}`);
+    if (typeof s["address"] !== "string" || !isAddress(s["address"], { strict: false })) throw new ConfigError(`${where}: bad address ${String(s["address"])}`);
+    if (typeof s["fromBlock"] !== "bigint" || s["fromBlock"] < 0n) throw new ConfigError(`${where}: fromBlock must be a bigint (write "123n"), got ${JSON.stringify(String(s["fromBlock"]))}`);
+    const to = s["toBlock"];
+    if (kind === "payout") {
+      if (to !== "latest") throw new ConfigError(`${where}: toBlock must be the literal "latest", got ${JSON.stringify(typeof to === "bigint" ? `${to}n` : to ?? null)}`);
+    } else if (to !== "latest" && typeof to !== "bigint") throw new ConfigError(`${where}: toBlock must be a bigint (write "123n") or "latest", got ${JSON.stringify(to ?? null)}`);
+    if (!Number.isSafeInteger(s["decimals"]) || (s["decimals"] as number) < 0) throw new ConfigError(`${where}: bad decimals ${String(s["decimals"])}`);
+    if (typeof s["event"] !== "string") throw new ConfigError(`${where}: event signature missing`);
+    if (kind === "order" && s["direction"] !== "W2B" && s["direction"] !== "B2W") throw new ConfigError(`${where}: bad direction ${String(s["direction"])}`);
+  });
+}
 
 interface RawLog {
   address: Address;
@@ -57,7 +86,7 @@ interface RawLog {
 
 const decimalsAbi = [{ type: "function", name: "decimals", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] }] as const;
 
-type ResolvedSpec = EventSpec & { toBlock: bigint };
+type ResolvedSpec = Omit<EventSpec, "toBlock"> & { toBlock: bigint };
 
 async function fetchLogs(client: SourceClient, s: ResolvedSpec, chunk: bigint): Promise<RawLog[]> {
   if (s.toBlock < s.fromBlock) throw new Error(`toBlock < fromBlock for ${s.event}`);
@@ -96,11 +125,12 @@ function amountOf(l: RawLog, name: string, decimals: number): string {
 
 /**
  * Loads old orders and payouts. Fails closed (throws) on anything that could hide a payment:
- * a chain with order specs but no payout spec, a payout spec that is not read up to the current head
- * (MAX_PAYOUT_LAG_BLOCKS), a payout spec that returns no logs (wrong address / range), and a tx captured
- * by two different order specs (one deposit would become two oldKeys).
+ * an invalid config (checkRpcConfig: payout specs always read to "latest" = the head at load start), a chain with
+ * order specs but no payout spec on itself and on another chain, an RPC serving another chain id, a payout spec that
+ * returns no logs (wrong address / range), and a tx captured by two different order specs (two oldKeys).
  */
 export async function loadFromRpc(cfg: RpcSourceConfig, clients: Record<number, SourceClient>): Promise<LegacySourceData> {
+  checkRpcConfig(cfg);
   const chunk = cfg.chunk ?? 5000n;
   const client = (id: number): SourceClient => {
     const c = clients[id];
@@ -119,7 +149,7 @@ export async function loadFromRpc(cfg: RpcSourceConfig, clients: Record<number, 
     if (got !== id) throw new Error(`RPC for chain ${id} serves chain ${got}`);
     heads.set(id, await client(id).getBlockNumber({ cacheTime: 0 }));
   }
-  const resolve = <S extends EventSpec>(s: S): S & ResolvedSpec => ({ ...s, toBlock: s.toBlock === "latest" ? heads.get(s.chainId)! : s.toBlock });
+  const resolve = <S extends EventSpec>(s: S): Omit<S, "toBlock"> & { toBlock: bigint } => ({ ...s, toBlock: s.toBlock === "latest" ? heads.get(s.chainId)! : s.toBlock });
   const tsCache = new Map<string, number>();
   const ts = async (id: number, n: bigint): Promise<number> => {
     const k = `${id}:${n}`;
@@ -153,8 +183,6 @@ export async function loadFromRpc(cfg: RpcSourceConfig, clients: Record<number, 
   const payouts: OldPayout[] = [];
   for (const [si, raw] of cfg.payouts.entries()) {
     const s = resolve(raw);
-    const head = heads.get(s.chainId)!;
-    if (s.toBlock + MAX_PAYOUT_LAG_BLOCKS < head) throw new Error(`payout spec #${si} stops at block ${s.toBlock}, chain ${s.chainId} head is ${head} (max lag ${MAX_PAYOUT_LAG_BLOCKS}); use "latest"`);
     const logs = await fetchLogs(client(s.chainId), s, chunk);
     if (logs.length === 0) throw new Error(`payout spec #${si} (${s.event} @ ${s.address}) returned no logs — check address/range`);
     for (const l of logs) {

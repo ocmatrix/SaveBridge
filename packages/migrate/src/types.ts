@@ -42,11 +42,9 @@ export type ScanStatus =
   | "INVALID_ZERO_ADDRESS"
   | "INVALID_ZERO_AMOUNT"
   | "INVALID_AMOUNT"
-  | "NEW_PAID" // legacyPaid[oldKey] already true on the new vault
   | "OLD_PAID" // a linked old-bridge payout covers the full amount
   | "OLD_PARTIAL" // a linked old-bridge payout covers part of it -> manual review
   | "SUSPECT_PAID" // an old payout that is not linked to this order went to one of its addresses, or names its tx with another logIndex -> manual review
-  | "CONTROLLED_RECIPIENT" // payee / depositor / named recipient is in the controlled set (DESIGN Appendix A) -> manual review
   | "AFTER_T"; // initiated at or after the cut-over time T -> separate T+14d procedure
 
 export interface ScanEntry {

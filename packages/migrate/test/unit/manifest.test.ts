@@ -5,7 +5,7 @@ import { scanLegacy } from "../../src/scan.js";
 import { R, T, VAULT, fixture, manyOrders, tx } from "../helpers.js";
 
 const basic = fixture("legacy-basic.json");
-const scan = scanLegacy(basic, { cutoverT: T, alreadyPaid: new Set([oldKey(tx("5"), 0)]) });
+const scan = scanLegacy(basic, { cutoverT: T });
 const header = { bscChainId: 56, vault: VAULT, cutoverT: T };
 const m = buildManifest(scan.payable, header);
 
@@ -121,10 +121,5 @@ describe("validateManifest", () => {
   it("an empty manifest is rejected", async () => {
     const empty = m.csv.split("\n").filter((l) => !l.startsWith("0x")).join("\n").replace("# count=4", "# count=0").replace(/# total=\d+/, "# total=0");
     expect((await validateManifest(empty)).errors.join()).toMatch(/no rows/);
-  });
-  it("controlled addresses (to or srcRecipient) are errors (D7)", async () => {
-    expect((await validateManifest(m.csv, { controlled: [R(99).toLowerCase()] })).errors.join()).toMatch(/controlled set/);
-    expect((await validateManifest(m.csv, { controlled: [R(1)] })).errors.join()).toMatch(/controlled set/);
-    expect((await validateManifest(m.csv, { controlled: [R(500)] })).ok).toBe(true);
   });
 });

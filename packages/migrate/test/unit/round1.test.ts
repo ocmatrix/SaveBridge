@@ -34,7 +34,7 @@ describe("P1 / P4: a payout linked to the wrong logIndex is not silently ignored
   it("preflight: blocks", async () => {
     const r = await preflightBatch(rows(w2b), { isLegacyPaid: none, oldPayouts: [mislinked] });
     expect(r.ok).toBe(false);
-    expect(r.blockers.join()).toMatch(/another logIndex/);
+    expect(r.blockers.join()).toMatch(/names 0xa{64} without being linked/);
   });
   it("preflight: re-read orders let a correctly linked payout of another order through", async () => {
     const paid: OldPayout = { ...mislinked, srcTxHash: tx("d"), srcLogIndex: 0 };
@@ -72,21 +72,5 @@ describe("N14: duplicate payout events differing only in hex case are counted on
     const r = scanLegacy({ orders: [{ ...w2b, amount: "200" }], payouts: [p, upper] }, { cutoverT: T });
     expect(r.entries[0]!.status).toBe("OLD_PARTIAL");
     expect(r.duplicatesDropped).toBe(1);
-  });
-});
-
-describe("D7 (provisional): controlled addresses never reach the manifest", () => {
-  const ctl = (a: string) => ({ controlled: [a.toLowerCase()] });
-  it("controlled payee, sender or named recipient -> CONTROLLED_RECIPIENT", () => {
-    expect(status([w2b], [], ctl(R(2)))).toEqual(["CONTROLLED_RECIPIENT"]);
-    expect(status([w2b], [], ctl(R(1)))).toEqual(["CONTROLLED_RECIPIENT"]);
-    expect(status([b2w], [], ctl(R(5)))).toEqual(["CONTROLLED_RECIPIENT"]); // e.g. a reserve wallet topping up the old vault
-    expect(status([b2w], [], ctl(R(6)))).toEqual(["CONTROLLED_RECIPIENT"]);
-    expect(status([b2w], [], ctl(R(7)))).toEqual(["PAYABLE"]);
-  });
-  it("NEW_PAID still wins (fact), invalid still wins", () => {
-    const k = scanLegacy({ orders: [w2b], payouts: [] }, { cutoverT: T }).entries[0]!.oldKey;
-    expect(status([w2b], [], { ...ctl(R(2)), alreadyPaid: new Set([k]) })).toEqual(["NEW_PAID"]);
-    expect(status([{ ...w2b, amount: "0" }], [], ctl(R(2)))).toEqual(["INVALID_ZERO_AMOUNT"]);
   });
 });

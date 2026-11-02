@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_PAYOUT_LAG_BLOCKS, loadFromRpc, type OrderEventSpec, type PayoutEventSpec, type RpcSourceConfig, type SourceClient } from "../../src/source-rpc.js";
+import { checkRpcConfig, loadFromRpc, type OrderEventSpec, type PayoutEventSpec, type RpcSourceConfig, type SourceClient } from "../../src/source-rpc.js";
 import { scanLegacy } from "../../src/scan.js";
 import { R, T, tx } from "../helpers.js";
 
@@ -61,7 +61,7 @@ describe("loadFromRpc", () => {
       chunk: 10n,
       orders: [{ chainId: 13555, address: OLD_BRIDGE, event: "event Locked(address indexed user, address to, uint256 amount)", fromBlock: 0n, toBlock: 25n, decimals: 6, direction: "W2B", fields: { from: "user", recipient: "to", amount: "amount" } }],
       payouts: [
-        { chainId: 56, address: OLD_VAULT, event: "event Released(address indexed to, uint256 amount, bytes32 srcTx, uint256 srcIndex)", fromBlock: 0n, toBlock: 9n, decimals: 18, fields: { to: "to", amount: "amount", srcTxHash: "srcTx", srcLogIndex: "srcIndex" } },
+        { chainId: 56, address: OLD_VAULT, event: "event Released(address indexed to, uint256 amount, bytes32 srcTx, uint256 srcIndex)", fromBlock: 0n, toBlock: "latest", decimals: 18, fields: { to: "to", amount: "amount", srcTxHash: "srcTx", srcLogIndex: "srcIndex" } },
         { chainId: 56, address: TOKEN, event: TRANSFER, args: { from: OLD_VAULT }, fromBlock: 0n, toBlock: "latest", decimals: 18, fields: { to: "to", amount: "value" } },
         W_OUT,
       ],
@@ -119,13 +119,43 @@ describe("loadFromRpc", () => {
   });
 
   describe("A-1 / A-2: payout coverage fails closed", () => {
-    it("a payout spec stopping more than MAX_PAYOUT_LAG_BLOCKS before the head is an error; within the lag is fine", async () => {
-      expect(MAX_PAYOUT_LAG_BLOCKS).toBe(12n);
-      const c = (head: bigint) => ({ 56: fakeClient([DEP_LOG, OUT_LOG], [], {}, head, 56), 13555: fakeClient([W_OUT_LOG], [], {}, 2n, 13555) });
-      await expect(loadFromRpc({ orders: [dep], payouts: [{ ...bOut, toBlock: 1n }, wIn] }, c(14n))).rejects.toThrow(/stops at block 1, chain 56 head is 14/);
-      expect((await loadFromRpc({ orders: [dep], payouts: [{ ...bOut, toBlock: 1n }, wIn] }, c(13n))).payouts).toHaveLength(2);
-      // order specs may stop at T (no lag rule)
-      expect((await loadFromRpc({ orders: [dep], payouts: [bOut, wIn] }, c(1000n))).orders).toHaveLength(1);
+    it("A-R3-1: payout toBlock must be the literal \"latest\" — hex / decimal strings, numbers, bigints, wrong case, null, missing are config errors", async () => {
+      const bad: unknown[] = ["0x1", "0x8", "1", 1, 1n, "Latest", "LATEST", "latest ", null, undefined, "", "finalized"];
+      for (const toBlock of bad) {
+        const cfg = { orders: [dep], payouts: [{ ...bOut, toBlock }, wIn] } as unknown as RpcSourceConfig;
+        await expect(loadFromRpc(cfg, clients([DEP_LOG, OUT_LOG])), String(toBlock)).rejects.toThrow(/rpc-config: payout spec #0: toBlock must be the literal "latest"/);
+        expect(() => checkRpcConfig(cfg), String(toBlock)).toThrow(/toBlock must be the literal "latest"/);
+      }
+      expect((await loadFromRpc({ orders: [dep], payouts: [bOut, wIn] }, clients([DEP_LOG, OUT_LOG]))).payouts).toHaveLength(2);
+    });
+    it("order toBlock: bigint or \"latest\" only; fromBlock and chunk must be bigints", async () => {
+      for (const toBlock of ["0x1", "1", 1, "Latest", null, undefined]) {
+        const cfg = { orders: [{ ...dep, toBlock }], payouts: [bOut, wIn] } as unknown as RpcSourceConfig;
+        await expect(loadFromRpc(cfg, clients([DEP_LOG, OUT_LOG])), String(toBlock)).rejects.toThrow(/rpc-config: order spec #0: toBlock must be a bigint/);
+      }
+      expect((await loadFromRpc({ orders: [{ ...dep, toBlock: "latest" }], payouts: [bOut, wIn] }, clients([DEP_LOG, OUT_LOG]))).orders).toHaveLength(1);
+      for (const fromBlock of ["0", "0x0", 0, null, -1n]) {
+        const cfg = { orders: [{ ...dep, fromBlock }], payouts: [bOut, wIn] } as unknown as RpcSourceConfig;
+        expect(() => checkRpcConfig(cfg), String(fromBlock)).toThrow(/fromBlock must be a bigint/);
+        const cfg2 = { orders: [dep], payouts: [{ ...bOut, fromBlock }, wIn] } as unknown as RpcSourceConfig;
+        expect(() => checkRpcConfig(cfg2), String(fromBlock)).toThrow(/payout spec #0: fromBlock must be a bigint/);
+      }
+      for (const chunk of ["5", 5, 0n]) expect(() => checkRpcConfig({ chunk, orders: [], payouts: [] })).toThrow(/chunk must be a bigint/);
+      expect(() => checkRpcConfig({ chunk: 5n, orders: [], payouts: [] })).not.toThrow();
+    });
+    it("other config fields are checked too", () => {
+      const ok = { orders: [dep], payouts: [bOut, wIn] };
+      const bad: [Record<string, unknown>, RegExp][] = [
+        [{ ...ok, orders: undefined }, /orders\[\] and payouts\[\]/],
+        [{ ...ok, orders: [null] }, /order spec #0 is not an object/],
+        [{ ...ok, orders: [{ ...dep, chainId: "56" }] }, /bad chainId/],
+        [{ ...ok, orders: [{ ...dep, address: "0x12" }] }, /bad address/],
+        [{ ...ok, orders: [{ ...dep, decimals: "18" }] }, /bad decimals/],
+        [{ ...ok, orders: [{ ...dep, event: undefined }] }, /event signature/],
+        [{ ...ok, orders: [{ ...dep, direction: "w2b" }] }, /bad direction/],
+      ];
+      for (const [c, re] of bad) expect(() => checkRpcConfig(c), String(re)).toThrow(re);
+      expect(() => checkRpcConfig(null)).toThrow(/not an object/);
     });
     it("a payout spec returning no logs (e.g. wrong address) is an error", async () => {
       await expect(loadFromRpc({ orders: [dep], payouts: [{ ...bOut, address: R(999) }, wIn] }, clients([DEP_LOG, OUT_LOG]))).rejects.toThrow(/payout spec #0 .* returned no logs/);

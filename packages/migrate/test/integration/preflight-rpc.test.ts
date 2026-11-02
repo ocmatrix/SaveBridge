@@ -1,12 +1,13 @@
 /**
  * Read-only `scan --rpc-config` and `preflight` CLI against real nodes: two local anvils (BSC-like 5600 with the
- * PR-1 vault, WANTOS-like 13500), real Transfer logs standing in for the old bridge. Covers A-1 (stale payout
- * coverage), A-2 (missing / double coverage fails closed), B1 (preflight --data) and the A4 basics.
+ * PR-1 vault, WANTOS-like 13500), real Transfer logs standing in for the old bridge. Covers A-1 / A-R3-1 (payout
+ * coverage must read to "latest"), A-2 (missing / double coverage fails closed), B1 / round-3 fixes 2, 3, 6, 7.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { bscVaultV2Abi } from "@bridge/abi";
 import { encodeFunctionData, parseAbi, parseEther, type Address } from "viem";
 import { mnemonicToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -56,12 +57,12 @@ describe("scan / preflight CLI on two anvils", () => {
     const T = Math.floor(Date.now() / 1000) + 10_000_000;
     const dir = mkdtempSync(join(tmpdir(), "pr8-pf-"));
     const orderTo = (await head(bsc)).toString();
-    const cfg = (name: string, over: { payouts?: unknown[]; orders?: unknown[]; bscPayoutTo?: string } = {}) => {
+    const cfg = (name: string, over: { payouts?: unknown[]; orders?: unknown[]; bscPayoutTo?: unknown; rpc?: Record<string, string> } = {}) => {
       const c = {
-        rpc: { [LOCAL_CHAIN_ID]: bsc.url, [WANTOS_ID]: wantos.url },
+        rpc: over.rpc ?? { [LOCAL_CHAIN_ID]: bsc.url, [WANTOS_ID]: wantos.url },
         orders: over.orders ?? [{ chainId: LOCAL_CHAIN_ID, address: bsc.token, token: bsc.token, event: TRANSFER, args: { to: OLD_BSC.address }, fromBlock: "0n", toBlock: `${orderTo}n`, decimals: 18, direction: "B2W", fields: { from: "from", amount: "value" } }],
         payouts: over.payouts ?? [
-          { chainId: LOCAL_CHAIN_ID, address: bsc.token, token: bsc.token, event: TRANSFER, args: { from: OLD_BSC.address }, fromBlock: "0n", toBlock: over.bscPayoutTo ?? "latest", decimals: 18, fields: { to: "to", amount: "value" } },
+          { chainId: LOCAL_CHAIN_ID, address: bsc.token, token: bsc.token, event: TRANSFER, args: { from: OLD_BSC.address }, fromBlock: "0n", toBlock: "bscPayoutTo" in over ? over.bscPayoutTo : "latest", decimals: 18, fields: { to: "to", amount: "value" } },
           { chainId: WANTOS_ID, address: wantos.token, event: TRANSFER, args: { from: OLD_WANTOS.address }, fromBlock: "0n", toBlock: "latest", decimals: 18, fields: { to: "to", amount: "value" } },
         ],
       };
@@ -110,19 +111,38 @@ describe("scan / preflight CLI on two anvils", () => {
     expect(okData.status, okData.stdout + okData.stderr).toBe(0);
     expect(JSON.parse(okData.stdout)).toMatchObject({ ok: true, checked: 1 });
 
-    // A-1: a config frozen at scan time is refused once the chain has moved on (> 12 blocks)
-    const frozen = cfg("frozen", { bscPayoutTo: `${await head(bsc)}n` });
-    expect(pf(frozen).status).toBe(0); // still within the lag
-    await mine(bsc, 13);
-    const stale = pf(frozen);
-    expect(stale.status).toBe(1);
-    expect(stale.stderr).toMatch(/payout spec #0 stops at block \d+, chain 5600 head is \d+/);
-
     // the old bridge refunds late, minus a fee -> "latest" config sees it, preflight blocks
+    const depositBlock = await head(bsc);
     await transfer(bsc, OLD_BSC, USER.address, "9.9");
+    await mine(bsc, 30);
     const blocked = pf(cfg("good"));
     expect(blocked.status, blocked.stdout + blocked.stderr).toBe(1);
-    expect(JSON.parse(blocked.stdout).blockers.join()).toContain(`not linked to this order went to ${USER.address}`);
+    const blockers1 = JSON.parse(blocked.stdout).blockers.join() as string;
+    expect(blockers1).toContain(`not linked to this order went to ${USER.address}`);
+    expect(blockers1).not.toContain(USER2.address);
+    // a fresh scan with "latest" no longer lists USER
+    const rescan = scan(cfg("good"), join(dir, "rescan"));
+    expect(rescan.status, rescan.stderr).toBe(0);
+    expect(readFileSync(join(dir, "rescan", "manifest.csv"), "utf8")).not.toContain(USER.address);
+
+    // A-R3-1 (reviewer probe): any payout toBlock other than the literal "latest" is a config error —
+    // scan exits 1 without a manifest, preflight exits 1. Before the fix "0x…" silently skipped the late refund.
+    for (const [i, form] of [`0x${depositBlock.toString(16)}`, "0x8", `${depositBlock}n`, String(depositBlock), Number(depositBlock), "Latest", null].entries()) {
+      const f = cfg(`form${i}`, { bscPayoutTo: form });
+      const sc = scan(f, join(dir, `form${i}`));
+      expect(sc.status, String(form)).toBe(1);
+      expect(sc.stderr).toMatch(/rpc-config: payout spec #0: toBlock must be the literal "latest"/);
+      expect(existsSync(join(dir, `form${i}`, "manifest.csv"))).toBe(false);
+      const p2 = pf(f);
+      expect(p2.status, String(form)).toBe(1);
+      expect(p2.stderr).toMatch(/toBlock must be the literal "latest"/);
+    }
+
+    // fix 3: a WANTOS-side refund from the old WANTOS vault blocks too (both chains' payouts reach the preflight)
+    await transfer(wantos, OLD_WANTOS, USER2.address, "1");
+    const blocked2 = pf(cfg("good"));
+    expect(blocked2.status).toBe(1);
+    expect(JSON.parse(blocked2.stdout).blockers.join()).toContain(`not linked to this order went to ${USER2.address}`);
 
     // misc: wrong vault; B1 --data of the scheduled batch; garbage data; removed flags
     expect(pf(cfg("good")).status).toBe(1);
@@ -130,11 +150,32 @@ describe("scan / preflight CLI on two anvils", () => {
     const withData = pf(cfg("good"), "--data", ps[0]!.payCalldata);
     expect(withData.status).toBe(1);
     expect(JSON.parse(withData.stdout)).toMatchObject({ ok: false, checked: 1 });
+    expect(JSON.parse(withData.stdout).blockers.join()).not.toContain(USER2.address); // only the scheduled row was checked
     const garbage = pf(cfg("good"), "--data", "0xdeadbeef");
     expect(garbage.status).toBe(1);
     expect(JSON.parse(garbage.stdout).blockers.join()).toMatch(/calldata: cannot decode/);
+    // fix 2: calldata with one good row and one foreign row -> exit 1 before any preflight
+    const userKey = csv.split("\n").find((l) => l.includes(`,${USER.address},`))!.split(",")[0]! as `0x${string}`;
+    const mixed = encodeFunctionData({ abi: bscVaultV2Abi, functionName: "payLegacyBatch", args: [[userKey, `0x${"9".repeat(64)}`], [USER.address, USER.address], [parseEther("10"), 1n]] });
+    const partial = pf(cfg("good"), "--data", mixed);
+    expect(partial.status).toBe(1);
+    expect(JSON.parse(partial.stdout)).toMatchObject({ ok: false, checked: 0 });
+    expect(JSON.parse(partial.stdout).blockers.join()).toMatch(/calldata: oldKey 0x9{64} is not in the published manifest/);
+    // fix 7: the new-vault RPC must serve the manifest's chain
+    const wrongChain = run("preflight", csvPath, "--hash", hash, "--rpc-config", cfg("good"), "--rpc", wantos.url, "--vault", bsc.vault);
+    expect(wrongChain.status).toBe(1);
+    expect(wrongChain.stderr).toMatch(/--rpc serves chain 13500, the manifest is for chain 5600/);
+    // fix 6: RPC URLs (API keys in the path / query) never reach stderr
+    const secret = run("preflight", csvPath, "--hash", hash, "--rpc-config", cfg("good"), "--rpc", "http://127.0.0.1:1/v3/SECRETKEY123?apikey=QUERYSECRET", "--vault", bsc.vault);
+    expect(secret.status).toBe(1);
+    expect(secret.stderr).not.toMatch(/SECRETKEY123|QUERYSECRET|127\.0\.0\.1:1/);
+    const secretCfg = scan(cfg("secret", { rpc: { [LOCAL_CHAIN_ID]: "http://127.0.0.1:1/v3/CFGSECRET", [WANTOS_ID]: wantos.url } }), join(dir, "sec"));
+    expect(secretCfg.status).toBe(1);
+    expect(secretCfg.stderr).not.toMatch(/CFGSECRET|127\.0\.0\.1:1/);
+    // fix 2: preflight without --hash is a usage error (64)
+    expect(run("preflight", csvPath, "--rpc-config", cfg("good"), "--rpc", bsc.url, "--vault", bsc.vault).status).toBe(64);
     const removed = pf(cfg("good"), "--batch", "0");
-    expect(removed.status).toBe(1);
+    expect(removed.status).toBe(64);
     expect(removed.stderr).toMatch(/Unknown option '--batch'/);
   });
 });

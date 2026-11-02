@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildManifest } from "../../src/manifest.js";
 import { oldKey } from "../../src/oldkey.js";
 import { preflightBatch } from "../../src/reconcile.js";
-import { scanLegacy } from "../../src/scan.js";
+import { LOOSE_TIME_SKEW_SECONDS, scanLegacy } from "../../src/scan.js";
 import type { OldPayout, SourceOrder } from "../../src/types.js";
 import { R, T, VAULT, tx } from "../helpers.js";
 
@@ -67,27 +67,32 @@ describe("B5: upper-case hex in offline JSON is normalised at the entry", () => 
   });
 });
 
-describe("B7: only loose payouts at or after the order time count", () => {
+describe("B7 (round 3: 600 s clock-skew allowance): loose payouts to an order address count from orderTime − 600 s", () => {
+  const t0 = T - 100; // order time
   const p = (timestamp?: number): OldPayout => ({ chainId: 56, txHash: tx("c"), logIndex: 0, to: R(2), amount: "5", ...(timestamp !== undefined ? { timestamp } : {}) });
-  it("scan: before the order -> no hit; same second or after -> hit; unknown time -> hit", () => {
-    expect(status([w2b], [p(T - 101)])).toEqual(["PAYABLE"]);
-    expect(status([w2b], [p(T - 100)])).toEqual(["SUSPECT_PAID"]);
-    expect(status([w2b], [p(T - 50)])).toEqual(["SUSPECT_PAID"]);
+  it("constant is 600 s", () => expect(LOOSE_TIME_SKEW_SECONDS).toBe(600));
+  it("scan: −601 s no hit; −600 s, −599 s, same second, after -> hit; unknown time -> hit", () => {
+    expect(status([w2b], [p(t0 - 601)])).toEqual(["PAYABLE"]);
+    expect(status([w2b], [p(t0 - 600)])).toEqual(["SUSPECT_PAID"]);
+    expect(status([w2b], [p(t0 - 599)])).toEqual(["SUSPECT_PAID"]);
+    expect(status([w2b], [p(t0)])).toEqual(["SUSPECT_PAID"]);
+    expect(status([w2b], [p(t0 + 50)])).toEqual(["SUSPECT_PAID"]);
     expect(status([w2b], [p()])).toEqual(["SUSPECT_PAID"]);
-    // the latest loose payout to the address decides
-    expect(status([w2b], [p(T - 500), { ...p(T - 50), logIndex: 1 }])).toEqual(["SUSPECT_PAID"]);
-    expect(status([w2b], [{ ...p(T - 50), logIndex: 1 }, p(T - 500)])).toEqual(["SUSPECT_PAID"]);
+    // the latest loose payout to the address decides (either order of input)
+    expect(status([w2b], [p(t0 - 5000), { ...p(t0 - 50), logIndex: 1 }])).toEqual(["SUSPECT_PAID"]);
+    expect(status([w2b], [{ ...p(t0 - 50), logIndex: 1 }, p(t0 - 5000)])).toEqual(["SUSPECT_PAID"]);
   });
-  it("scan: same rule for the same-tx/other-logIndex link", () => {
+  it("scan: a payout naming this tx (other logIndex / no logIndex) is never time-filtered", () => {
     const linked = (timestamp: number): OldPayout => ({ chainId: 56, txHash: tx("c"), logIndex: 0, to: R(40), amount: "1", srcTxHash: tx("a"), srcLogIndex: 9, timestamp });
-    expect(status([w2b], [linked(T - 101)])).toEqual(["PAYABLE"]);
-    expect(status([w2b], [linked(T - 100)])).toEqual(["SUSPECT_PAID"]); // same second counts
-    expect(status([w2b], [linked(T - 99)])).toEqual(["SUSPECT_PAID"]);
+    expect(status([w2b], [linked(t0 - 100_000)])).toEqual(["SUSPECT_PAID"]);
+    expect(status([w2b], [linked(t0 + 5)])).toEqual(["SUSPECT_PAID"]);
+    const { srcLogIndex: _drop, ...noIndex } = linked(t0 - 100_000);
+    expect(status([w2b], [noIndex])).toEqual(["SUSPECT_PAID"]);
   });
-  it("preflight: uses the re-read order time; without orders every loose payout counts", async () => {
-    expect((await preflightBatch(rows(w2b), { isLegacyPaid: none, oldPayouts: [p(T - 101)], orders: [w2b] })).ok).toBe(true);
-    expect((await preflightBatch(rows(w2b), { isLegacyPaid: none, oldPayouts: [p(T - 99)], orders: [w2b] })).ok).toBe(false);
-    expect((await preflightBatch(rows(w2b), { isLegacyPaid: none, oldPayouts: [p(T - 101)] })).ok).toBe(false);
+  it("preflight: uses the re-read order time with the same allowance; without orders every loose payout counts", async () => {
+    expect((await preflightBatch(rows(w2b), { isLegacyPaid: none, oldPayouts: [p(t0 - 601)], orders: [w2b] })).ok).toBe(true);
+    expect((await preflightBatch(rows(w2b), { isLegacyPaid: none, oldPayouts: [p(t0 - 599)], orders: [w2b] })).ok).toBe(false);
+    expect((await preflightBatch(rows(w2b), { isLegacyPaid: none, oldPayouts: [p(t0 - 601)] })).ok).toBe(false);
   });
   it("rejects a bad payout timestamp", () => {
     expect(() => status([w2b], [p(0)])).toThrow(/bad payout timestamp/);

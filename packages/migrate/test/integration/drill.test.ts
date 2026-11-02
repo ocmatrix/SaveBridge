@@ -17,7 +17,7 @@ afterEach(() => {
 
 const header = { bscChainId: 56, vault: VAULT, cutoverT: T };
 const basic = fixture("legacy-basic.json");
-const basicManifest = buildManifest(scanLegacy(basic, { cutoverT: T, alreadyPaid: new Set([oldKey(tx("5"), 0)]) }).payable, header);
+const basicManifest = buildManifest(scanLegacy(basic, { cutoverT: T }).payable, header);
 
 describe("anvil drill (PR-1 contracts deployed locally)", () => {
   it("basic fixture: schedule → verify → 48h → preflight → execute → paid[oldKey] → ΣLegacyPaid; repeat rejected", async () => {

@@ -2,59 +2,79 @@
  * PR-8 legacy payout tool. Read-only against real chains: it never signs or sends a transaction,
  * except `drill`, which starts its own local anvil.
  *
- *   scan      --source <file.json> | --rpc-config <file.json>   --cutoff <T> --vault <0x> --bsc-chain-id <id> [--paid-keys <file>] [--controlled <file>] --out <dir>
- *   validate  <manifest.csv> [--hash <0x>] [--controlled <file>]
+ *   scan      --source <file.json> | --rpc-config <file.json>   --cutoff <T> --vault <0x> --bsc-chain-id <id> --out <dir>
+ *   validate  <manifest.csv> [--hash <0x>]
  *   propose   <manifest.csv> --hash <0x> --timelock <0x> [--round N] [--exclude <oldKey file>] --out <dir>
  *   preflight <manifest.csv> --hash <0x> --rpc-config <old-bridge.json> --rpc <new-vault url> --vault <0x> [--data <CallScheduled payLegacyBatch calldata>]
  *   verify-call <manifest.csv> --hash <0x> --target <0x> --data <0x> --delay <sec> [--value 0] [--predecessor 0x..]
  *   reconcile <manifest.csv>... --rpc <url> --vault <0x> --from-block <n>
  *   drill     <manifest.csv>
+ *
+ * Exit codes: 0 ok, 1 check failed / error, 2 unknown command, 64 usage error (missing or unknown option).
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { createPublicClient, getAddress, http, isAddress, zeroHash, type Hex, type PublicClient } from "viem";
+import { BaseError, createPublicClient, getAddress, http, zeroHash, type Hex, type PublicClient } from "viem";
 import { runDrill, startLocalVault } from "./drill.js";
 import { parseSourceJson } from "./io.js";
 import { buildManifest, loadManifest, validateManifest } from "./manifest.js";
 import { MIN_DELAY, buildProposals, renderProposals, verifyScheduledCall } from "./proposal.js";
 import { legacyPaidReader, preflightBatch, readLegacyPaid, reconcileLegacy } from "./reconcile.js";
 import { scanLegacy } from "./scan.js";
-import { loadFromRpc, type RpcSourceConfig, type SourceClient } from "./source-rpc.js";
+import { checkRpcConfig, loadFromRpc, type SourceClient } from "./source-rpc.js";
 import type { LegacySourceData } from "./types.js";
 
 const json = (v: unknown): string => JSON.stringify(v, (_k, x) => (typeof x === "bigint" ? x.toString() : x), 2) + "\n";
 const client = (url: string): PublicClient => createPublicClient({ transport: http(url, { retryCount: 2 }) }) as PublicClient;
+class UsageError extends Error {}
 const need = (v: string | undefined, name: string): string => {
-  if (!v) throw new Error(`--${name} is required`);
+  if (!v) throw new UsageError(`--${name} is required`);
   return v;
 };
 
+/** Error text for stderr: never the RPC URL (its path / query may carry an API key). */
+export function safeMessage(e: unknown): string {
+  const msg = e instanceof BaseError ? e.shortMessage : e instanceof Error ? e.message : String(e);
+  return msg
+    .split("\n")
+    .filter((l) => !/^\s*URL:/i.test(l))
+    .join("\n")
+    .replace(/\b(?:https?|wss?):\/\/[^\s"'<>]+/gi, "<rpc-url>");
+}
+
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
-  const { values: o, positionals: pos } = parseArgs({
+  let parsed;
+  try {
+    parsed = parseArgs({
     args: rest,
     allowPositionals: true,
     options: {
       source: { type: "string" }, "rpc-config": { type: "string" }, cutoff: { type: "string" }, vault: { type: "string" }, "bsc-chain-id": { type: "string" },
-      "paid-keys": { type: "string" }, out: { type: "string" }, hash: { type: "string" }, rpc: { type: "string" }, controlled: { type: "string" },
+      out: { type: "string" }, hash: { type: "string" }, rpc: { type: "string" },
       timelock: { type: "string" }, exclude: { type: "string" }, round: { type: "string" }, target: { type: "string" }, data: { type: "string" },
       delay: { type: "string" }, value: { type: "string" }, predecessor: { type: "string" }, "from-block": { type: "string" },
     },
-  });
+    });
+  } catch (e) {
+    throw new UsageError((e as Error).message);
+  }
+  const { values: o, positionals: pos } = parsed;
   const lines = (f: string): string[] => readFileSync(f, "utf8").split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
   const fromRpcConfig = async (file: string): Promise<LegacySourceData> => {
-    const raw = JSON.parse(readFileSync(file, "utf8"), (_k, v) => (typeof v === "string" && /^\d+n$/.test(v) ? BigInt(v.slice(0, -1)) : v)) as RpcSourceConfig & { rpc: Record<string, string> };
+    const raw = JSON.parse(readFileSync(file, "utf8"), (_k, v) => (typeof v === "string" && /^(0|[1-9]\d*)n$/.test(v) ? BigInt(v.slice(0, -1)) : v)) as Record<string, unknown>;
+    // validate at the CLI entry too (block numbers must be real bigints, payout specs read to "latest")
+    checkRpcConfig(raw);
+    const rpc = raw["rpc"];
+    if (typeof rpc !== "object" || rpc === null) throw new Error("rpc-config: rpc { chainId: url } is required");
     const clients: Record<number, SourceClient> = {};
-    for (const [id, url] of Object.entries(raw.rpc)) clients[Number(id)] = client(url);
+    for (const [id, url] of Object.entries(rpc)) {
+      if (!/^[1-9]\d*$/.test(id) || typeof url !== "string") throw new Error(`rpc-config: bad rpc entry for chain "${id}"`);
+      clients[Number(id)] = client(url);
+    }
     return loadFromRpc(raw, clients);
   };
-  /** Every non-comment line must be an address (B2: no silent skipping of typos). */
-  const addrLines = (f: string): string[] =>
-    lines(f).map((l) => {
-      if (!isAddress(l, { strict: false })) throw new Error(`${f}: "${l}" is not an address`);
-      return l.toLowerCase();
-    });
   /** Every non-comment line must be a 32-byte hex key. */
   const keyLines = (f: string): string[] =>
     lines(f).map((l) => {
@@ -65,17 +85,18 @@ async function main(argv: string[]): Promise<number> {
   switch (cmd) {
     case "scan": {
       let data: LegacySourceData;
+      const cutoverT = Number(need(o.cutoff, "cutoff"));
+      // offline JSON is not checked against any chain: coverage of the old payouts is the preparer's responsibility
+      const source = o.source ? "offline-json (NOT RPC-verified)" : "rpc";
       if (o.source) data = parseSourceJson(readFileSync(o.source, "utf8"));
       else data = await fromRpcConfig(need(o["rpc-config"], "rpc-config"));
-      const cutoverT = Number(need(o.cutoff, "cutoff"));
-      const alreadyPaid = new Set(o["paid-keys"] ? keyLines(o["paid-keys"]) : []);
-      const r = scanLegacy(data, { cutoverT, alreadyPaid, controlled: o.controlled ? addrLines(o.controlled) : [] });
+      const r = scanLegacy(data, { cutoverT });
       const out = need(o.out, "out");
       mkdirSync(out, { recursive: true });
       writeFileSync(join(out, "scan-report.json"), json(r));
       const counts: Record<string, number> = {};
       for (const e of r.entries) counts[e.status] = (counts[e.status] ?? 0) + 1;
-      process.stdout.write(json({ counts, duplicatesDropped: r.duplicatesDropped, orphanPayouts: r.orphanPayouts.length }));
+      process.stdout.write(json({ source, counts, duplicatesDropped: r.duplicatesDropped, orphanPayouts: r.orphanPayouts.length }));
       if (r.payable.length === 0) return 0;
       const m = buildManifest(r.payable, { bscChainId: Number(need(o["bsc-chain-id"], "bsc-chain-id")), vault: getAddress(need(o.vault, "vault")), cutoverT });
       writeFileSync(join(out, "manifest.csv"), m.csv);
@@ -85,7 +106,6 @@ async function main(argv: string[]): Promise<number> {
     case "validate": {
       const opts: Parameters<typeof validateManifest>[1] = {};
       if (o.hash) opts.expectedHash = o.hash as Hex;
-      if (o.controlled) opts.controlled = addrLines(o.controlled);
       const v = await validateManifest(readFileSync(need(pos[0], "manifest"), "utf8"), opts);
       process.stdout.write(json({ ok: v.ok, hash: v.hash, count: v.count, total: v.total, errors: v.errors }));
       return v.ok ? 0 : 1;
@@ -103,9 +123,13 @@ async function main(argv: string[]): Promise<number> {
     case "preflight": {
       // run inside the 48h window, BEFORE the operation becomes ready: execute is open to anyone, so a blocker
       // must be handled by cancel (whitelist or admin wallet), not by "not executing".
-      const m = await loadManifest(readFileSync(need(pos[0], "manifest"), "utf8"), need(o.hash, "hash") as Hex);
+      const [file, hash, rpcConfig, rpcUrl] = [need(pos[0], "manifest"), need(o.hash, "hash"), need(o["rpc-config"], "rpc-config"), need(o.rpc, "rpc")];
       const vault = getAddress(need(o.vault, "vault"));
+      const m = await loadManifest(readFileSync(file, "utf8"), hash as Hex);
       if (vault !== m.header.vault) throw new Error(`--vault ${vault} is not the manifest vault ${m.header.vault}`);
+      const vaultClient = client(rpcUrl);
+      const vaultChain = await vaultClient.getChainId();
+      if (vaultChain !== m.header.bscChainId) throw new Error(`--rpc serves chain ${vaultChain}, the manifest is for chain ${m.header.bscChainId}`);
       let entries = m.entries;
       if (o.data !== undefined) {
         // the batch is exactly what was scheduled: decode the CallScheduled calldata (no re-batching by flags)
@@ -117,8 +141,9 @@ async function main(argv: string[]): Promise<number> {
         entries = c.entries;
       }
       // the loader fails closed on missing / stale payout coverage and on double-captured orders
-      const old = await fromRpcConfig(need(o["rpc-config"], "rpc-config"));
-      const r = await preflightBatch(entries, { isLegacyPaid: legacyPaidReader(client(need(o.rpc, "rpc")), vault), oldPayouts: old.payouts, orders: old.orders });
+      // every payout spec of every chain goes in (BSC payouts AND WANTOS refunds)
+      const old = await fromRpcConfig(rpcConfig);
+      const r = await preflightBatch(entries, { isLegacyPaid: legacyPaidReader(vaultClient, vault), oldPayouts: old.payouts, orders: old.orders });
       process.stdout.write(json({ ...r, checked: entries.length }));
       return r.ok ? 0 : 1;
     }
@@ -157,7 +182,7 @@ async function main(argv: string[]): Promise<number> {
 main(process.argv.slice(2)).then(
   (code) => process.exit(code),
   (e: unknown) => {
-    process.stderr.write(`error: ${(e as Error).message}\n`);
-    process.exit(1);
+    process.stderr.write(`error: ${safeMessage(e)}\n`);
+    process.exit(e instanceof UsageError ? 64 : 1);
   },
 );

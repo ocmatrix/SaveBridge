@@ -48,8 +48,6 @@ export function buildManifest(payable: ScanEntry[], header: ManifestHeader): Man
 export interface ValidateOptions {
   /** Hash published with the announcement; a mismatch is an error. */
   expectedHash?: Hex;
-  /** Controlled-source addresses (DESIGN Appendix A) -> error (D7). */
-  controlled?: Iterable<string>;
 }
 
 export interface ValidationReport {
@@ -164,10 +162,6 @@ function parseAndCheck(csv: string): Omit<ValidationReport, "ok"> {
 export async function validateManifest(csv: string, opts: ValidateOptions = {}): Promise<ValidationReport> {
   const r = parseAndCheck(csv);
   if (opts.expectedHash && opts.expectedHash.toLowerCase() !== r.hash) r.errors.push(`manifest hash ${r.hash} != published ${opts.expectedHash}`);
-  const controlled = new Set([...(opts.controlled ?? [])].map((a) => a.toLowerCase()));
-  // D7 (provisional, conservative): a controlled address may not appear in a published manifest at all.
-  for (const a of new Set(r.entries.flatMap((e) => [e.to, e.srcRecipient])))
-    if (controlled.has(a.toLowerCase())) r.errors.push(`address ${a} is in the controlled set`);
   return { ok: r.errors.length === 0, ...r };
 }
 

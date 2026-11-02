@@ -8,8 +8,7 @@ const basic = fixture("legacy-basic.json");
 const statusOf = (r: ReturnType<typeof scanLegacy>, h: string, li: number) => r.entries.find((e) => e.srcTxHash === h && e.srcLogIndex === li)?.status;
 
 describe("scanLegacy on the basic fixture", () => {
-  const alreadyPaid = new Set([oldKey(tx("5"), 0)]);
-  const r = scanLegacy(basic, { cutoverT: basic.cutoverT!, alreadyPaid });
+  const r = scanLegacy(basic, { cutoverT: basic.cutoverT! });
 
   it("classifies every case", () => {
     expect(statusOf(r, tx("a"), 3)).toBe("PAYABLE");
@@ -23,13 +22,12 @@ describe("scanLegacy on the basic fixture", () => {
     expect(statusOf(r, tx("2"), 0)).toBe("AFTER_T"); // timestamp == T is already after
     expect(statusOf(r, tx("3"), 4)).toBe("PAYABLE");
     expect(statusOf(r, tx("4"), 9)).toBe("PAYABLE");
-    expect(statusOf(r, tx("5"), 0)).toBe("NEW_PAID");
   });
 
   it("drops identical duplicates (1 order + 1 payout) and keeps oldKey unique", () => {
     expect(r.duplicatesDropped).toBe(2);
-    expect(r.entries).toHaveLength(12);
-    expect(new Set(r.entries.map((e) => e.oldKey)).size).toBe(12);
+    expect(r.entries).toHaveLength(11);
+    expect(new Set(r.entries.map((e) => e.oldKey)).size).toBe(11);
   });
 
   it("payable = exactly the PAYABLE rows, with correct payee and wei amount", () => {
@@ -89,11 +87,6 @@ describe("scanLegacy edge rules", () => {
   });
   it("one second before T is payable", () => {
     expect(scanLegacy({ orders: [{ ...base, timestamp: T - 1 }], payouts: [] }, { cutoverT: T }).payable).toHaveLength(1);
-  });
-  it("NEW_PAID wins over AFTER_T and old-bridge states; invalid wins over NEW_PAID", () => {
-    const k = oldKey(tx("a"), 0);
-    expect(scanLegacy({ orders: [{ ...base, timestamp: T + 5 }], payouts: [] }, { cutoverT: T, alreadyPaid: new Set([k]) }).entries[0]!.status).toBe("NEW_PAID");
-    expect(scanLegacy({ orders: [{ ...base, amount: "0" }], payouts: [] }, { cutoverT: T, alreadyPaid: new Set([k]) }).entries[0]!.status).toBe("INVALID_ZERO_AMOUNT");
   });
   it("rejects corrupt input instead of guessing", () => {
     const cases: Partial<SourceOrder>[] = [{ txHash: "0x12" as never }, { logIndex: -1 }, { timestamp: 0 }, { direction: "X" as never }, { from: "0xnope" as never }, { recipient: "0x12" as never }, { srcChainId: 0 }];
