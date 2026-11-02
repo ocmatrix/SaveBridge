@@ -29,9 +29,13 @@ node offline-check.mjs --decode 0x<calldata>
 
 **rules v1**（页面 `src/lib/normalize.ts` 与工具逐条相同，工具文件头有全文）：去 BOM、按 `\r\n|\n|\r` 分行；空行/`#` 行忽略；每行取第一个字段（`, ; 制表符 空格` 之前），去成对引号；第一条有效行若不以 `0x` 开头视为表头跳过一次；必须 `0x`+40 位十六进制，**大小写混写必须是正确 EIP-55**，零地址拒绝；小写去重（重复只提示）；数值升序；按 ≤ 500 顺序切批；**有任何错误就不出哈希**。多批时第 i 批 nonce = 起始 nonce + i。
 
-输出与合约完全一致（PR1-NOTES §5.4；两个 typehash 已用测试钉死）：`listHash = keccak256(abi.encode(address[]))`；domain name `BscVaultV2` / `WantosBridgeV2`、version `1`；message hash = structHash；digest = `keccak256(0x1901‖domain‖message)`。退出码：0 一致 / 1 文件错误 / 2 与屏幕 listHash 不一致 / 64 参数错误。
+输出与合约完全一致（PR1-NOTES §5.4；两个 typehash 已用测试钉死）：`listHash = keccak256(abi.encode(address[]))`；domain name `BscVaultV2` / `WantosBridgeV2`、version `1`；message hash = structHash；digest = `keccak256(0x1901‖domain‖message)`。退出码：0 一致 / 1 文件错误 / 2 与屏幕 listHash 不一致 / 64 参数错误。文本与 `--json` 两种输出用同一个判定（第 1 轮 B8）。
 
-页面在「准备本批」后直接显示可复制的完整命令（含 nonce、deadline、`--expect-list-hash`）。
+**参数严格校验（第 1 轮 A3，fail-closed）**：只接受 `--action --contract --bsc-nonce --wantos-nonce --deadline --bsc-chain-id --wantos-chain-id --batch-size --batch --expect-list-hash --decode --list --json`；未知选项（含拼错）、`--x=y` 写法、重复选项、多于一个文件参数、空值、缺 `--bsc-nonce/--wantos-nonce/--deadline`、chainId/batch-size/batch 不是正整数（`0` 不再回落 56）、`--expect-list-hash` 不是 `0x`+64 位十六进制、`--batch` 超出范围 —— 一律退出 64，不打印任何哈希。
+
+**`--batch K`（第 1 轮 A2）**：只算第 K 批（从 1 起），**直接使用给定 nonce**（= 页面「准备本批」时链上的 nonce）。不带 `--batch` 时算全部批次、第 i 批 nonce = 给定值 + i；此时若有多批，`--expect-list-hash` 被拒（64），避免"listHash 一致但 message hash 用错 nonce"。
+
+页面在「准备本批」后直接显示可复制的完整命令（含 `--batch`、两链 nonce、deadline、`--expect-list-hash`）；组件测试用页面生成的命令原样跑工具，断言两条链的 message hash 与屏幕一致。
 
 ## 3. 管理后台页面（DESIGN §8.2）
 
@@ -39,11 +43,11 @@ node offline-check.mjs --decode 0x<calldata>
 
 | 页面 | 实现 | 门禁 |
 |---|---|---|
-| `/` 白名单 | 上传 CSV/TXT/粘贴 → rules v1 → 错误逐行列出并阻断 → 逐行参考信息（按 500 行分页加载：两链是否合约、WANTOS-USDT 余额、两链当前白名单；网体/上级/历史跨出走接口，不可用显示 —）→ 🔴🟠🟡⚪ 标记，**🔴 默认不勾选、勾选需二次确认** → 添加/移除 → 选批 → 「准备本批」(deadline = 链上时间 + 23h) 显示 listHash、count、两链 nonce/domain hash/message hash 和离线命令 → 「签名并写入两条链」按 §4.4 顺序逐链（签名 → 提交 → 等回执），进度逐链可见；失败停在该链，「重试未完成的链」只补未完成的（同 nonce 复用签名，nonce 变了才重签；链上已是目标状态直接跳过）。另有：当前白名单（事件折叠）、批次记录、紧急移除记录、两链不一致列表、每条链「作废当前批次 nonce」 | 白名单钱包（两链）；恢复中禁写；冻结时禁止添加 |
-| `/emergency` 紧急 | 每条链：暂停、解除暂停、冻结白名单、否决白名单钱包交接、**紧急移除（未冻结时先发 `freezeWhitelist` 再 `emergencyRemove`，PR1-NOTES §5.11a-1）**、读取现有付款/暂停钥匙并吊销 | 暂停/解除：管理或白名单钱包；其余管理钱包 |
-| `/timelock` 时间锁 | 两链全部提议（`CallScheduled`/`CallSalt` + 实时 `getOperationState/getTimestamp/isOperationExpired/proposalEpoch`）：类别（升级/提取/参数/授予钥匙/更换管理钱包…）、逐个调用解码（未知 selector 标"无法解码，不要执行"）、等待中/可执行/已执行/已取消/已过期/已作废、倒计时与过期时间；取消、执行。执行回滚为 `BridgeCheckFailed`、空回滚或无法解码 → 显示"新实现不合格，不要重试，到期前取消换实现重提"（PR1-NOTES §5.11a-4） | 取消：管理或白名单钱包；执行：任何已连接钱包、就绪、无恢复 |
+| `/` 白名单 | 上传 CSV/TXT/粘贴 → rules v1 → 错误逐行列出并阻断 → 逐行参考信息（按 500 行分页加载：两链是否合约、WANTOS-USDT 余额、两链当前白名单；网体/上级/历史跨出走接口，不可用显示 —）→ 🔴🟠🟡⚪ 标记，**🔴 默认不勾选、勾选需二次确认** → 添加/移除 → 选批 → 「准备本批」(deadline = 链上时间 + 23h；读取并固定两链 nonce 与哈希) 显示第几批、listHash、count、两链 nonce/domain hash/message hash 和离线命令（**全部取自已准备的批次，不读表单**）→ 「签名并写入两条链」按 §4.4 顺序逐链（签名 → 提交 → 等回执），进度逐链可见；失败停在该链，「重试未完成的链」只补未完成的（复用已签签名；链上已是目标状态直接跳过）。**切换添加/移除、改清单、改勾选、换批次都会作废已准备的批次**（第 1 轮 A1）；**签名/提交前链上 nonce 与准备时不同、或 deadline 将到，立即停止并要求重新准备、重新离线核对，绝不静默重签**（第 1 轮 B2）；重新准备先清掉旧哈希。页面明示：提交服务接通前每批每条链要在钱包确认两次（签名 + 发交易），两条链共 4 次，白名单钱包两条链都要备 gas（BNB / WANT）（B4）。另有：当前白名单（事件折叠）、批次记录、紧急移除记录、两链不一致列表、每条链「作废当前批次 nonce」 | 白名单钱包（两链）；恢复中禁写；冻结时禁止添加 |
+| `/emergency` 紧急 | 紧急移除的地址输入严格解析：第一行不是地址算错误，不当表头跳过（第 1 轮 B7）。每条链：暂停、解除暂停、冻结白名单、否决白名单钱包交接、**紧急移除（未冻结时先发 `freezeWhitelist` 再 `emergencyRemove`，PR1-NOTES §5.11a-1）**、读取现有付款/暂停钥匙并吊销 | 暂停/解除：管理或白名单钱包；其余管理钱包 |
+| `/timelock` 时间锁 | （第 1 轮 B3）每个调用显示**完整目标地址**并标【桥】【时间锁】【其他】，只按目标自己的 ABI 解码（桥 ABI 只解码目标为本链桥的调用，时间锁 ABI 只解码目标为本链时间锁的调用），【其他】与无法解码的一律红字、不解码。两链全部提议（`CallScheduled`/`CallSalt` + 实时 `getOperationState/getTimestamp/isOperationExpired/proposalEpoch`）：类别（升级/提取/参数/授予钥匙/更换管理钱包…）、逐个调用解码（未知 selector 标"无法解码，不要执行"）、等待中/可执行/已执行/已取消/已过期/已作废、倒计时与过期时间；取消、执行。执行回滚为 `BridgeCheckFailed`、空回滚或无法解码 → 显示"新实现不合格，不要重试，到期前取消换实现重提"（PR1-NOTES §5.11a-4） | 取消：管理或白名单钱包；执行：任何已连接钱包、就绪、无恢复 |
 | `/params` 参数 | 两链当前值（整币/秒）→ 编辑 → 每项标"收紧 / 放宽（需时间锁）" → 全部收紧：管理钱包一笔 `setParams` 立即生效；有任何放宽：生成时间锁提议（`schedule(bridge, setParams)`，delay = `getMinDelay()`，随机 salt）。前端按 PR1-NOTES 范围与约束预检（合约仍是权威），显示跨链一致性提示与收紧顺序；WANTOS `supplyCeiling` 降低立即、提高走时间锁 | 管理钱包；暂停期间不能提议放宽 |
-| `/handover` 交接与恢复 | 显示两链桥与时间锁地址、两链当前两个钱包；**新持有人签名生成地址证明**（personal_sign 固定文本，见 §5）→ 现任粘贴验证（`verifyMessage`，EOA 与 ERC-1271 都支持）→ 自动填入新地址；每条链：白名单钱包交接（发起/取消或否决/接收，倒计时）、白名单钱包恢复（启动/取消/接收）、管理钱包交接（提议 `transferAdmin`；执行在时间锁页；接收 `acceptAdmin`）、管理钱包恢复（启动/取消/接收）；**任一项只在一条链完成时顶部红条提示去哪条链补签** | 按合约：现任 WL / 管理钱包 / 被指定的新地址（含等待期、有效期、恢复中检查） |
+| `/handover` 交接与恢复 | 显示两链桥与时间锁地址、两链当前两个钱包；**新持有人签名生成地址证明**（personal_sign 固定文本，见 §5）→ 现任粘贴验证（`verifyMessage`，EOA 与 ERC-1271 都支持；验签出错按失败处理；签名时间超过 7 天或在未来 10 分钟以上拒绝）→ 自动填入新地址，之后若手改的新地址与已验证地址不同，红条提示（第 1 轮 B6）；每条链：白名单钱包交接（发起/取消或否决/接收，倒计时）、白名单钱包恢复（启动/取消/接收）、管理钱包交接（提议 `transferAdmin`；执行在时间锁页；接收 `acceptAdmin`）、管理钱包恢复（启动/取消/接收）；**任一项只在一条链完成时顶部红条提示去哪条链补签** | 按合约：现任 WL / 管理钱包 / 被指定的新地址（含等待期、有效期、恢复中检查） |
 | `/review` 订单审核与退款 | 经 Worker 读 REVIEW 订单（命中规则、资金来源路径、级别、原因）→ 通过/拒绝：管理钱包对 PR-3 `reviewMessage` 文本 personal_sign（付款链 chainId，1 小时有效）→ 提交给付款程序验签；批量作废（BSC `voidSourceBatch`）、批量退款申请（WANTOS `requestRefundBatch`），订单号支持 `1, 3-5` | 审核：付款链管理钱包；作废：管理或白名单钱包；退款申请：管理钱包 |
 | `/controlled` 受控集合 | 经接口列出/添加/删除（审计日志与推送由付款程序做）；显示内置附录 A | 管理钱包 + 接口已配置 |
 | `/reserves` 储备与对账 | 链上只读：两链桥余额、约几天用量、今日已用/日额度、WANTOS 总量/上限；经接口读对账、告警、每日白名单变更报告 | 只读 |
@@ -69,7 +73,7 @@ node offline-check.mjs --decode 0x<calldata>
 | # | 偏差 | 理由 |
 |---|---|---|
 | D1 | **白名单批次由页面用已连接钱包提交**（`applyWhitelistBatch` 任何人可调）。若连接的就是白名单钱包，每批 = 2 次 EIP-712 签名 + 2 笔交易确认 | PR-3 提交服务尚无 `submitWhitelistBatch`（PR3 Q6）。接口一旦存在，只需把 `runJob` 里的 `send(...)` 换成 POST 签名给提交服务（见 Q1），即回到"一批 = 两次签名"（决定 16） |
-| D2 | 两条链共用一个 deadline（准备时 = 链上时间 + 23h），离线工具只需一个 `--deadline`；剩余不足 5 分钟拒绝提交，需重新准备（哈希会变，须重新离线核对） | 合约要求提交时 deadline ≤ now + 24h（PR1 D11） |
+| D2 | 两条链共用一个 deadline（准备时 = 链上时间 + 23h），离线工具只需一个 `--deadline`；剩余不足 5 分钟、或链上 nonce 与准备时不同，都停止并要求重新准备（哈希会变，须重新离线核对）；未经「准备」的批次一律拒绝签名 | 合约要求提交时 deadline ≤ now + 24h（PR1 D11） |
 | D3 | 某条链上该批地址**已全部**是目标状态 → 该链跳过、不签名；"两链不一致补齐" = 把同一清单按原操作再提交一次 | 让重试幂等，少签名 |
 | D4 | rules v1 的具体口径（只取第一列、表头只跳一次、混写大小写必须是正确校验和、任何错误都拒绝出哈希） | 规格只写"校验、去重、排序"；取最严格且最简单 |
 | D5 | 在页面上取消勾选会使清单与原始文件不同 → 页面明确提示"离线核对前先在原始文件中删掉这些地址"，并可导出本批清单 | 离线核对必须基于负责人自己的文件，页面不能替他改文件 |
@@ -80,6 +84,12 @@ node offline-check.mjs --decode 0x<calldata>
 | D10 | 时间锁提议 salt 随机，delay = 当前 `getMinDelay()`；执行按钮对任何已连接钱包开放（合约本就允许任何人执行） | §4.2 |
 | D11 | 审核页金额按 18 位小数显示；参考信息里的余额读代币 `decimals()` | 仅显示 |
 | D12 | 离线工具的 calldata 解码只覆盖本系统合约函数表（selector 由测试对照 ABI 校验）、嵌套一层 | §8.3"也可解码时间锁提议"的最小实现 |
+
+## 5a. 待用户确认（第 1 轮审查留给用户）
+
+| # | 事项 | 现状与风险 |
+|---|---|---|
+| B1 | **移除模式下 🔴 地址也默认不勾选**（DESIGN §8.2 字面："🔴 默认不勾选，需二次确认"，未区分添加/移除） | 风险：负责人要**移除**一批含受控来源地址的名单时，🔴 那几行默认不在批次里，若不逐个确认勾选，它们会留在白名单里（页面会提示"你在页面上取消了 N 个地址"，离线核对的 listHash 也会与原始文件不一致而报警）。若要改为"移除时 🔴 默认勾选"，只需 `risk.ts defaultChecked` 按模式取值，一行改动，待负责人拍板 |
 
 ## 6. 待定项（需总控 / 负责人确认；当前均按最保守、最简单实现）
 
@@ -140,19 +150,75 @@ node offline-check.mjs --decode 0x<calldata>
 
 - `pnpm-lock.yaml`：新增 `apps/admin-web`、`packages/offline-check` 的依赖条目（`pnpm install` 生成）。根 `package.json`、`pnpm-workspace.yaml` 未改（`apps/*` 已在工作区内）。
 
-## 验证结果（本地，2026-11-02）
+## 验证结果（本地，2026-11-02，第 1 轮修复后）
 
 | 项 | 结果 |
 |---|---|
 | typecheck | `tsc --noEmit -p apps/admin-web/tsconfig.json` 通过 |
-| admin-web 测试 | **61 通过 / 0 失败**（unit 17、integration 28、component 16；7 个文件） |
-| offline-check 测试 | **27 通过 / 0 失败**（含真实子进程 CLI、共享向量 7 组） |
-| 覆盖率 admin-web（v8） | 全部 行 91.4% / 语句 89.8% / 分支 83.9% / 函数 80.7%；`src/lib` 行 98.1% / 分支 91.0%；`src/pages` 行 80.2% |
-| 覆盖率 offline-check | 行 95.6% / 分支 91.2%（未覆盖的是"直接运行"入口，已由子进程测试执行） |
+| admin-web 测试 | **73 通过 / 0 失败**（unit 21、integration 30、component 22；8 个文件） |
+| offline-check 测试 | **29 通过 / 0 失败**（含真实子进程 CLI、共享向量 7 组、fail-closed 参数 30 种错误调用） |
+| 覆盖率 admin-web（v8） | 全部 行 92.8% / 语句 91.3% / 分支 85.9% / 函数 82.8%；`src/lib` 行 98.2% / 分支 91.1%；`src/pages` 行 83.3% |
+| 覆盖率 offline-check | 行 97.5% / 分支 96.4% |
 | 构建 | `vite build --mode placeholder` 通过，产出 `dist/_headers` |
-| `offline-check.mjs` sha256 | `bd6aaf0f498ebf9d9440c9164e85d9f4fdfc3f37f974fb97fd0e1b5caf7ff8b7`（本提交） |
+| `offline-check.mjs` sha256 | `ad104e35de48bc8d806053802978bb35812500c4ef36facf576886a7cee88776`（第 1 轮修复后） |
 
-### 变异测试（32 个，在 scratchpad 的独立副本中逐个注入、跑测试、还原）
+## 第 1 轮审查修复（A1–A3 阻塞、B2–B8 随修）
+
+| 项 | 修复 | 新增测试（对旧代码 / 变异体为红，对修复后为绿） |
+|---|---|---|
+| A1 | 切换添加/移除（以及改清单、改勾选、换批次）一律作废已准备的批次；「操作」、哈希、离线命令只取自已准备的批次 | `component/whitelist` › A1（添加→移除、移除→添加都要求重新准备；移除真正签名 2 次并落链） |
+| A2 | 工具 `--batch K`（只算第 K 批、nonce 用给定值）；页面命令带 `--batch`；多批无 `--batch` 时 `--expect-list-hash` 被拒 | `component/whitelist` › A2（501 地址、第 2 批、两链 nonce 不同，用页面生成的命令原样跑工具，两链 message hash 等于屏幕）；`offline-check` › `--batch K` |
+| A3 | 参数解析 fail-closed（见 §2） | `offline-check` › fail-closed（30 种错误调用全部 64 且不打印哈希，含真实子进程） |
+| B2 | 签名/提交使用准备时的 nonce；nonce 变了或待签内容与准备时哈希不同 → 停止、要求重新准备（重试按钮不可用并写明原因）；未准备的批次拒绝；准备开始先清旧哈希 | `integration/whitelist` › 两个用例；`component/whitelist` › B2（含准备失败时旧哈希消失） |
+| B3 | 时间锁调用显示完整目标地址 + 【桥/时间锁/其他】，按目标 ABI 解码，【其他】红字不解码 | `integration/governance` › decode by target；`component/pages` › timelock targets |
+| B4 | 白名单页明示：每批每条链 2 次确认、两链共 4 次；两链都要 gas | `component/whitelist`（文字断言） |
+| B5 | — | `integration/params`（逐字段方向与合约 `NotTightening(i)` 对照，两条链，含 releaseDelay/b2wDelay）；`unit/misc` › 完整 CSP 字符串、Worker `/api/x` 404、验签异常不当通过；`component/pages` › 接口受控集合不覆盖附录 A |
+| B6 | 证明 issuedAt：超过 7 天或在未来 10 分钟以上拒绝；新地址与已验证地址不同时红条 | `unit/misc`、`component/pages` › handover |
+| B7 | 紧急移除输入不跳表头 | `component/pages` › emergency strict |
+| B8 | 文本与 `--json` 共用同一判定 | `offline-check` › `--batch K` 用例中两种模式逐一断言 |
+
+### 第 1 轮变异测试（目录 `scratchpad/pr6-lane6-r1`，独立副本，32 个）
+
+第一遍：杀死 25 / 存活 7（R01、R03、R04、R07、R11、R16、R22）。针对 R01、R07、R11、R16 补测试后重跑：全部杀死。最终 **29 杀死 / 3 存活（均为等价变异）**。
+
+| # | 针对 | 变异 | 结果 | 杀死它的测试 |
+|---|---|---|---|---|
+| R01 | A1 | 「添加」单选不作废批次 | 补测后杀死 | component/whitelist › A1（移除→添加） |
+| R02 | A1 | 「移除」单选不作废批次 | 杀死 | component/whitelist › A1 |
+| R03 | A1 | 「操作」读表单而非批次 | 存活（等价：任何切换都会先作废批次，有批次时两者必然相同；保留为纵深防御） | — |
+| R04 | A1 | 命令 `--action` 读表单 | 存活（同 R03，等价） | — |
+| R05 | A2 | 命令漏 `--batch` | 杀死 | component/whitelist › A2 |
+| R06 | A2 | 工具 `--batch` 仍加 i | 杀死 | offline-check › `--batch K` |
+| R07 | A2（N18） | 命令两链 nonce 对调 | 补测后杀死 | component/whitelist › A2（两链 nonce 不同） |
+| R08 | A2（N19） | 命令漏 `--deadline` | 杀死 | component/whitelist › A2 |
+| R09 | A2 | 批号差一（0 起） | 杀死 | component/whitelist › A2 |
+| R10 | A3 | 未知选项照收 | 杀死 | offline-check › fail-closed |
+| R11 | A3 | 允许 `--x=y` | 补测后杀死 | offline-check › fail-closed（错误文字） |
+| R12 | A3 | 多余文件参数被忽略 | 杀死 | offline-check › fail-closed |
+| R13 | A3 | 不校验 expect 格式 | 杀死 | offline-check › fail-closed |
+| R14 | A3 | chainId 允许 0 | 杀死 | offline-check › fail-closed |
+| R15 | A3 | deadline 可缺省 | 杀死 | offline-check › fail-closed |
+| R16 | A3 | 允许空值 | 补测后杀死 | offline-check › fail-closed（`--decode ""`） |
+| R17 | A3 | 多批无 `--batch` 也比对 | 杀死 | offline-check › `--batch K` |
+| R18 | A3 | 允许重复选项 | 杀死 | offline-check › fail-closed |
+| R19 | B2（N39） | nonce 变化静默重签（去掉 nonce 与哈希两道检查） | 杀死 | component/whitelist › B2 |
+| R20 | B2 | 准备时不先清旧批次 | 杀死 | component/whitelist › A1 / B2 |
+| R21 | B2 | 需重新准备时重试仍可点 | 杀死 | component/whitelist › B2 |
+| R22 | B2 | 去掉"未准备"检查 | 存活（等价：未准备的批次 nonce 为空，随后 nonce 比对必然不等而停止） | — |
+| R23 | B5（N24） | releaseDelay 方向反 | 杀死 | integration/params › bsc |
+| R24 | B5（N35） | 去掉 frame-ancestors | 杀死 | unit/misc › CSP |
+| R25 | B5（N36） | style-src 加 unsafe-inline | 杀死 | unit/misc › CSP |
+| R26 | B5（N38） | 接口受控集合覆盖附录 A | 杀死 | component/pages › appendix A |
+| R27 | B5（N33） | Worker 放行 `/api/*` | 杀死 | unit/misc › Worker 404 |
+| R28 | B5（N29） | 验签异常当通过 | 杀死 | unit/misc › proof |
+| R29 | B3 | 其他目标当桥解码 | 杀死 | component/pages › timelock targets |
+| R30 | B6 | 不查证明时效 | 杀死 | unit/misc › proof |
+| R31 | B7 | 紧急移除跳表头 | 杀死 | component/pages › emergency strict |
+| R32 | B6 | 地址不一致不提示 | 杀死 | component/pages › handover |
+
+## 第 0 轮（首次提交）记录
+
+### 第 0 轮变异测试（32 个，在 scratchpad 的独立副本中逐个注入、跑测试、还原）
 
 | # | 文件 | 变异 | 第 1 轮 | 补测后 |
 |---|---|---|---|---|
