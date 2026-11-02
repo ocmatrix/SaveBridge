@@ -1,0 +1,196 @@
+# PR-6 管理后台 admin.wanto.pro（含 /handover）+ 离线核对工具：实现说明、对齐点、偏差与待定
+
+> 依据：`docs/DESIGN.md` v0.9.4（§4、§5、§8.2–8.4、§11、§12、§13 PR-6 行）、`docs/PR1-NOTES.md` §5（合约契约）、`docs/PR3-NOTES.md` §4.2（审核签名、只读 API、SIWE 占位）。分支 `pr-6-admin`（基于 `pr-3-relayer`）。
+> 范围：只写代码与本地测试。**未部署 Cloudflare、未连接任何真实网络、未发送任何真实链上交易、未接触任何真实私钥。** 测试只用本机 anvil（127.0.0.1，31337 当 WANTOS、31338 当 BSC），钥匙全部 `generatePrivateKey()` 临时生成。17 条已拍板决定未改动。
+
+## 1. 文件
+
+| 路径 | 内容 |
+|---|---|
+| `packages/offline-check/offline-check.mjs` | **离线核对工具**：单文件、零依赖、Node ≥ 18，自带 keccak-256（不用任何库）；读原始地址文件 → rules v1 校验/去重/排序/切批 → `listHash`、`count`、两条链的 EIP-712 **domain hash / message hash / digest**；`--expect-list-hash` 比对屏幕；`--decode` 解码时间锁提议 calldata（含 schedule/scheduleBatch 内层） |
+| `packages/offline-check/vectors.json` | **共享测试向量**（页面与工具用同一份）。解析结果手写，哈希由 viem 计算（与两边实现都独立）；生成脚本 `test/gen-vectors.mjs` |
+| `packages/offline-check/offline-check.d.mts` | 类型声明（只给 TS 测试用） |
+| `apps/admin-web/src/lib/*.ts` | 纯逻辑（全部可在 anvil 上测）：`config` 构建期配置；`chain` 客户端/Signer 接口/错误解码/先模拟再发送；`state` 两链角色与交接状态（**只读合约**）；`perm` 按钮门禁；`normalize` 页面侧 rules v1 与 EIP-712；`whitelist` 两链批次写入（可续跑）、历史与两链差异；`timelock` 提议列表/解码/提议/取消/执行；`params` 收紧/放宽判定与校验；`handover` 地址证明、交接/恢复动作、"只完成一条链"检测；`emergency`；`review` 审核签名消息与批量作废/退款；`siwe`；`api`（Worker 客户端）；`risk` 风险标记；`reserves` |
+| `apps/admin-web/src/pages/*.tsx` | 8 个页面（§3） |
+| `apps/admin-web/src/wallet/wagmi.tsx` | wagmi 注入式钱包 → `Signer`（每个链上请求前切链；签名都在钱包里） |
+| `apps/admin-web/src/csp.ts` + `vite.config.ts` | 构建时生成 Cloudflare Pages `_headers`（严格 CSP、HSTS、禁止嵌入、no-referrer、no-store） |
+| `apps/admin-web/wrangler.toml` | Pages 项目配置（**未部署**） |
+| `apps/admin-web/worker/forward.ts` + `worker/wrangler.toml` | 管理接口转发 Worker（`/api/admin/*` → 付款程序 `/admin/*`，只转 GET/POST、只带 Authorization/Content-Type，不信任、不校验）（**未部署**） |
+| `apps/admin-web/test/{unit,integration,component}` | 见 §8 |
+
+## 2. 离线核对工具（DESIGN §8.3）
+
+```
+node offline-check.mjs list.csv --action add --contract 0x<桥> \
+     --bsc-nonce N --wantos-nonce M --deadline <unix> [--bsc-chain-id 56] [--wantos-chain-id 13555] \
+     [--batch-size 500] [--expect-list-hash 0x<屏幕上的>] [--list] [--json]
+node offline-check.mjs --decode 0x<calldata>
+```
+
+**rules v1**（页面 `src/lib/normalize.ts` 与工具逐条相同，工具文件头有全文）：去 BOM、按 `\r\n|\n|\r` 分行；空行/`#` 行忽略；每行取第一个字段（`, ; 制表符 空格` 之前），去成对引号；第一条有效行若不以 `0x` 开头视为表头跳过一次；必须 `0x`+40 位十六进制，**大小写混写必须是正确 EIP-55**，零地址拒绝；小写去重（重复只提示）；数值升序；按 ≤ 500 顺序切批；**有任何错误就不出哈希**。多批时第 i 批 nonce = 起始 nonce + i。
+
+输出与合约完全一致（PR1-NOTES §5.4；两个 typehash 已用测试钉死）：`listHash = keccak256(abi.encode(address[]))`；domain name `BscVaultV2` / `WantosBridgeV2`、version `1`；message hash = structHash；digest = `keccak256(0x1901‖domain‖message)`。退出码：0 一致 / 1 文件错误 / 2 与屏幕 listHash 不一致 / 64 参数错误。
+
+页面在「准备本批」后直接显示可复制的完整命令（含 nonce、deadline、`--expect-list-hash`）。
+
+## 3. 管理后台页面（DESIGN §8.2）
+
+所有写按钮都由 `perm.gate()` 依据**合约读数**（`timelock.adminWallet()`、`bridge.whitelistManager()`、待接收/恢复候选、暂停/冻结/恢复标志、时间）决定可用性；不可用时按钮旁显示原因（如"当前钱包不是 BSC 的白名单钱包（链上为 0x…）"）。页面顶部显示连接钱包的链上身份。服务器数据只用于审核订单列表、受控集合、参考信息、报告，**从不用于判定角色**。每笔交易先 `simulateContract`（以连接钱包身份）拿到解码后的回滚原因，再交给钱包。
+
+| 页面 | 实现 | 门禁 |
+|---|---|---|
+| `/` 白名单 | 上传 CSV/TXT/粘贴 → rules v1 → 错误逐行列出并阻断 → 逐行参考信息（按 500 行分页加载：两链是否合约、WANTOS-USDT 余额、两链当前白名单；网体/上级/历史跨出走接口，不可用显示 —）→ 🔴🟠🟡⚪ 标记，**🔴 默认不勾选、勾选需二次确认** → 添加/移除 → 选批 → 「准备本批」(deadline = 链上时间 + 23h) 显示 listHash、count、两链 nonce/domain hash/message hash 和离线命令 → 「签名并写入两条链」按 §4.4 顺序逐链（签名 → 提交 → 等回执），进度逐链可见；失败停在该链，「重试未完成的链」只补未完成的（同 nonce 复用签名，nonce 变了才重签；链上已是目标状态直接跳过）。另有：当前白名单（事件折叠）、批次记录、紧急移除记录、两链不一致列表、每条链「作废当前批次 nonce」 | 白名单钱包（两链）；恢复中禁写；冻结时禁止添加 |
+| `/emergency` 紧急 | 每条链：暂停、解除暂停、冻结白名单、否决白名单钱包交接、**紧急移除（未冻结时先发 `freezeWhitelist` 再 `emergencyRemove`，PR1-NOTES §5.11a-1）**、读取现有付款/暂停钥匙并吊销 | 暂停/解除：管理或白名单钱包；其余管理钱包 |
+| `/timelock` 时间锁 | 两链全部提议（`CallScheduled`/`CallSalt` + 实时 `getOperationState/getTimestamp/isOperationExpired/proposalEpoch`）：类别（升级/提取/参数/授予钥匙/更换管理钱包…）、逐个调用解码（未知 selector 标"无法解码，不要执行"）、等待中/可执行/已执行/已取消/已过期/已作废、倒计时与过期时间；取消、执行。执行回滚为 `BridgeCheckFailed`、空回滚或无法解码 → 显示"新实现不合格，不要重试，到期前取消换实现重提"（PR1-NOTES §5.11a-4） | 取消：管理或白名单钱包；执行：任何已连接钱包、就绪、无恢复 |
+| `/params` 参数 | 两链当前值（整币/秒）→ 编辑 → 每项标"收紧 / 放宽（需时间锁）" → 全部收紧：管理钱包一笔 `setParams` 立即生效；有任何放宽：生成时间锁提议（`schedule(bridge, setParams)`，delay = `getMinDelay()`，随机 salt）。前端按 PR1-NOTES 范围与约束预检（合约仍是权威），显示跨链一致性提示与收紧顺序；WANTOS `supplyCeiling` 降低立即、提高走时间锁 | 管理钱包；暂停期间不能提议放宽 |
+| `/handover` 交接与恢复 | 显示两链桥与时间锁地址、两链当前两个钱包；**新持有人签名生成地址证明**（personal_sign 固定文本，见 §5）→ 现任粘贴验证（`verifyMessage`，EOA 与 ERC-1271 都支持）→ 自动填入新地址；每条链：白名单钱包交接（发起/取消或否决/接收，倒计时）、白名单钱包恢复（启动/取消/接收）、管理钱包交接（提议 `transferAdmin`；执行在时间锁页；接收 `acceptAdmin`）、管理钱包恢复（启动/取消/接收）；**任一项只在一条链完成时顶部红条提示去哪条链补签** | 按合约：现任 WL / 管理钱包 / 被指定的新地址（含等待期、有效期、恢复中检查） |
+| `/review` 订单审核与退款 | 经 Worker 读 REVIEW 订单（命中规则、资金来源路径、级别、原因）→ 通过/拒绝：管理钱包对 PR-3 `reviewMessage` 文本 personal_sign（付款链 chainId，1 小时有效）→ 提交给付款程序验签；批量作废（BSC `voidSourceBatch`）、批量退款申请（WANTOS `requestRefundBatch`），订单号支持 `1, 3-5` | 审核：付款链管理钱包；作废：管理或白名单钱包；退款申请：管理钱包 |
+| `/controlled` 受控集合 | 经接口列出/添加/删除（审计日志与推送由付款程序做）；显示内置附录 A | 管理钱包 + 接口已配置 |
+| `/reserves` 储备与对账 | 链上只读：两链桥余额、约几天用量、今日已用/日额度、WANTOS 总量/上限；经接口读对账、告警、每日白名单变更报告 | 只读 |
+
+接口会话：首次调用管理接口时，连接的钱包签一条 EIP-4361（SIWE）消息（15 分钟有效），之后同一会话复用；请求头 `Authorization: SIWE <base64(消息)>.<签名>`。
+
+## 4. 与 PR-1 / PR-3 的对齐点
+
+| 项 | PR-6 做法 | 依据 / 测试 |
+|---|---|---|
+| EIP-712 批次 | domain/typehash/listHash/structHash 与合约逐字节一致；页面经 viem、工具经自写 keccak，同一向量；anvil 上合约接受页面签的批次 | PR1 §5.4；`normalize.test`、`offline-check.test`、`whitelist.test` |
+| 写入顺序 | 添加先 BSC 后 WANTOS；移除先 WANTOS 后 BSC；失败即停，不越序 | DESIGN §4.4；`whitelist.test` |
+| 非白名单钱包 | 页面按钮不可用；即便绕过，合约 `InvalidSigner` 拒绝，页面显示且链上不变 | `whitelist.test`、组件测试 |
+| 先冻结再紧急移除 | 自动先 `freezeWhitelist` | PR1 §5.11a-1；`governance.test`、组件测试 |
+| 时间锁自检失败 | 显示"不合格，不要重试" | PR1 §5.11a-4；`misc.test` |
+| 角色读取 | `timelock.adminWallet()`、`bridge.whitelistManager()`、`pendingWhitelistManager()`、`whitelistRecovery()`、`pendingAdmin()`、`adminRecovery*()`、`epoch()` | PR1 §5.5/§5.9 |
+| 审核签名 | 文本与 `packages/relayer/src/review.ts reviewMessage` **逐字节相等**（测试直接比对 relayer 的函数），chainId = 付款链（W2B→BSC，B2W→WANTOS），有效期 1h（≤ 24h），每次决定单独签名 | PR3 §4.2；`governance.test`、组件测试（取 POST 体用 relayer 函数验签） |
+| 管理接口 | 只经 Worker；Worker 不校验、不持密钥；付款程序须自己验 SIWE 与签名 | PR3 §2.8、Q5 |
+| ABI | 只用 `@bridge/abi`（由合约生成） | — |
+
+## 5. 偏差（保守选择，均未改变 17 条决定）
+
+| # | 偏差 | 理由 |
+|---|---|---|
+| D1 | **白名单批次由页面用已连接钱包提交**（`applyWhitelistBatch` 任何人可调）。若连接的就是白名单钱包，每批 = 2 次 EIP-712 签名 + 2 笔交易确认 | PR-3 提交服务尚无 `submitWhitelistBatch`（PR3 Q6）。接口一旦存在，只需把 `runJob` 里的 `send(...)` 换成 POST 签名给提交服务（见 Q1），即回到"一批 = 两次签名"（决定 16） |
+| D2 | 两条链共用一个 deadline（准备时 = 链上时间 + 23h），离线工具只需一个 `--deadline`；剩余不足 5 分钟拒绝提交，需重新准备（哈希会变，须重新离线核对） | 合约要求提交时 deadline ≤ now + 24h（PR1 D11） |
+| D3 | 某条链上该批地址**已全部**是目标状态 → 该链跳过、不签名；"两链不一致补齐" = 把同一清单按原操作再提交一次 | 让重试幂等，少签名 |
+| D4 | rules v1 的具体口径（只取第一列、表头只跳一次、混写大小写必须是正确校验和、任何错误都拒绝出哈希） | 规格只写"校验、去重、排序"；取最严格且最简单 |
+| D5 | 在页面上取消勾选会使清单与原始文件不同 → 页面明确提示"离线核对前先在原始文件中删掉这些地址"，并可导出本批清单 | 离线核对必须基于负责人自己的文件，页面不能替他改文件 |
+| D6 | 🔴 判定 = 内置附录 A ∪ 接口返回的受控集合（接口不可用时只用附录 A） | 提示性质，接口占位期间仍能防误录 |
+| D7 | 新持有人的"证明地址"为 personal_sign 固定文本的 JSON（离线传给负责人，页面本地验证），不经服务器 | /handover 只读链上数据（§8.4）；不新增后端 |
+| D8 | 历史/提议/钥匙持有人通过公共 RPC `getLogs` 从 `VITE_*_FROM_BLOCK` 起按 5 万块分段扫描；读区块高度时 `cacheTime: 0`（测试发现 viem 默认缓存会漏掉刚上链的提议） | 简单；若 RPC 限制更严，改用付款程序索引接口 |
+| D9 | 只支持注入式钱包（MetaMask/Rabby/OKX/TP 等及其连接的硬件钱包），未接 WalletConnect | 严格 CSP、无第三方模态；多签见 Q3 |
+| D10 | 时间锁提议 salt 随机，delay = 当前 `getMinDelay()`；执行按钮对任何已连接钱包开放（合约本就允许任何人执行） | §4.2 |
+| D11 | 审核页金额按 18 位小数显示；参考信息里的余额读代币 `decimals()` | 仅显示 |
+| D12 | 离线工具的 calldata 解码只覆盖本系统合约函数表（selector 由测试对照 ABI 校验）、嵌套一层 | §8.3"也可解码时间锁提议"的最小实现 |
+
+## 6. 待定项（需总控 / 负责人确认；当前均按最保守、最简单实现）
+
+| # | 问题 | 当前做法 / 建议 |
+|---|---|---|
+| Q1 | 提交服务代提交白名单批次的接口（PR3 Q6） | 建议 `POST /admin/whitelist/submit {side, addrs, allowed, nonce, deadline, signature}`，提交服务按顺序发 `applyWhitelistBatch` 并回报 txHash；接上后页面只签名 |
+| Q2 | 付款程序 `/admin/*` 端点与 `AdminSessionVerifier`（PR3 Q5）尚未实现 | PR-6 提议的端点：`GET /admin/orders?status=REVIEW`、`POST /admin/review {eventKey,decision,expires,signature}`（即 `ReviewService.decide`）、`GET/POST /admin/controlled`、`POST /admin/address-info {addrs}`、`GET /admin/report`；会话头 `SIWE <base64(EIP-4361)>.<sig>`，域名 `admin.wanto.pro`、15 分钟、签名者须是链上管理钱包（受控集合、审核）或白名单钱包（只读）。形状见 `src/lib/api.ts` |
+| Q3 | 管理钱包交接给多签后：审核签名（ERC-1271，relayer 已支持）、SIWE、页面发交易的流程 | 页面目前假设连接的是 EOA/硬件钱包；多签需另设计（例如 Safe 交易构建），PR-9 前定 |
+| Q4 | 单批上限 500 待 PR-0 ④（硬件钱包显示能力）定稿 | 页面与工具常量 500，改一处即可 |
+| Q5 | FAILED 订单人工"重试 / 拒绝"（PR3 §4.2 建议 `decision: retry|reject-failed`） | 未在页面开放（付款程序还没有对应签名格式与端点） |
+| Q6 | 每日变更报告、告警、对账的数据源（PR-7/PR-3） | 页面只按 `/admin/report` 展示 |
+| Q7 | 网体、上级、历史跨出、可疑名单的数据源（PR-4） | 页面按 `/admin/address-info` 展示，缺省为 — |
+| Q8 | 仓库根 `packageManager: "pnpm@10"` 不是完整版本（PR3 Q8） | 未改；本地用 pnpm 10.34.5 直接调用 |
+
+## 7. Cloudflare 与供应链（DESIGN §8.4；本 PR **不部署**）
+
+- 构建：`pnpm --filter @bridge/admin-web build:prod`（需要 `.env.production`，模板 `.env.example`；只含公开值）。占位构建 `build` 用 `.env.placeholder`，页面会显示"占位构建"。
+- `dist/_headers`：`default-src 'none'`、`script-src 'self'`、`connect-src` 只含两条链 RPC 与管理接口源、`frame-ancestors 'none'`、HSTS、`no-referrer`、`no-store`。无内联脚本、无第三方脚本或字体。
+- Pages：`apps/admin-web/wrangler.toml`（项目名 `wanto-admin`）。Cloudflare Access 在 Zero Trust 控制台配置：保护 `admin.wanto.pro/*`，**放开 `/handover`**（SPA 路由，`/handover` 由 Pages 回落到 index.html）。
+- Worker：`apps/admin-web/worker/`，路由 `admin.wanto.pro/api/*`，`RELAYER_ORIGIN` 部署时设置。
+- 发布前：依赖已由 `pnpm-lock.yaml` 锁定；发布产物（`dist/` 各文件 sha256）与离线工具 `offline-check.mjs` 的 sha256 在两个独立渠道公布。
+
+## 8. 测试
+
+运行：`cd apps/admin-web && pnpm exec vitest run [--coverage]`；`cd packages/offline-check && pnpm exec vitest run`；`pnpm exec tsc --noEmit -p apps/admin-web/tsconfig.json`。集成/组件测试在本机起两个 anvil（缺 `out/` 时 `forge build` 一次），进程带 `--config-out <tmp>/wantos-admin-web-anvil-*` 标记，退出时按自己的 PID 停止。
+
+结果见文末「验证结果」。
+
+### 8.1 DESIGN §13 PR-6 验收 ↔ 测试
+
+| 验收 | 测试 |
+|---|---|
+| 篡改页面后签名的批次被离线核对拦下 | `integration/whitelist.test.ts` › tamper scenario（页面偷加地址 → 工具 listHash/count/message/digest 全不同、`--expect-list-hash` 退出 2；页面显示真哈希但让钱包签别的 → digest 不同；诚实页面 → 一致） |
+| 非白名单钱包无法写入 | `whitelist.test` › non-whitelist wallet（合约 `InvalidSigner`，链上不变）；`component/whitelist.test` › 未连接/错钱包按钮不可用且有原因 |
+| 两链部分成功可补齐 | `whitelist.test` › partial failure（重试只写 WANTOS、复用签名；nonce 变化后重签）；`component/whitelist.test` › 失败可见 + 重试按钮 |
+| 紧急操作和批量作废可用 | `governance.test` › emergency、batch void / refund；`component/pages.test` › emergency |
+| /handover 全流程 | `governance.test` › 证明 → 两链发起 → 等待期门禁 → 两链接收 → 旧钱包失效；只完成一条链的提示；否决；两种恢复；管理钱包交接（提议 → 48h → 执行 → 两链接收） |
+| 时间锁取消/执行 | `governance.test` › timelock panel；`component/pages.test` › timelock |
+| 审核签名格式与 PR-3 一致 | `governance.test`、`component/pages.test` › review（用 relayer 自己的 `reviewMessage` 验签） |
+| 页面与工具共用规则 | `unit/normalize.test`（向量 + 30 轮随机清单对比）、`offline-check.test` |
+
+## 9. PR-9 / PR-10 上线门槛（PR-6 相关）
+
+1. Q1 提交服务接口接通（否则每批多两次交易确认）；Q2 付款程序 `/admin/*` 与 SIWE 校验实现并在测试网联调。
+2. 在 WANTON 1345 + BSC 测试网用**硬件钱包**走一遍：一批白名单（含离线工具比对 domain/message hash 与硬件屏幕）、部分失败补齐、紧急移除、/handover 两种交接与两种恢复、时间锁取消与执行、审核通过/拒绝。
+3. 确认硬件钱包对 EIP-712 的显示（PR-0 ④）与 500 上限（Q4）。
+4. Cloudflare：Qbit 账户硬件密钥两步验证、Access（放开 `/handover`）、部署令牌最小权限；`dist/` 与 `offline-check.mjs` 哈希双渠道公布。
+5. 离线工具拷到**另一台设备**并核对其 sha256。
+
+## 10. 需要负责人提供
+
+1. 两个钱包地址（管理钱包、白名单钱包；硬件钱包，两者不同），以及部署后的桥合约地址与部署区块（填 `.env.production`）。
+2. 域名确认：`admin.wanto.pro`（DESIGN §14-6），Qbit 账户下 Pages 项目与 Worker 路由的创建授权。
+3. BSC / WANTOS 的生产 RPC 地址（会进 CSP 与包内，必须是公开地址，不能带密钥）。
+4. 付款程序管理接口的对外地址（Worker 的 `RELAYER_ORIGIN`）。
+
+## 11. 共享文件改动
+
+- `pnpm-lock.yaml`：新增 `apps/admin-web`、`packages/offline-check` 的依赖条目（`pnpm install` 生成）。根 `package.json`、`pnpm-workspace.yaml` 未改（`apps/*` 已在工作区内）。
+
+## 验证结果（本地，2026-11-02）
+
+| 项 | 结果 |
+|---|---|
+| typecheck | `tsc --noEmit -p apps/admin-web/tsconfig.json` 通过 |
+| admin-web 测试 | **61 通过 / 0 失败**（unit 17、integration 28、component 16；7 个文件） |
+| offline-check 测试 | **27 通过 / 0 失败**（含真实子进程 CLI、共享向量 7 组） |
+| 覆盖率 admin-web（v8） | 全部 行 91.4% / 语句 89.8% / 分支 83.9% / 函数 80.7%；`src/lib` 行 98.1% / 分支 91.0%；`src/pages` 行 80.2% |
+| 覆盖率 offline-check | 行 95.6% / 分支 91.2%（未覆盖的是"直接运行"入口，已由子进程测试执行） |
+| 构建 | `vite build --mode placeholder` 通过，产出 `dist/_headers` |
+| `offline-check.mjs` sha256 | `bd6aaf0f498ebf9d9440c9164e85d9f4fdfc3f37f974fb97fd0e1b5caf7ff8b7`（本提交） |
+
+### 变异测试（32 个，在 scratchpad 的独立副本中逐个注入、跑测试、还原）
+
+| # | 文件 | 变异 | 第 1 轮 | 补测后 |
+|---|---|---|---|---|
+| M01 | offline-check | 去掉排序 | 杀死 | |
+| M02 | offline-check | 去掉 EIP-55 校验 | 杀死 | |
+| M03 | offline-check | 去掉零地址拒绝 | 杀死 | |
+| M04 | offline-check | listHash 漏掉动态数组偏移字 | 杀死 | |
+| M05 | offline-check | allowed 编码取反 | 杀死 | |
+| M06 | offline-check | keccak 填充改成 SHA3 的 0x06 | 杀死 | |
+| M07 | offline-check | 多批 nonce 不递增 | 杀死 | |
+| M08 | offline-check | 两链合约名对调 | 杀死 | |
+| M09 | offline-check | listHash 不一致仍退出 0 | 杀死 | |
+| M10 | offline-check | 表头判定改为区分大小写（`0X…` 首行被当表头跳过） | **存活** | 加向量 `uppercase-0X-first-line-is-an-error-not-a-header` → 杀死 |
+| M11 | 页面 normalize | 去掉排序 | 杀死 | |
+| M12 | 页面 normalize | 去掉 EIP-55 校验 | 杀死 | |
+| M13 | whitelist | 移除也先 BSC | 杀死 | |
+| M14 | whitelist | 失败后继续下一条链 | 杀死 | |
+| M15 | whitelist | "已是目标状态"用 some 代替 every | **存活** | 加 `recovery.test` › 部分已在白名单的批次不得跳过 → 杀死 |
+| M16 | whitelist | nonce 变了也复用旧签名 | 杀死 | |
+| M17 | whitelist | 去掉 deadline 余量检查 | 杀死 | |
+| M18 | perm | 白名单钱包门禁恒真 | 杀死 | |
+| M19 | perm | 管理钱包门禁放行白名单钱包 | 杀死 | |
+| M20 | perm | 交接过期不检查 | 杀死 | |
+| M21 | emergency | 紧急移除不先冻结 | 杀死 | |
+| M22 | risk | 🔴 默认勾选 | 杀死 | |
+| M23 | params | 收紧/放宽方向反了 | 杀死 | |
+| M24 | params | 放宽不走时间锁 | 杀死 | |
+| M25 | review | 审核消息少一个空格 | 杀死 | |
+| M26 | review | 付款链对调 | 杀死 | |
+| M27 | handover | 两链白名单钱包不同不提示 | 杀死 | |
+| M28 | handover | 证明里的桥地址不单独比对 | **存活** | 等价变异：同一函数随后按 `o.bridge` 重建整条消息逐字比对，桥地址不同必然被拒（测试覆盖该拒绝），保留显式检查只为给出更准确的错误文字 |
+| M29 | timelock | `BridgeCheckFailed` 不再判为"不合格" | 杀死 | |
+| M30 | timelock | 不识别陈旧 epoch | **存活** | 加 `recovery.test` › 管理钱包恢复完成后旧提议显示"已作废" → 杀死 |
+| M31 | chain | 发送前不模拟 | 杀死 | |
+| M32 | whitelist | 读区块高度用缓存 | 杀死 | |
+
+最终：**31 杀死 / 1 存活（M28，等价变异）**。
+
+### RED→GREEN 说明
+
+`normalize.test`（页面与工具共享向量）先写、先红（模块不存在）再实现；变异存活者（M10/M15/M30）先补测试（对变异体为红）再确认对原代码为绿。其余模块为"实现与测试同批提交"，以 anvil 集成测试与变异测试证明测试有效。
