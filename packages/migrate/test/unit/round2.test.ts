@@ -81,6 +81,7 @@ describe("B7: only loose payouts at or after the order time count", () => {
   it("scan: same rule for the same-tx/other-logIndex link", () => {
     const linked = (timestamp: number): OldPayout => ({ chainId: 56, txHash: tx("c"), logIndex: 0, to: R(40), amount: "1", srcTxHash: tx("a"), srcLogIndex: 9, timestamp });
     expect(status([w2b], [linked(T - 101)])).toEqual(["PAYABLE"]);
+    expect(status([w2b], [linked(T - 100)])).toEqual(["SUSPECT_PAID"]); // same second counts
     expect(status([w2b], [linked(T - 99)])).toEqual(["SUSPECT_PAID"]);
   });
   it("preflight: uses the re-read order time; without orders every loose payout counts", async () => {
