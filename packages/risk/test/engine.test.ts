@@ -39,10 +39,10 @@ describe("fund-source ratio (§7 tracing)", () => {
     expect(await fx.evaluate(await fx.bridgeOut(X, 100n * U, T))).toEqual(AUTO);
   });
 
-  it("pool swap sent by a controlled address → controlled, valued at the Swap amount", async () => {
+  it("pool swap sent by a controlled address → controlled (valued at the USDT actually received)", async () => {
     const fx = await Fx.create();
     await fx.controlled(C);
-    // C swaps MG→USDT with to = X; Swap event says 300 USDT received (value), transfer says 300
+    // C swaps MG→USDT with to = X; X receives 300 USDT
     await fx.flow({ from: PAIR, to: X, amount: 300n * U, value: 300n * U, at: T - DAY, txFrom: C });
     await fx.flow({ from: OTHER, to: X, amount: 700n * U, at: T - DAY });
     expect(await fx.evaluate(await fx.bridgeOut(X, 100n * U, T))).toEqual(freeze()); // 30%

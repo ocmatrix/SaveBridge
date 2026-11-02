@@ -15,9 +15,10 @@ export interface ContractReader {
  * pair list is never hand-typed. `expectCount` guards against a factory that has grown (new pairs must be
  * reviewed before they are traced).
  */
-export async function loadPairsFromFactory(c: ContractReader, factory: Address, usdt: Address, expectCount?: number): Promise<PairInfo[]> {
+export async function loadPairsFromFactory(c: ContractReader, factory: Address, usdt: Address, expectCount: number): Promise<PairInfo[]> {
+  if (!Number.isInteger(expectCount) || expectCount < 1) throw new Error("loadPairsFromFactory: expectCount is required (production: 8)");
   const n = Number((await c.readContract({ address: factory, abi: factoryAbi, functionName: "allPairsLength" })) as bigint);
-  if (expectCount !== undefined && n !== expectCount) throw new Error(`factory has ${n} pairs, expected ${expectCount}`);
+  if (n !== expectCount) throw new Error(`factory has ${n} pairs, expected ${expectCount}`);
   const out: PairInfo[] = [];
   for (let i = 0; i < n; i++) {
     const pair = getAddress((await c.readContract({ address: factory, abi: factoryAbi, functionName: "allPairs", args: [BigInt(i)] })) as string);

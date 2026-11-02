@@ -5,6 +5,7 @@ import type { RawLog } from "@bridge/relayer/src/chain/reader";
 import type { RiskConfig } from "./config";
 import { deleteAbove, getState, insertFlows, insertSwaps, putState, b, type FlowRow, type IndexState, type SwapRow } from "./store";
 import type { RiskAlertSink } from "./alerts";
+import { errText } from "@bridge/relayer/src/redact";
 
 export const TRANSFER_TOPIC = keccak256(strBytes("Transfer(address,address,uint256)"));
 export const SWAP_TOPIC = keccak256(strBytes("Swap(address,uint256,uint256,uint256,uint256,address)"));
@@ -126,7 +127,7 @@ export class TxIndexer {
     try {
       await this.tick();
     } catch (e) {
-      await this.alert("INDEX_ERROR", "index-error", `indexer tick failed: ${(e as Error).message}`);
+      await this.alert("INDEX_ERROR", "index-error", `indexer tick failed: ${errText(e)}`);
     }
   }
 
@@ -176,6 +177,12 @@ export class TxIndexer {
       await this.rewind(st);
       return null;
     }
+    if (this.o.indexNative) {
+      // every block of the range was fetched: they must form one chain
+      for (let n = from + 1n; n <= to; n++) {
+        if (lc(blocks.get(n)!.parentHash) !== lc(blocks.get(n - 1n)!.hash)) throw new Error(`parent hash mismatch at ${n} (reorg in progress)`);
+      }
+    }
     for (const l of [...tLogs, ...sLogs]) {
       if (lc(blocks.get(l.blockNumber)!.hash) !== lc(l.blockHash)) throw new Error(`log/block hash mismatch at ${l.blockNumber} (reorg in progress)`);
     }
@@ -212,21 +219,13 @@ export class TxIndexer {
       const from = topicAddr(l.topics[1]);
       const to = topicAddr(l.topics[2]);
       const amount = word(l.data, 0);
+      if (amount === 0n) continue; // 0-amount Transfer moves nothing (and anyone can emit one via transferFrom)
       const tf = txFrom(blk, l.transactionHash);
       const isPair = this.pairs.has(lc(from));
-      let valueUsdt = 0n;
-      if (asset === "USDT") {
-        valueUsdt = amount;
-        const idx = this.pairs.get(lc(from));
-        if (isPair && idx !== null && idx !== undefined) {
-          // §7: count what the pool's Swap event says was received (next Swap of that pair to this recipient).
-          const sw = swaps
-            .filter((s) => lc(s.txHash) === lc(l.transactionHash) && lc(s.pair) === lc(from) && lc(s.to) === lc(to) && s.logIndex > l.logIndex)
-            .sort((x, y) => x.logIndex - y.logIndex)[0];
-          const out = sw ? (idx === 0 ? sw.amount0Out : sw.amount1Out) : 0n;
-          if (out > 0n) valueUsdt = out;
-        }
-      }
+      // §7 "实际收到的 USDT 数额": the transfer itself is what was received (equal to the Swap's out for a
+      // standard pair). Swap events are stored for cross-checks only — pairing them with transfers mis-values
+      // a skim followed by a small swap in one tx (Gate2 r1 B2).
+      const valueUsdt = asset === "USDT" ? amount : 0n;
       flows.push({
         txHash: l.transactionHash,
         logIndex: l.logIndex,

@@ -23,6 +23,12 @@ export interface RiskParams {
   /** Common-funder rule: one source funded ≥ funderMinAddrs addresses that bridge out within funderWindowMs. */
   funderWindowMs: number;
   funderMinAddrs: number;
+  /**
+   * Minimum amount (base units, per asset symbol: "USDT", "NATIVE", "MG", …) for a movement to count as
+   * "funding" in the common-funder rule and as a "receipt" in the fresh-funds rule. Assets without an
+   * entry never count. Stops 0-amount / dust griefing (anyone can transferFrom(x, u, 0)).
+   */
+  funderMinAmount: Record<string, bigint>;
   /** Index health: stale after this long without a successful indexer tick, or this many blocks behind head. */
   indexStaleMs: number;
   indexMaxLagBlocks: number;
@@ -52,6 +58,8 @@ export function defaultParams(usdtDecimals = 18): RiskParams {
     freshMinAmount: 500n * 10n ** BigInt(usdtDecimals),
     funderWindowMs: DAY,
     funderMinAddrs: 3,
+    // 1 USDT; 1 native coin (conservative placeholder). Calibrate with the October replay (PR4-NOTES §6).
+    funderMinAmount: { USDT: 10n ** BigInt(usdtDecimals), NATIVE: 10n ** 18n },
     indexStaleMs: 2 * MIN,
     indexMaxLagBlocks: 600,
   };
@@ -70,6 +78,7 @@ export function parseRiskConfig(c: RiskConfig): RiskConfig {
   if (p.lookbackMs <= 0 || p.freshWindowMs < 0 || p.funderWindowMs <= 0) throw new Error("risk config: windows must be positive");
   if (p.funderMinAddrs < 2) throw new Error("risk config: funderMinAddrs must be ≥ 2");
   if (p.freshMinAmount < 0n) throw new Error("risk config: freshMinAmount must be ≥ 0");
+  for (const [k, v] of Object.entries(p.funderMinAmount)) if (!(v > 0n)) throw new Error(`risk config: funderMinAmount.${k} must be > 0`);
   if (p.indexStaleMs <= 0 || p.indexMaxLagBlocks <= 0) throw new Error("risk config: index health limits must be positive");
   if (c.pairs.length === 0) throw new Error("risk config: pairs must not be empty");
   const pairs = c.pairs.map((x) => ({ address: a(x.address, "pair"), usdtIndex: x.usdtIndex }));
@@ -80,6 +89,6 @@ export function parseRiskConfig(c: RiskConfig): RiskConfig {
     pairs,
     bridge: a(c.bridge, "bridge"),
     exempt: c.exempt.map((x) => a(x, "exempt")),
-    params: { ...p },
+    params: { ...p, funderMinAmount: { ...p.funderMinAmount } },
   };
 }

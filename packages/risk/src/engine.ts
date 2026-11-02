@@ -7,6 +7,7 @@ import { toBig } from "@bridge/relayer/src/bytes";
 import { ZERO_ADDRESS, type RiskConfig } from "./config";
 import { b, getState } from "./store";
 import type { RiskAlertSink } from "./alerts";
+import { errText } from "@bridge/relayer/src/redact";
 
 export interface Finding {
   level: ReviewLevel;
@@ -53,7 +54,7 @@ export class SourceRiskEngine implements RiskEngine {
     try {
       a = await this.assess(order);
     } catch (e) {
-      await this.o.alerts?.emit({ kind: "INDEX_ERROR", key: "risk-assess", message: `risk assessment failed: ${(e as Error).message}` }).catch(() => undefined);
+      await this.o.alerts?.emit({ kind: "INDEX_ERROR", key: "risk-assess", message: `risk assessment failed: ${errText(e)}` }).catch(() => undefined);
       return INDEX_WAIT;
     }
     if (a.kind === "WAIT") return INDEX_WAIT;
@@ -85,9 +86,11 @@ export class SourceRiskEngine implements RiskEngine {
     }
 
     if (order.amountWei >= p.freshMinAmount) {
+      // first receipt = first movement at/above the per-asset minimum (0-amount / dust cannot pre-age an address)
       const r = await db.query<{ first: Date | string | null }>(
-        "select min(block_time) as first from risk_flows where to_addr = $1 and from_addr <> to_addr and block_time <= $2",
-        [b(user), new Date(t)],
+        `select min(x.block_time) as first from risk_flows x ${this.minJoin(3)}
+          where x.to_addr = $1 and x.from_addr <> x.to_addr and x.block_time <= $2`,
+        [b(user), new Date(t), ...this.minParams()],
       );
       const first = r.rows[0]?.first;
       if (first && t - new Date(first).getTime() <= p.freshWindowMs) findings.push({ level: "audit", reason: "fresh_funds" });
@@ -147,6 +150,15 @@ export class SourceRiskEngine implements RiskEngine {
     return { total, controlled, detail: { total: total.toString(), direct: direct.toString(), hop2: attributed.toString() } };
   }
 
+  /** SQL join keeping only movements ≥ funderMinAmount[asset]; params $at = assets[], $at+1 = mins[]. */
+  private minJoin(at: number, alias = "x"): string {
+    return `join unnest($${at}::text[], $${at + 1}::numeric[]) as mn_${alias}(asset, mn) on mn_${alias}.asset = ${alias}.asset and ${alias}.amount >= mn_${alias}.mn`;
+  }
+  private minParams(): [string[], string[]] {
+    const e = Object.entries(this.o.cfg.params.funderMinAmount);
+    return [e.map(([k]) => k), e.map(([, v]) => v.toString())];
+  }
+
   /** §7: one source funded ≥ N distinct addresses within 24h that bridged out (window ±24h around t). */
   private async commonFunder(user: Address, t: number, stop: Uint8Array[]): Promise<{ funder: string; addresses: string[] } | null> {
     const p = this.o.cfg.params;
@@ -155,8 +167,9 @@ export class SourceRiskEngine implements RiskEngine {
     const w2 = new Date(t + p.funderWindowMs);
     const r = await this.o.db.query<{ src: Uint8Array; addrs: string[] }>(
       `select f.src, array_agg(distinct encode(f.to_addr, 'hex')) as addrs
-         from risk_flows f
-        where f.src in (select src from risk_flows where to_addr = $1 and block_time > $2 and block_time <= $3)
+         from risk_flows f ${this.minJoin(7, "f")}
+        where f.src in (select x.src from risk_flows x ${this.minJoin(7)}
+                         where x.to_addr = $1 and x.block_time > $2 and x.block_time <= $3)
           and f.src <> all($5::bytea[]) and f.to_addr <> f.src and f.block_time > $2 and f.block_time <= $3
           and exists (select 1 from orders o join risk_flows r on r.tx_hash = o.src_tx_hash
                        where o.direction = 'W2B' and o.user_addr = f.to_addr and r.block_time > $2 and r.block_time <= $4)
@@ -164,7 +177,7 @@ export class SourceRiskEngine implements RiskEngine {
        having count(distinct f.to_addr) >= $6
         order by count(distinct f.to_addr) desc, f.src
         limit 1`,
-      [b(user), w0, w1, w2, stop, p.funderMinAddrs],
+      [b(user), w0, w1, w2, stop, p.funderMinAddrs, ...this.minParams()],
     );
     const x = r.rows[0];
     if (!x) return null;
