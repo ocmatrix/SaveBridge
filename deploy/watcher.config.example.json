@@ -29,7 +29,7 @@
   "grace": { "w2bSeconds": 300, "b2wBeforeEtaSeconds": 180, "refundBeforeExecSeconds": 7200, "depositRefundBeforeExecSeconds": 7200 },
   "mintAlertThreshold": "10000000000000000000000",
   "reconcile": { "intervalSeconds": 3600, "toleranceWei": { "bsc": "1000000000000000000", "wantos": "1000000000000000000" }, "wantosLowBalanceWei": null },
-  "heartbeatIntervalSeconds": 300,
+  "heartbeatIntervalSeconds": 60,
   "maxRangesPerTick": 5,
   "gasCheckIntervalSeconds": 300,
   "wantosStallSeconds": 60,

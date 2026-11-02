@@ -18,7 +18,7 @@
 | `submitter` | ss02 同上 | **无任何合约权限**，只发交易（白名单批次提交、到期时间锁执行） | 只放 3 天用量 |
 | `pauser-wantos` / `pauser-bsc` | rpc3 `/var/lib/savebridge-watcher/keystore/` | PAUSER_ROLE，代码层只能发 `pause()` | 两链各自 |
 
-**敞口**：每日额度按用户决定设为合约允许的较高值，真正的上限是**金库注资量**（BSC 储备 + WANTOS 启动资金）。注资量由负责人决定（授权节点 G7 / G8）。
+**试运营额度（负责人 2026-11-02 拍板，`deploy/trial-params.example.json`）**：BSC `dailyCap` = **500,000** USDT、`perAddrDailyCap` = **20,000** USDT（也是单笔上限），WANTOS `b2wDailyCap` = **200,000** USDT——三项都是合约允许的上限（DESIGN §5.5 范围），**不起限额作用**。**真实敞口 = 金库注资量，约 2–5 万 USDT**（BSC 储备 + WANTOS 启动资金，金额由负责人在 G7 / G8 决定）。其余参数沿用 DESIGN §5.5 初值；额度在合约部署（A3）时写入，不由本服务设置。
 
 ## 1. 需要负责人在场授权的节点（逐项、不外推）
 
@@ -43,7 +43,9 @@
 - [ ] **出站**：443 到 nodejs.org、registry.npmjs.org、pkg.cloudflare.com、api.telegram.org、心跳服务、BSC RPC 提供商、rpc.wantos.io / rpc2.wantos.io（只读）；cloudflared 7844。
 - [ ] **时间同步**（`timedatectl`）：监控有 `CLOCK_SKEW` 告警。
 - [ ] **systemd ≥ 250**（`LoadCredentialEncrypted`）：Debian 13 是 257；**rpc3 若为 Ubuntu 22.04（249）需改用 `LoadCredential=` + root-only 文件**（见 §4 注）。
-- [ ] 负责人的 **age 公钥**（备份收件人）已准备；Telegram 机器人与 chat id、外部心跳服务（电话 / 短信）已开通。
+- [ ] 负责人的 **age 公钥**（备份收件人）已准备；Telegram 机器人与 chat id、外部心跳服务（两个检查项：付款程序、监控；电话 / 短信通知已配，见 §6）已开通。
+- [ ] **BSC 服务商两侧互不相同**：ss02 三家与 rpc3 三家不能有同一服务商（同一注册域名即视为同一家）；两边 `rpc.env` 的 `PEER_BSC_RPC_HOSTS` 各填**对方**的 BSC 主机名（只写主机名，不写 URL / 密钥）。缺失或重叠 → 拒启动。
+- [ ] §11「上线前由主会话只读核实」各项已核实并记录结论。
 
 ## 3. ss02（付款程序）步骤
 
@@ -78,7 +80,7 @@
 | 4.2 | `system` | 用户 `savebridge-watcher`（nologin）；`/var/lib/savebridge-watcher/{state,keystore,ack}`（0700）；回退：`userdel` + 删目录 |
 | 4.3 | `node`、`release <tar> <sha256>` | 同 ss02（`--filter @bridge/watcher...`） |
 | 4.4 | **`keys`【A2】**、`backup-keystore` | `pauser-bsc`、`pauser-wantos` 两把；地址进合约部署参数与 `gasWatch` |
-| 4.5 | `credentials`、`config <watcher.json>` | Telegram / 心跳凭据；配置来自 `deploy/watcher.config.example.json`；`rpc.env` 填 BSC 三家（**尽量与付款程序不同的服务商**，监控不得与付款程序共用数据源）与本机 WANTOS 端口 |
+| 4.5 | `credentials`、`config <watcher.json>` | Telegram / 心跳凭据；配置来自 `deploy/watcher.config.example.json`；`rpc.env` 填 BSC 三家（**必须与付款程序的服务商全部不同**，启动校验强制，`PEER_BSC_RPC_HOSTS` 填付款程序那三家的主机名）与本机 WANTOS 端口（端口待 §11 核实） |
 | 4.6 | `systemd`、`dry-run-service` | 装单元（`MemoryMax=400M`、`CPUQuota=50%`、`Nice=15`、`IOWeight=10`、`MemorySwapMax=0`；节点数据 / Blockscout / postgres / docker 目录不可见）；`dry-run-service` 以服务用户跑一轮 `--dry-run --once` 验证配置与 RPC（不暂停） |
 | 4.7 | 合约部署、白名单、注资之后 | 配置里填真实桥 / 时间锁地址与 `startBlock` |
 | 4.8 | **`start`【A6】**、`verify` | 先于付款程序启动；确认**零一级告警**；邻居服务与节点块高不受影响 |
@@ -96,8 +98,17 @@
 ## 6. 告警与心跳（Telegram + 外部心跳）
 
 - 一级 / 二级 / 三级告警都发 Telegram（纯文本，带级别、服务、代码、链、UTC 时间、**确认键**、处置提示；脱敏：RPC 密钥、令牌、64 位 hex 不出现）。同一告警 10 分钟内去重；二 / 三级每分钟最多 15 条，一级不限流；超长截断。
-- **Telegram 不可达**：每条告警仍写本机日志（journald + `/var/log/savebridge/alerts.jsonl` / 监控 `state/alerts.jsonl`）；付款程序把失败的告警留在内存队列（上限 200，满时先丢二级），恢复后补发（>3 条合并为一条）；监控由 `AlertManager` 持久化逐通道重试。**一级告警超过 10 分钟发不出去时，两边都停发外部心跳** → 外部服务按超时电话 / 短信负责人（这是第二通道）。
-- 外部心跳：付款程序每 60 s、监控每 5 min；外部服务超时建议 10 min（监控）/ 5 min（付款程序）。
+- **Telegram 不可达**：每条告警仍写本机日志（journald + `/var/log/savebridge/alerts.jsonl` / 监控 `state/alerts.jsonl`）；付款程序把失败的告警留在内存队列（上限 200，满时先丢二级），恢复后补发（>3 条合并为一条）；监控由 `AlertManager` 持久化逐通道重试。**一级告警超过 5 分钟发不出去时，两边都停发外部心跳** → 外部服务按宽限期电话 / 短信负责人（这是第二通道）。
+
+### 6.1 外部心跳（Healthchecks.io 风格的 ping URL；UptimeRobot 心跳监控也可）
+
+- 两边都每 **1 分钟** ping 一次（付款程序 `heartbeat.intervalMs = 60000`；监控 `heartbeatIntervalSeconds = 60`）。程序只做 HTTPS `GET <ping URL>`；连不上只发本机二级 `HEARTBEAT_FAILED` / 日志，不影响主流程。
+- **URL 是秘密**（拿到它的人可以伪造「我还活着」）：只通过凭据文件 `heartbeat-url`（`deploy.sh credential heartbeat-url --apply`，systemd 加密凭据）注入；**不写进配置文件、仓库、日志、聊天**。
+- 在服务商建两个检查项（不要共用）：`savebridge-relayer`（ss02）、`savebridge-watcher`（rpc3）。设置：
+  - 周期（Period / Interval）**1 分钟**，宽限（Grace）**3–5 分钟**（建议 5 分钟，避开偶发网络抖动）。
+  - 通知渠道：在服务商的通知 / 集成设置里加**电话（语音呼叫）与短信**到负责人号码，并加 Telegram / 邮件作为补充；电话 / 短信通常是付费功能或需要绑定号码验证，以服务商当前说明为准。
+  - 同时开「恢复（up）」通知，便于确认演练结束。
+- 演练（§5 第 2 步）：停服务 → 宽限期后负责人收到电话 / 短信 → 启动 → 收到恢复通知。两台各做一次，记录到达时间。
 - 一级告警的 24h 重复：监控在 `ack` 前重复；付款程序侧沿用 15 分钟去重。
 
 ## 7. RPC：每链 ≥3 个、rpc1 / rpc2 只读授权（2026-11-02 用户授权）
@@ -105,13 +116,14 @@
 | 链 | 付款程序（ss02） | 监控（rpc3） |
 |---|---|---|
 | WANTOS | 主读取 + **唯一写入** = rpc3（`https://rpc3.wantos.io`）；交叉核对 = rpc1、rpc2（只读） | 本机 rpc3（`127.0.0.1`，读 + **唯一 pause() 写入**）+ rpc1 + rpc2（只读）；`minRpcAgreement = 2` |
-| BSC | 三家服务商，`BSC_RPC_1` 兼广播 | 三家服务商（尽量与付款程序不同），`BSC_RPC_1` 兼 pause() 广播 |
+| BSC | 三家服务商，`BSC_RPC_1` 兼广播 | 另外三家服务商（**与付款程序的全部不同**，启动强制），`BSC_RPC_1` 兼 pause() 广播 |
 
 **授权范围与限制**：rpc.wantos.io（rpc1）与 rpc2.wantos.io **只作为 WANTOS 只读交叉核对节点**：只读、低频、不压测、不 SSH、不触碰它们的服务与配置。代码强制：
 - 写端点（付款程序 `writeRpcUrlEnv`、监控 `pauseWriteRpcEnv`）指向 rpc1 / rpc2 → **拒绝启动**；rpc1 / rpc2 也不能当付款程序的 WANTOS 主读取或 BSC 源。
 - 传输层守卫：对 rpc1 / rpc2 只放行只读 JSON-RPC 方法白名单，`eth_sendRawTransaction` 等写方法在本地即被拒绝（不发网络请求，测试用记录主机与方法的 fake transport 断言）；`eth_getLogs` 区间 ≤ 200 块（且必须是数字区间）；不做传输层重试。
 - 低频：付款程序轮询 ≥ 5 s（有 rpc1 / rpc2 时配置校验强制）、监控 tick ≥ 5 s（强制）；每主机令牌桶（付款程序 60 次/分钟、突发 10；监控 120 次/分钟、突发 20）；失败 / 限流后指数退避 2 s → 4 s → … 封顶 5 min，冷却期内本地快速失败（= 少一票），**不重试风暴**。
 - **请求预算估算**（每个外部主机）：监控稳态实测每 tick 5 次（`eth_blockNumber`×1、`eth_getBlockByNumber`×2、`eth_getLogs`×2）→ 5 s tick ≈ **60 次/分钟**，加每小时对账与逐事件核对的少量 `eth_call` / 回执；付款程序每轮 1 次 `eth_getBlockByNumber`（有新块时）+ 每个新 WANTOS 事件 1 次回执 → 稳态 **≤ 15 次/分钟**。合计约 **75 次/分钟 ≈ 1.3 次/秒**；硬上限 = 两个令牌桶之和 180 次/分钟。
+- **BSC 服务商两侧分离**：监控不得与付款程序共用数据源。两边启动时把自己全部 BSC URL（含写端点）的服务商（注册域名，取主机名最后两段；IP 原样比较）与 `PEER_BSC_RPC_HOSTS`（对方主机名列表）比较，有重叠、列表缺失或填了 URL → 拒启动（exit 78）。注：带多段公共后缀的域名（如 `.co.uk`）会按后缀比较，只会更严。
 - rpc1 / rpc2 不可用或落后：只是「少一票」，照常发既有的 `RPC_UNREACHABLE` / `RPC_LAGGING` / `RPC_UNAVAILABLE`（付款程序）告警；**minAgree 不放松**。
 - 独立性校验：同一主机（含不同端口 / 路径）或同一 `node` 标签的多个 URL 只算一个来源；回环地址必须标注 node（如 rpc3）。少于 minAgree（监控）/ 2（付款程序 WANTOS 主 + 交叉、BSC）个独立来源 → 拒绝启动；少于 3 个 → 启动日志警告。
 
@@ -148,4 +160,15 @@
 | `ss02-payout/deploy.sh` + `files/` | 付款程序：用户、目录、swap、PostgreSQL、单元、cloudflared、防火墙检查、启动、验证、备份 |
 | `rpc3-watcher/deploy.sh` + `files/` | 监控：用户、目录、单元、试运行、启动、验证、ack |
 | `relayer.config.example.json` / `watcher.config.example.json` | 配置模板（无密钥 / 令牌 / URL；地址为占位） |
+| `trial-params.example.json` | 试运营合约额度（上限值）与计划注资量，供合约部署步骤 A3 使用 |
 | `test/dry-run-sim.sh` | 本地模拟：所有系统命令替换为记录桩，断言 dry-run 不执行任何改动命令、各项守卫生效 |
+
+## 11. 上线前由主会话只读核实（本分支不猜测）
+
+以下事项影响写入路径，**必须在上线前由主会话只读核实**（读配置 / 文档 / 一次只读 RPC 调用；不改任何东西），把结论写进部署记录后再填 `rpc.env`：
+
+| # | 待核实 | 影响 | 核实后要改的地方 |
+|---|---|---|---|
+| V1（原 Q1） | 付款程序经 `https://rpc3.wantos.io` **发交易**时，是否经过写入代理（shim），是否需要 `X-Wantos-Key` 车道令牌、走哪条 lane | 若需要令牌而未带：WANTOS 侧放款（B2W）与提交服务会被拒，表现为 `RPC_UNAVAILABLE` / `TX_STUCK` | 需要令牌时：给写端点 transport 加请求头（令牌走 systemd 凭据，不进配置），属小改代码 + 测试 |
+| V2（原 Q4） | rpc3 **本机** WANTOS JSON-RPC 端口（模板暂写 `127.0.0.1:8545`），以及该端口是否就是节点本身（而非代理） | 端口错 → 监控启动失败（拒启动，安全） | `rpc3` 的 `rpc.env` 里 `WANTOS_RPC3_LOCAL` |
+| V3（原 Q4） | 监控的 `pause()` 是直连本机节点还是应走 shim 的某条 lane | 单笔、非并发；走错可能被限流或拒绝 → `PAUSE_FAILED`（一级） | `pauseWriteRpcEnv.wantos` 指向的 URL（及是否需要令牌，同 V1） |

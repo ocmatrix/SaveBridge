@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { createPublicClient, defineChain, http, type Address, type Hex, type PublicClient, type Transport } from "viem";
 import type { PrivateKeyAccount } from "viem/accounts";
 import {
+  assertDistinctBscProviders,
   assertWriteEndpoint,
   checkIndependence,
   guardedTransport,
@@ -159,6 +160,8 @@ export function resolveDeployConfig(raw: unknown, env: Env = process.env): Deplo
       fail(`chains.${c}.maxBlockRange (${core.chains[c].maxBlockRange}) must be <= runtime.externalRpc.maxLogsBlockRange (${runtime.externalRpc.maxLogsBlockRange}) when rpc1/rpc2 are configured`);
   }
   const pauseWrite = {} as Record<ChainName, string>;
+  const bscWrite = env[runtime.pauseWriteRpcEnv.bsc];
+  assertDistinctBscProviders([...sources.bsc.map((s) => s.url), ...(bscWrite ? [bscWrite] : [])], env);
   for (const c of CHAINS) {
     const name = runtime.pauseWriteRpcEnv[c];
     const url = env[name] ?? fail(`${name} is not set`);
@@ -253,7 +256,7 @@ export function gatedHeartbeat(ping: () => Promise<unknown>, meta: () => MetaSta
       const m = meta();
       if (m && channel !== undefined) {
         const now = (o.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))();
-        const stuck = m.outbox.filter((e) => e.channel === channel && e.alert.level === 1 && now - e.alert.at > (o.graceSeconds ?? 600));
+        const stuck = m.outbox.filter((e) => e.channel === channel && e.alert.level === 1 && now - e.alert.at > (o.graceSeconds ?? 300));
         if (stuck.length > 0) throw new Error(`${stuck.length} level-1 alert(s) undeliverable on the IM channel: heartbeat withheld`);
       }
       await ping();

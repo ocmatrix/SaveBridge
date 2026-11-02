@@ -7,6 +7,7 @@
 import { appendFileSync } from "node:fs";
 import { createPublicClient, http, type PublicClient, type Transport } from "viem";
 import {
+  assertDistinctBscProviders,
   assertWriteEndpoint,
   checkIndependence,
   guardedTransport,
@@ -70,6 +71,7 @@ export function resolveEndpoints(cfg: RelayerConfig, env: Env = process.env): En
   const warnings: string[] = [];
   warnings.push(...checkIndependence({ chain: "wantos", sources: [primary, ...cross], required: 2, recommended: 3 }).warnings);
   warnings.push(...checkIndependence({ chain: "bsc", sources: readers, required: 2, recommended: 3 }).warnings);
+  assertDistinctBscProviders([...readers.map((r) => r.url), bWrite.url], env);
   const usesExternalReadOnly = cross.some((c) => isReadOnlyHost(c.url));
   if (usesExternalReadOnly && cfg.poll.intervalMs < MIN_POLL_MS_WITH_EXTERNAL_RPC)
     throw new RpcPolicyError(`poll.intervalMs must be >= ${MIN_POLL_MS_WITH_EXTERNAL_RPC} when rpc1/rpc2 are configured (low-frequency read-only authorisation)`);
@@ -182,7 +184,7 @@ export function gatedHeartbeat(ping: () => Promise<unknown>, telegram: TelegramA
   return {
     ping: async () => {
       const since = telegram?.undeliveredLevel1Since() ?? null;
-      if (since !== null && (o.now ?? Date.now)() - since > (o.l1GraceMs ?? 10 * 60_000)) throw new Error("level-1 alert undeliverable: heartbeat withheld");
+      if (since !== null && (o.now ?? Date.now)() - since > (o.l1GraceMs ?? 5 * 60_000)) throw new Error("level-1 alert undeliverable: heartbeat withheld");
       await ping();
     },
   };

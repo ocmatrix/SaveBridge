@@ -231,3 +231,33 @@ export function rpcTransport(url: string, o: Omit<GuardOptions, "url"> & { timeo
   const ro = isReadOnlyHost(url, o.extraReadOnlyHosts);
   return guardedTransport(http(url, { retryCount: ro ? 0 : 1, timeout: o.timeoutMs ?? 15_000 }), { ...o, url });
 }
+
+/** Env var (both hosts) listing the OTHER side's BSC provider host names, comma-separated (no URLs, no keys). */
+export const PEER_BSC_HOSTS_ENV = "PEER_BSC_RPC_HOSTS";
+
+/**
+ * Provider identity of a host: the last two DNS labels (bsc-a.provider.com and x.provider.com are the
+ * same provider); IP literals and loopback are compared as-is. Approximation: multi-part public suffixes
+ * (e.g. .co.uk) compare as the suffix — stricter, never looser.
+ */
+export function providerOf(hostOrUrl: string): string {
+  const h = hostOrUrl.includes("://") ? normalizeHost(hostOrUrl) : hostOrUrl.trim().toLowerCase().replace(/:\d+$/, "").replace(/\.$/, "");
+  if (!h || !/^[a-z0-9.:[\]-]+$/.test(h)) throw new RpcPolicyError(`invalid host "${hostOrUrl}" in ${PEER_BSC_HOSTS_ENV}`);
+  if (h === "loopback" || /^\d{1,3}(\.\d{1,3}){3}$/.test(h) || h.includes(":")) return h;
+  const parts = h.split(".");
+  return parts.slice(-2).join(".");
+}
+
+/**
+ * The payout service and the watcher must use DIFFERENT BSC providers (the watcher must not share data
+ * sources with the payout service). Each side gets the other side's provider hosts via
+ * `PEER_BSC_RPC_HOSTS`; missing or overlapping → refuse to start (fail-closed).
+ */
+export function assertDistinctBscProviders(ownUrls: readonly string[], env: Record<string, string | undefined>): void {
+  const raw = env[PEER_BSC_HOSTS_ENV];
+  if (!raw || !raw.trim()) throw new RpcPolicyError(`${PEER_BSC_HOSTS_ENV} is not set: list the other service's BSC provider hosts (they must differ from ours)`);
+  if (raw.includes("/")) throw new RpcPolicyError(`${PEER_BSC_HOSTS_ENV} must hold host names only, not URLs`);
+  const peer = new Set(raw.split(",").map((s) => s.trim()).filter(Boolean).map(providerOf));
+  const clash = [...new Set(ownUrls.map(providerOf))].filter((p) => peer.has(p));
+  if (clash.length > 0) throw new RpcPolicyError(`BSC provider(s) ${clash.join(", ")} are used by both the payout service and the watcher; they must be different providers`);
+}

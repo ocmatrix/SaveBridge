@@ -69,6 +69,7 @@ describe("E2E with LocalKeystoreSigner through the production wiring", () => {
       BSC_RPC_2: "https://bsc-b.example.org",
       BSC_RPC_3: "https://bsc-c.example.net",
       CREDENTIALS_DIRECTORY: cd,
+      PEER_BSC_RPC_HOSTS: "bsc.watcher-provider.io",
     };
     const route = (url: string): Transport => {
       const host = new URL(url).hostname;
