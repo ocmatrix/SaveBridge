@@ -4,6 +4,7 @@ import { keccak256, recoverMessageAddress, toBytes, type Hex } from "viem";
 import { reviewMessage as relayerReviewMessage } from "../../../../packages/relayer/src/review";
 import { readChainState } from "../../src/lib/state";
 import { readParams, applyParams } from "../../src/lib/params";
+import { propose } from "../../src/lib/timelock";
 import { U, BSC_ID, localSigner, startWorld, type World } from "../support/world";
 import { renderApp } from "./render";
 
@@ -42,6 +43,14 @@ describe("emergency page", () => {
     await waitFor(async () => expect((await readChainState(w.chains.bsc)).paused).toBe(false), { timeout: 10_000 });
   });
 
+  it("emergency remove input is strict: a non-address first line is an error, not a skipped header", async () => {
+    renderApp(w, localSigner(w, w.act.admin), "/emergency");
+    fireEvent.change(await screen.findByLabelText("紧急移除地址"), { target: { value: `address\n${keccak256(toBytes("z2")).slice(0, 42)}` } });
+    expect(screen.getByText(/有 1 行地址无效/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText("先在下面填写正确的地址").length).toBeGreaterThan(0));
+    expect(btn(/在 BSC 上紧急移除/)[0]).toBeDisabled();
+  });
+
   it("admin: emergency remove asks to freeze first", async () => {
     renderApp(w, localSigner(w, w.act.admin), "/emergency");
     fireEvent.change(await screen.findByLabelText("紧急移除地址"), { target: { value: keccak256(toBytes("z")).slice(0, 42) } });
@@ -76,6 +85,21 @@ describe("timelock page", () => {
   });
 });
 
+describe("timelock page: targets", () => {
+  it("shows the full target address and marks a foreign target 【其他】 in red, undecoded", async () => {
+    const st = await readChainState(w.chains.bsc);
+    const r = await propose(w.chains.bsc, localSigner(w, w.act.admin), st.timelock, [{ target: w.act.stranger.address, data: "0x8456cb59" }]);
+    renderApp(w, localSigner(w, w.act.wl), "/timelock");
+    const card = await screen.findByTestId(`proposal-${r.id}`);
+    const call = within(card).getByTestId("call");
+    expect(call).toHaveTextContent(w.act.stranger.address); // full, not shortened
+    const tag = within(call).getByText(/【其他/);
+    expect(tag).toHaveClass("err");
+    expect(call).toHaveTextContent("目标不是本系统合约");
+    expect(call).not.toHaveTextContent("pause(");
+  });
+});
+
 describe("params page", () => {
   it("loosening a field turns the action into a timelock proposal; tightening is direct", async () => {
     renderApp(w, localSigner(w, w.act.admin), "/params");
@@ -107,6 +131,11 @@ describe("/handover page", () => {
     fireEvent.click(screen.getByRole("button", { name: "验证证明" }));
     expect(await screen.findByTestId("verified")).toHaveTextContent(w.act.newHolder.address);
     expect(screen.getByLabelText("新地址")).toHaveValue(w.act.newHolder.address);
+    expect(screen.queryByTestId("cand-mismatch")).toBeNull();
+    fireEvent.change(screen.getByLabelText("新地址"), { target: { value: w.act.stranger.address } });
+    expect(screen.getByTestId("cand-mismatch")).toHaveTextContent("与已验证的证明地址");
+    fireEvent.change(screen.getByLabelText("新地址"), { target: { value: w.act.newHolder.address } });
+    expect(screen.queryByTestId("cand-mismatch")).toBeNull();
     const begin = btn("发起交接")[0]!; // BSC
     await waitFor(() => expect(begin).toBeEnabled());
     fireEvent.click(begin);
@@ -164,6 +193,18 @@ describe("review / controlled / reserves (Worker API placeholder, fake fetch)", 
     await screen.findByText(/命中规则/);
     expect(screen.getByRole("button", { name: "通过" })).toBeDisabled();
     expect(screen.getAllByText(/不是 BSC 的管理钱包/).length).toBeGreaterThan(0);
+  });
+
+  it("controlled set from the API never replaces the built-in appendix A (🔴 stays, unchecked)", async () => {
+    const { fetchFn } = fakeApi(); // returns a controlled list WITHOUT appendix-A addresses
+    renderApp(w, localSigner(w, w.act.wl), "/", { adminApi: "https://admin.wanto.pro/api", fetchFn });
+    const RED = "0x9272f360b98160c1662abb6d2df9e4f313b39502";
+    const API_ONLY = "0x0000000000000000000000000000000000000abc";
+    fireEvent.change(screen.getByLabelText("地址列表"), { target: { value: `${RED}\n${API_ONLY}\n${keccak256(toBytes("ok1")).slice(0, 42)}` } });
+    await waitFor(() => expect(within(screen.getByTestId(`row-${API_ONLY}`)).getByText(/🔴/)).toBeInTheDocument());
+    expect(within(screen.getByTestId(`row-${RED}`)).getByText(/🔴/)).toBeInTheDocument();
+    expect(screen.getByLabelText(`选择 ${RED}`)).not.toBeChecked();
+    await waitFor(() => expect(screen.getByLabelText(`选择 ${API_ONLY}`)).not.toBeChecked());
   });
 
   it("no admin API configured → placeholder message", async () => {

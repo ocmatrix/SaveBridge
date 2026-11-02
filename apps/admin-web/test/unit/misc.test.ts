@@ -9,7 +9,8 @@ import { AdminApi, ApiError } from "../../src/lib/api";
 import { APPENDIX_A, defaultChecked, flagsFor, needsConfirm } from "../../src/lib/risk";
 import { gate, gateWith } from "../../src/lib/perm";
 import { executeErrorText, randomSalt } from "../../src/lib/timelock";
-import { countdown, proofMessage } from "../../src/lib/handover";
+import { countdown, makeProof, proofMessage, verifyProof, PROOF_MAX_AGE_MS } from "../../src/lib/handover";
+import type { PublicClient } from "viem";
 import { buildCsp, buildHeadersFile } from "../../src/csp";
 import { forward } from "../../worker/forward";
 import { DEADLINE_AHEAD_S, writeOrder, isComplete, newJob } from "../../src/lib/whitelist";
@@ -190,5 +191,40 @@ describe("gates, handover text, misc", () => {
     expect(planKind(classify("wantos", cur, { ...cur, w2bMinAmount: 9n }))).toBe("timelock");
     expect(planKind(classify("wantos", cur, { ...cur, b2wDailyCap: 999n }))).toBe("direct");
     expect(planKind(classify("wantos", cur, cur))).toBe("none");
+  });
+});
+
+describe("B5/B6 pins", () => {
+  it("CSP is exactly this string (no unsafe-inline, frame-ancestors none)", () => {
+    const c = parseConfig({ ...env, VITE_ADMIN_API: "https://admin.wanto.pro/api" });
+    expect(buildCsp(c)).toBe(
+      "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://rpc.wantos.io https://bsc.example https://admin.wanto.pro; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'",
+    );
+    expect(buildHeadersFile(c)).not.toMatch(/unsafe-(inline|eval)/);
+    expect(buildHeadersFile(c)).toContain("X-Frame-Options: DENY");
+  });
+
+  it("Worker: /api/x (not /api/admin/) → 404 and nothing forwarded", async () => {
+    let called = 0;
+    const f = (async () => (called++, new Response("{}"))) as unknown as typeof fetch;
+    for (const u of ["https://admin.wanto.pro/api/x", "https://admin.wanto.pro/api/adminx", "https://admin.wanto.pro/api/"]) expect((await forward(new Request(u), { RELAYER_ORIGIN: "https://r" }, f)).status).toBe(404);
+    expect(called).toBe(0);
+  });
+
+  it("handover proof: verifier errors are failures; age / future / garbage issuedAt refused", async () => {
+    const acct = privateKeyToAccount(generatePrivateKey());
+    const signer: Signer = { address: acct.address, write: async () => "0x", signTypedData: async () => "0x", signMessage: async (m) => acct.signMessage({ message: m }) };
+    const now = Date.parse("2026-11-02T00:00:00Z");
+    const okClient = { verifyMessage: async () => true } as unknown as PublicClient;
+    const throwing = { verifyMessage: async () => { throw new Error("rpc down"); } } as unknown as PublicClient;
+    const fresh = JSON.stringify(await makeProof(signer, "wl", B, new Date(now - 1000)));
+    expect(await verifyProof(fresh, { role: "wl", bridge: B, client: okClient, nowMs: now })).toBe(acct.address);
+    await expect(verifyProof(fresh, { role: "wl", bridge: B, client: throwing, nowMs: now })).rejects.toThrow("签名不是该地址签的");
+    const old = JSON.stringify(await makeProof(signer, "wl", B, new Date(now - PROOF_MAX_AGE_MS - 1000)));
+    await expect(verifyProof(old, { role: "wl", bridge: B, client: okClient, nowMs: now })).rejects.toThrow("超过 7 天");
+    const future = JSON.stringify(await makeProof(signer, "wl", B, new Date(now + 3600_000)));
+    await expect(verifyProof(future, { role: "wl", bridge: B, client: okClient, nowMs: now })).rejects.toThrow("未来");
+    const bad = proofMessage({ role: "wl", address: acct.address, bridge: B, issuedAt: "yesterday" });
+    await expect(verifyProof(JSON.stringify({ message: bad, signature: await acct.signMessage({ message: bad }) }), { role: "wl", bridge: B, client: okClient, nowMs: now })).rejects.toThrow("签名时间");
   });
 });

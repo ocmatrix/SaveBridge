@@ -10,7 +10,11 @@ export function EmergencyPage() {
   const { chains, signer, both } = useApp();
   const [removeText, setRemoveText] = useState("");
   const [holders, setHolders] = useState<Partial<Record<Side, { role: "RELAYER" | "PAUSER"; account: Address }[]>>>({});
-  const removeList = parseAddressList(removeText);
+  // strict: no header skipping here — every non-comment line must be an address (an unparsed first line is an error)
+  const parsedRemove = parseAddressList(removeText);
+  const removeList = parsedRemove.headerSkipped
+    ? { ...parsedRemove, errors: [{ line: 1, text: "第一行", reason: "format" as const }, ...parsedRemove.errors] }
+    : parsedRemove;
   if (!both) return <p>读取链上状态中…</p>;
   const m = me(signer);
   return (

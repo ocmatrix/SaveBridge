@@ -3,7 +3,7 @@ import { describeError } from "../lib/chain";
 import { SIDE_NAME, SIDES, type Side } from "../lib/config";
 import { countdown } from "../lib/handover";
 import { gate, gateWith, short } from "../lib/perm";
-import { cancelProposal, executeProposal, listProposals, STATE_TEXT, type Proposal } from "../lib/timelock";
+import { cancelProposal, executeProposal, listProposals, STATE_TEXT, TARGET_TEXT, type Proposal } from "../lib/timelock";
 import { ActionButton, me, Section, ts, useApp } from "../ui";
 
 export function TimelockPage() {
@@ -41,8 +41,11 @@ export function TimelockPage() {
                     <strong>{p.calls.map((c) => c.kind).join(" + ")}</strong>　<span>{STATE_TEXT[p.state]}</span>　id <code title={p.id}>{short(p.id)}</code>
                   </p>
                   {p.calls.map((c, i) => (
-                    <p key={i} className="decoded">
-                      → <code>{short(c.target)}</code> {c.text}
+                    <p key={i} className="decoded" data-testid="call">
+                      → 目标 <span className={c.targetKind === "other" ? "err" : undefined}>【{TARGET_TEXT[c.targetKind]}】</span> <code>{c.target}</code>
+                      {c.value > 0n && `（附带 ${c.value} wei）`}
+                      <br />
+                      <span className={c.fn === null ? "err" : undefined}>{c.fn === null ? c.kind : ""}</span> <code>{c.text}</code>
                     </p>
                   ))}
                   {open && (

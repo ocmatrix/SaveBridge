@@ -90,6 +90,12 @@ export function HandoverPage() {
           新地址：
           <input aria-label="新地址" value={candidate} onChange={(e) => setCandidate(e.target.value)} placeholder="0x…" />
         </p>
+        {verified && cand && cand !== verified && (
+          <p className="warn" role="alert" data-testid="cand-mismatch">
+            新地址 {cand} 与已验证的证明地址 {verified} 不同 —— 请确认没有填错
+          </p>
+        )}
+        {candidate.trim() !== "" && !cand && <p className="err">新地址格式不对</p>}
       </Section>
 
       {SIDES.map((s) => {

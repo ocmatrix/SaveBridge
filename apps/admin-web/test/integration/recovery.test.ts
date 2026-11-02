@@ -6,7 +6,7 @@ import { applyParams, readParams } from "../../src/lib/params";
 import { actions } from "../../src/lib/handover";
 import { chainNow } from "../../src/lib/chain";
 import { parseAddressList } from "../../src/lib/normalize";
-import { DEADLINE_AHEAD_S, newJob, readWhitelisted, runJob } from "../../src/lib/whitelist";
+import { DEADLINE_AHEAD_S, newJob, readWhitelisted, runJob, prepareJob } from "../../src/lib/whitelist";
 import { U, localSigner, startWorld, type World } from "../support/world";
 
 let w: World;
@@ -20,8 +20,8 @@ describe("mixed batch (some addresses already in target state) is NOT skipped", 
     const wl = localSigner(w, w.act.wl);
     const [a, b] = parseAddressList([keccak256(toBytes("m1")).slice(0, 42), keccak256(toBytes("m2")).slice(0, 42)].join("\n")).addresses as [string, string];
     const d = (await chainNow(w.chains.bsc)) + DEADLINE_AHEAD_S;
-    await runJob(newJob([a], true, d), { chains: w.chains, signer: wl });
-    const job = await runJob(newJob([a, b], true, d), { chains: w.chains, signer: wl });
+    await runJob(await prepareJob(w.chains, [a], true, d), { chains: w.chains, signer: wl });
+    const job = await runJob(await prepareJob(w.chains, [a, b], true, d), { chains: w.chains, signer: wl });
     expect(job.runs.bsc.status).toBe("done");
     expect(job.runs.wantos.status).toBe("done");
     expect(await readWhitelisted(w.chains.bsc, [a, b])).toEqual([true, true]);

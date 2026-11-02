@@ -32,7 +32,11 @@ export async function makeProof(signer: Signer, role: HandoverRole, bridge: Addr
  * Verifies a pasted proof: message format, bridge, and that the signature is from the address in the message
  * (EOA or, through `client.verifyMessage`, an ERC-1271 multisig). Returns the proven address.
  */
-export async function verifyProof(raw: string, o: { role: HandoverRole; bridge: Address; client: PublicClient }): Promise<Address> {
+/** A proof older than this is refused (ask the new holder to sign again); small clock skew allowed into the future. */
+export const PROOF_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
+export const PROOF_MAX_SKEW_MS = 10 * 60 * 1000;
+
+export async function verifyProof(raw: string, o: { role: HandoverRole; bridge: Address; client: PublicClient; nowMs?: number }): Promise<Address> {
   let p: Proof;
   try {
     p = JSON.parse(raw) as Proof;
@@ -47,6 +51,11 @@ export async function verifyProof(raw: string, o: { role: HandoverRole; bridge: 
   const bridge = field("bridge");
   if (!addr || !isAddress(addr) || !bridge || !isAddress(bridge) || !isAddressEqual(bridge, o.bridge)) throw new Error("证明里的地址或桥合约不对");
   if (p.message !== proofMessage({ role: o.role, address: addr, bridge: o.bridge, issuedAt: field("issuedAt") ?? "" })) throw new Error("证明格式不对");
+  const issued = Date.parse(field("issuedAt") ?? "");
+  const now = o.nowMs ?? Date.now();
+  if (!Number.isFinite(issued)) throw new Error("证明缺少有效的签名时间");
+  if (issued > now + PROOF_MAX_SKEW_MS) throw new Error("证明的签名时间在未来，请核对设备时间后重新签");
+  if (now - issued > PROOF_MAX_AGE_MS) throw new Error("证明已超过 7 天，请新持有人重新签一份");
   const ok = await o.client.verifyMessage({ address: getAddress(addr), message: p.message, signature: p.signature as Hex }).catch(() => false);
   if (!ok) throw new Error("签名不是该地址签的");
   return getAddress(addr);

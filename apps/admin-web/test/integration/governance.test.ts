@@ -10,8 +10,8 @@ import { actions, countdown, crossChainGaps, makeProof, verifyProof } from "../.
 import { emergencyRemove, keyHolders, pause, PAUSER_ROLE, RELAYER_ROLE, revokeKey, unpause, vetoWlTransfer } from "../../src/lib/emergency";
 import { parseIds, requestRefundBatch, reviewMessage, signDecision, voidSourceBatch } from "../../src/lib/review";
 import { readReserve } from "../../src/lib/reserves";
-import { newJob, readWhitelisted, runJob, DEADLINE_AHEAD_S } from "../../src/lib/whitelist";
-import { chainNow } from "../../src/lib/chain";
+import { newJob, readWhitelisted, runJob, DEADLINE_AHEAD_S, prepareJob } from "../../src/lib/whitelist";
+import { chainNow, timelockAbi } from "../../src/lib/chain";
 import { parseAddressList } from "../../src/lib/normalize";
 import { BSC_ID, U, WANTOS_ID, localSigner, startWorld, type World } from "../support/world";
 
@@ -112,12 +112,27 @@ describe("timelock panel: propose → decode → countdown → cancel / execute"
     expect(executeErrorText(fake)).toContain("不要重试");
   });
 
-  it("unknown calldata is flagged", () => {
-    const d = decodeCall(w.chains.bsc.bridgeAbi, w.bridge, 0n, "0xdeadbeef");
+  it("calls are decoded by their TARGET; unknown data / foreign targets are flagged", async () => {
+    const tl = (await readChainState(w.chains.bsc)).timelock;
+    const own = { bridge: w.bridge, timelock: tl };
+    const d = decodeCall(w.chains.bsc.bridgeAbi, w.bridge, 0n, "0xdeadbeef", own);
     expect(d.fn).toBeNull();
+    expect(d.targetKind).toBe("bridge");
     expect(d.kind).toContain("无法解码");
-    const g = decodeCall(w.chains.bsc.bridgeAbi, w.bridge, 0n, encodeFunctionData({ abi: w.chains.bsc.bridgeAbi, functionName: "grantRole", args: [RELAYER_ROLE, w.act.stranger.address] }));
+    const grant = encodeFunctionData({ abi: w.chains.bsc.bridgeAbi, functionName: "grantRole", args: [RELAYER_ROLE, w.act.stranger.address] });
+    const g = decodeCall(w.chains.bsc.bridgeAbi, w.bridge, 0n, grant, own);
     expect(g.text).toContain("RELAYER_ROLE");
+    // the same bridge call aimed at another contract is NOT decoded as a bridge call
+    const o = decodeCall(w.chains.bsc.bridgeAbi, w.act.stranger.address, 0n, grant, own);
+    expect(o.targetKind).toBe("other");
+    expect(o.fn).toBeNull();
+    expect(o.kind).toContain("目标不是本系统合约");
+    // a bridge-only function aimed at the timelock is not decoded with the bridge ABI
+    const t = decodeCall(w.chains.bsc.bridgeAbi, tl, 0n, encodeFunctionData({ abi: w.chains.bsc.bridgeAbi, functionName: "pause" }), own);
+    expect(t.targetKind).toBe("timelock");
+    expect(t.fn).toBeNull();
+    const ta = decodeCall(w.chains.bsc.bridgeAbi, tl, 0n, encodeFunctionData({ abi: timelockAbi, functionName: "transferAdmin", args: [w.act.stranger.address] }), own);
+    expect(ta.fn).toBe("transferAdmin");
   });
 });
 
@@ -162,9 +177,9 @@ describe("/handover full flow (whitelist wallet, both chains)", () => {
     // 5. the old WL can no longer sign batches; the new one can
     const list = parseAddressList(keccak256(toBytes("h1")).slice(0, 42)).addresses;
     const d = (await chainNow(w.chains.bsc)) + DEADLINE_AHEAD_S;
-    const old = await runJob(newJob(list, true, d), { chains: w.chains, signer: wl });
+    const old = await runJob(await prepareJob(w.chains, list, true, d), { chains: w.chains, signer: wl });
     expect(old.runs.bsc.error).toContain("InvalidSigner");
-    const ok = await runJob(newJob(list, true, d), { chains: w.chains, signer: nh });
+    const ok = await runJob(await prepareJob(w.chains, list, true, d), { chains: w.chains, signer: nh });
     expect(ok.runs.wantos.status).toBe("done");
     expect(await readWhitelisted(w.chains.wantos, list)).toEqual([true]);
   });
@@ -229,7 +244,7 @@ describe("emergency", () => {
     const wl = localSigner(w, w.act.newHolder);
     const ctx = w.chains.bsc;
     const list = parseAddressList([keccak256(toBytes("e1")).slice(0, 42), keccak256(toBytes("e2")).slice(0, 42)].join("\n")).addresses;
-    await runJob(newJob(list, true, (await chainNow(ctx)) + DEADLINE_AHEAD_S), { chains: w.chains, signer: wl });
+    await runJob(await prepareJob(w.chains, list, true, (await chainNow(ctx)) + DEADLINE_AHEAD_S), { chains: w.chains, signer: wl });
     expect(await readWhitelisted(ctx, list)).toEqual([true, true]);
     await expect(emergencyRemove(ctx, wl, list as Address[])).rejects.toThrow();
     const txs = await emergencyRemove(ctx, admin, list as Address[]);

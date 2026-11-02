@@ -1,4 +1,4 @@
-import { decodeFunctionData, encodeFunctionData, getAbiItem, type Abi, type AbiEvent, type Address, type Hex } from "viem";
+import { decodeFunctionData, encodeFunctionData, getAbiItem, isAddressEqual, type Abi, type AbiEvent, type Address, type Hex } from "viem";
 import { describeError, send, timelockAbi, type ChainCtx, type Signer } from "./chain";
 import { scanLogs } from "./whitelist";
 
@@ -23,8 +23,12 @@ export const KIND: Record<string, string> = {
   updateDelay: "修改时间锁延迟",
 };
 
+export type TargetKind = "bridge" | "timelock" | "other";
+export const TARGET_TEXT: Record<TargetKind, string> = { bridge: "桥", timelock: "时间锁", other: "其他（不是本链桥或时间锁）" };
+
 export interface DecodedCall {
   target: Address;
+  targetKind: TargetKind;
   value: bigint;
   data: Hex;
   fn: string | null;
@@ -40,17 +44,20 @@ const fmt = (v: unknown): string => {
   return String(v);
 };
 
-/** Decodes a call against the bridge + timelock ABIs; unknown selectors are shown raw (and treated as suspicious). */
-export function decodeCall(bridgeAbi: Abi, target: Address, value: bigint, data: Hex): DecodedCall {
-  for (const abi of [bridgeAbi, timelockAbi]) {
-    try {
-      const d = decodeFunctionData({ abi, data });
-      return { target, value, data, fn: d.functionName, kind: KIND[d.functionName] ?? "其他", text: `${d.functionName}(${(d.args ?? []).map(fmt).join(", ")})` };
-    } catch {
-      /* try next */
-    }
+/**
+ * Decodes a call with the ABI of its TARGET: the bridge ABI only when the target is this chain's bridge, the timelock
+ * ABI only when it is this chain's timelock. Any other target is not decoded at all and is flagged (DESIGN §11: the
+ * whitelist wallet cancels malicious proposals from this list).
+ */
+export function decodeCall(bridgeAbi: Abi, target: Address, value: bigint, data: Hex, own: { bridge: Address; timelock: Address }): DecodedCall {
+  const targetKind: TargetKind = isAddressEqual(target, own.bridge) ? "bridge" : isAddressEqual(target, own.timelock) ? "timelock" : "other";
+  if (targetKind === "other") return { target, targetKind, value, data, fn: null, kind: "目标不是本系统合约（不要执行，先核对）", text: data };
+  try {
+    const d = decodeFunctionData({ abi: targetKind === "bridge" ? bridgeAbi : timelockAbi, data });
+    return { target, targetKind, value, data, fn: d.functionName, kind: KIND[d.functionName] ?? "其他", text: `${d.functionName}(${(d.args ?? []).map(fmt).join(", ")})` };
+  } catch {
+    return { target, targetKind, value, data, fn: null, kind: "无法解码（不要执行，先核对）", text: data };
   }
-  return { target, value, data, fn: null, kind: "无法解码（不要执行，先核对）", text: data };
 }
 
 export type ProposalState = "waiting" | "ready" | "done" | "cancelled" | "expired" | "stale";
@@ -86,7 +93,7 @@ export async function listProposals(ctx: ChainCtx, timelock: Address): Promise<P
   for (const l of sched) {
     const a = l.args as { id: Hex; index: bigint; target: Address; value: bigint; data: Hex; predecessor: Hex; delay: bigint };
     const e = byId.get(a.id) ?? { calls: [], predecessor: a.predecessor, delay: a.delay, block: l.blockNumber! };
-    e.calls.push({ index: a.index, c: decodeCall(ctx.bridgeAbi, a.target, a.value, a.data) });
+    e.calls.push({ index: a.index, c: decodeCall(ctx.bridgeAbi, a.target, a.value, a.data, { bridge: ctx.cfg.bridge, timelock }) });
     byId.set(a.id, e);
   }
   const rt = <T>(functionName: string, args: readonly unknown[] = []) => ctx.client.readContract({ address: timelock, abi: timelockAbi, functionName, args }) as Promise<T>;
