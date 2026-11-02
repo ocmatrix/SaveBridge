@@ -48,3 +48,17 @@ WANTOS `b2wDailyCap`（每个 UTC 日的额度，非总额）上限 1000 万 →
 ### 参数修改（第六版，负责人 2026-11-02）
 
 BSC 全局日额 `dailyCap` 5 万 → **50 万**（合约上限）。大额阈值 2,000（超过排队 12h）、单地址日额 2 万、延迟 12h 不变。`bsc.env` 哈希更新为第六版，`wantos.env` 不变；BSC 主网模拟通过，地址与预测一致。注意：日额大于金库实际资金，真正的敞口封顶仍是注入金库的资金，大额排队与监控暂停是主要拦截手段。
+
+## BSC 主网部署（G2，负责人 2026-11-02 授权并亲自输入钥匙密码）
+
+| nonce | 合约 | 地址 | 交易 |
+|---|---|---|---|
+| 0 | BridgeTimelock | 0xf60D6D98E1878c7f499788c19efcD671d00d8aC4 | 0x7d246a87961871470ba9f84db5a8bb93ef868619515be9d7efcf8a7d18ab13d2 |
+| 1 | BscVaultV2（实现） | 0x31BC1C89D0cB80C8f0e1b3d190cf8d096465d765 | 0x33d7da688dfae191950659fdce4faac82bf0ce0c114030551c5f677aa1012403 |
+| 2 | ERC1967Proxy（桥） | 0xe2fD0F2Ee8041Ff1bDA023e6Fca65ba889114AD5 | 0xd4a85fb957df840b63ebd1c1a7ecaeeb7d0ca975f31ed872ee3f2a979995080f |
+
+- 三个地址与预测一致；部署后部署者 nonce = 3；三个地址在 publicnode 与 bsc-dataseed 上都有代码。
+- 验收脚本 `Verify.s.sol` 在 BSC 上全部通过（角色、时间锁成员与延迟、参数、空白名单、地址一致）。
+- 实现合约链上字节码与本地编译一致，仅有 60 个字节差异，位于 UUPS 的 immutable（合约自身地址）处；广播的 initcode 与本地编译逐字节相同。
+- forge 在 `--slow` 过程中打印过「dropped from the mempool」提示，但三笔均已上链确认，该提示无影响。
+- BSC 代理的部署区块 = 监控 `startBlock`（待从交易回执读取并记入）。
