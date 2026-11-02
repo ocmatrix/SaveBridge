@@ -22,12 +22,12 @@ export const FIELDS: Record<Side, FieldSpec[]> = {
     { key: "largeThreshold", label: "大额阈值（超过走排队）", kind: "amount", tighten: "down" },
     { key: "releaseDelay", label: "排队延迟", kind: "seconds", tighten: "up", min: 6n * H, max: 7n * 24n * H },
     { key: "minDeposit", label: "最小存入", kind: "amount", tighten: "up", minExclusive: 0n, max: 20_000n },
-    { key: "maxDepositPerTx", label: "单笔最大存入", kind: "amount", tighten: "down", minExclusive: 0n, max: 20_000n },
+    { key: "maxDepositPerTx", label: "单笔最大存入", kind: "amount", tighten: "down", minExclusive: 0n, max: 10_000_000n },
   ],
   wantos: [
     { key: "w2bMinAmount", label: "最小跨出", kind: "amount", tighten: "up", min: 10n, max: 20_000n },
     { key: "w2bPerAddrDailyCap", label: "每地址日额度（单笔上限）", kind: "amount", tighten: "down", min: 10n, max: 20_000n },
-    { key: "b2wDailyCap", label: "B2W 日额度", kind: "amount", tighten: "down", min: 500n, max: 200_000n },
+    { key: "b2wDailyCap", label: "B2W 日额度", kind: "amount", tighten: "down", min: 500n, max: 10_000_000n },
     { key: "b2wDelay", label: "B2W 排队延迟", kind: "seconds", tighten: "up", min: 10n * 60n, max: 24n * H },
   ],
 };

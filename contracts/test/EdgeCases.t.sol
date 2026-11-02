@@ -167,6 +167,18 @@ contract BscEdgeCasesTest is BscFixture {
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.ParamOutOfRange.selector, 5));
         vault.setParams(p);
     }
+
+    function test_inflowCapReachesTenMillion() public {
+        BscVaultV2.Params memory p = _bscParams();
+        p.maxDepositPerTx = 10_000_000 * U;
+        vm.prank(address(tl));
+        vault.setParams(p);
+        assertEq(vault.params().maxDepositPerTx, 10_000_000 * U);
+        p.maxDepositPerTx = 10_000_000 * U + 1;
+        vm.prank(address(tl));
+        vm.expectRevert(abi.encodeWithSelector(BridgeBase.ParamOutOfRange.selector, 5));
+        vault.setParams(p);
+    }
 }
 
 contract WantosEdgeCasesTest is WantosFixture {
@@ -184,6 +196,18 @@ contract WantosEdgeCasesTest is WantosFixture {
         p.w2bPerAddrDailyCap = 20_001 * U;
         vm.prank(address(tl));
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.ParamOutOfRange.selector, 1));
+        bridge.setParams(p);
+    }
+
+    function test_b2wDailyCapReachesTenMillion() public {
+        WantosBridgeV2.Params memory p = _wParams();
+        p.b2wDailyCap = 10_000_000 * U;
+        vm.prank(address(tl));
+        bridge.setParams(p);
+        assertEq(bridge.params().b2wDailyCap, 10_000_000 * U);
+        p.b2wDailyCap = 10_000_000 * U + 1;
+        vm.prank(address(tl));
+        vm.expectRevert(abi.encodeWithSelector(BridgeBase.ParamOutOfRange.selector, 2));
         bridge.setParams(p);
     }
 }
