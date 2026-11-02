@@ -97,7 +97,6 @@ body { margin: 0; color: var(--text); }
 .wallet-item { font: inherit; font-weight: 600; font-size: 16px; text-align: left; min-height: 48px; padding: 0 16px; border-radius: 16px; color: var(--text); background: rgba(255, 255, 255, 0.8); border: 1px solid rgba(255, 255, 255, 0.9); box-shadow: 0 1px 3px rgba(52, 78, 160, 0.12), inset 0 1px 0 #fff; cursor: pointer; }
 .wallet-item:disabled { opacity: 0.5; cursor: not-allowed; }
 .wallet-item:focus-visible { outline: 3px solid rgba(10, 100, 240, 0.55); outline-offset: 2px; }
-.qr { display: block; margin: 8px auto 0; background: #fff; border-radius: 12px; }
 
 /* messages */
 .info { color: var(--muted); font-size: 13px; margin: 28px 6px 0; line-height: 1.5; }

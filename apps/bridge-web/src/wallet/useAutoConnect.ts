@@ -12,8 +12,6 @@ export interface WalletState {
   open: boolean;
   setOpen(v: boolean): void;
   list: Connector[];
-  /** WalletConnect pairing URI while waiting for a scan. */
-  uri: string | null;
   error: string | null;
   choose(c: Connector): Promise<void>;
 }
@@ -21,7 +19,7 @@ export interface WalletState {
 /**
  * Inside the host app's browser (or any wallet browser) there is exactly one wallet: connect to it on load, no
  * picker, straight onto WANTOS (the default direction). Otherwise — no wallet, or several announced (EIP-6963)
- * ones — the big button reads 「连接钱包」 and opens the list (extension wallets, and WalletConnect when configured).
+ * ones — the big button reads 「连接钱包」 and opens the list of wallets found in the browser.
  */
 export function useAutoConnect(): WalletState {
   const { t, lang } = useI18n();
@@ -31,7 +29,6 @@ export function useAutoConnect(): WalletState {
   const { mutateAsync: connect, isPending } = useConnect();
   const [note, setNote] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
-  const [uri, setUri] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const tried = useRef(false);
 
@@ -45,7 +42,7 @@ export function useAutoConnect(): WalletState {
   );
 
   const run = useCallback(async () => {
-    const c = announced[0] ?? list.find((x) => x.type !== "walletConnect");
+    const c = announced[0] ?? list[0];
     if (!c) return;
     setNote(null);
     try {
@@ -58,19 +55,12 @@ export function useAutoConnect(): WalletState {
   const choose = useCallback(
     async (c: Connector) => {
       setError(null);
-      const onMessage = (m: { type: string; data?: unknown }) => {
-        if (m.type === "display_uri" && typeof m.data === "string") setUri(m.data);
-      };
-      c.emitter.on("message", onMessage);
       try {
         await connect({ connector: c, chainId: cfg.wantos.id });
         setOpen(false);
         setNote(null);
       } catch (e) {
         setError(fail(e));
-      } finally {
-        c.emitter.off("message", onMessage);
-        setUri(null);
       }
     },
     [connect, cfg.wantos.id, fail],
@@ -90,7 +80,6 @@ export function useAutoConnect(): WalletState {
     open,
     setOpen,
     list,
-    uri,
     error,
     choose,
   };

@@ -10,8 +10,6 @@ export const zh = {
   "wallet.disconnect": "断开",
   "wallet.connecting": "连接中…",
   "wallet.choose": "选择钱包",
-  "wallet.walletconnect": "WalletConnect（扫码）",
-  "wallet.scanQr": "请用手机钱包扫描二维码",
   "wallet.noWallet": "未检测到钱包。请点「连接钱包」,或在 {app} 内打开本页。",
   "wallet.cancel": "取消",
   "wallet.browser": "浏览器钱包",

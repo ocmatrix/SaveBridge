@@ -12,8 +12,6 @@ export const en: Dict = {
   "wallet.disconnect": "Disconnect",
   "wallet.connecting": "Connecting…",
   "wallet.choose": "Choose a wallet",
-  "wallet.walletconnect": "WalletConnect (QR code)",
-  "wallet.scanQr": "Scan the QR code with your mobile wallet",
   "wallet.noWallet": "No wallet detected. Tap “Connect wallet”, or open this page in {app}.",
   "wallet.cancel": "Cancel",
   "wallet.browser": "Browser wallet",
