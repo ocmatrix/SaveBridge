@@ -1,0 +1,70 @@
+{
+  "_comment": "TEMPLATE for the watcher on rpc3. No secrets and no URLs in this file: RPC URLs come from EnvironmentFile (/etc/savebridge-watcher/rpc.env), the PAUSER keystore passphrases / Telegram token / chat id / heartbeat URL are systemd credentials. Bridge / timelock / PAUSER / wallet addresses are placeholders (0x...0b01 etc.) until the mainnet deployment; replace them from the deployment record. rpc1 (rpc.wantos.io) and rpc2 (rpc2.wantos.io) are READ-ONLY cross-check sources (user authorisation 2026-11-02): low frequency, never written to.",
+  "dataDir": "/var/lib/savebridge-watcher/state",
+  "minRpcAgreement": 2,
+  "chains": {
+    "bsc": {
+      "chainId": 56,
+      "rpc": [{ "env": "BSC_RPC_1" }, { "env": "BSC_RPC_2" }, { "env": "BSC_RPC_3" }],
+      "bridge": "0x00000000000000000000000000000000000b0001",
+      "timelock": "0x00000000000000000000000000000000000b0002",
+      "token": "0x55d398326f99059fF775485246999027B3197955",
+      "startBlock": "0",
+      "head": { "kind": "finalized" },
+      "maxBlockRange": 1000,
+      "maxLagBlocks": 200
+    },
+    "wantos": {
+      "chainId": 13555,
+      "rpc": [{ "env": "WANTOS_RPC3_LOCAL", "node": "rpc3" }, { "env": "WANTOS_RPC1_READONLY", "node": "rpc1" }, { "env": "WANTOS_RPC2_READONLY", "node": "rpc2" }],
+      "bridge": "0x00000000000000000000000000000000000b0001",
+      "timelock": "0x00000000000000000000000000000000000b0002",
+      "token": "0xc74F2e7fBdA2af9D1fc26b85E341229063Dc0873",
+      "startBlock": "0",
+      "head": { "kind": "confirmations", "confirmations": 6 },
+      "maxBlockRange": 200,
+      "maxLagBlocks": 60
+    }
+  },
+  "grace": { "w2bSeconds": 300, "b2wBeforeEtaSeconds": 180, "refundBeforeExecSeconds": 7200, "depositRefundBeforeExecSeconds": 7200 },
+  "mintAlertThreshold": "10000000000000000000000",
+  "reconcile": { "intervalSeconds": 3600, "toleranceWei": { "bsc": "1000000000000000000", "wantos": "1000000000000000000" }, "wantosLowBalanceWei": null },
+  "heartbeatIntervalSeconds": 300,
+  "maxRangesPerTick": 5,
+  "gasCheckIntervalSeconds": 300,
+  "wantosStallSeconds": 60,
+  "maxClockSkewSeconds": 60,
+  "cursorStallSeconds": 600,
+  "rpcDissentThreshold": 5,
+  "pauseRetry": { "attempts": 5, "backoffMs": 3000 },
+  "timelockRemindersSeconds": [86400, 21600],
+  "dailyCapReportRatioBps": 7000,
+  "gasWatch": [
+    { "chain": "bsc", "address": "0x00000000000000000000000000000000000a0001", "label": "管理钱包", "minWei": "5000000000000000" },
+    { "chain": "bsc", "address": "0x00000000000000000000000000000000000a0002", "label": "白名单钱包", "minWei": "5000000000000000" },
+    { "chain": "bsc", "address": "0x00000000000000000000000000000000000a0003", "label": "暂停钥匙", "minWei": "5000000000000000" },
+    { "chain": "wantos", "address": "0x00000000000000000000000000000000000a0001", "label": "管理钱包", "minWei": "1000000000000000000" },
+    { "chain": "wantos", "address": "0x00000000000000000000000000000000000a0002", "label": "白名单钱包", "minWei": "1000000000000000000" },
+    { "chain": "wantos", "address": "0x00000000000000000000000000000000000a0004", "label": "暂停钥匙", "minWei": "1000000000000000000" }
+  ],
+  "legacyAddresses": [
+    { "chain": "wantos", "address": "0x8dFd39E98f478688A41Cdbe40bc544d672F0A9E3", "label": "旧 WANTOS 金库 0x8dFd" },
+    { "chain": "wantos", "address": "0x9dAb17a9Ad061cbDA2BeF607A6A330EE74076E90", "label": "旧付款程序 0x9dab" },
+    { "chain": "bsc", "address": "0x9dAb17a9Ad061cbDA2BeF607A6A330EE74076E90", "label": "旧付款程序 0x9dab" },
+    { "chain": "bsc", "address": "0xeC6E356a2E986D6A9b103217B9d215c8a6F37139", "label": "旧 BSC 金库 0xec6e" }
+  ],
+  "runtime": {
+    "tickIntervalSeconds": 5,
+    "pauser": {
+      "kind": "local-keystore",
+      "bsc": { "keystorePath": "/var/lib/savebridge-watcher/keystore/pauser-bsc.json", "passphraseCredential": "pauser-bsc-pass", "address": "0x00000000000000000000000000000000000a0003" },
+      "wantos": { "keystorePath": "/var/lib/savebridge-watcher/keystore/pauser-wantos.json", "passphraseCredential": "pauser-wantos-pass", "address": "0x00000000000000000000000000000000000a0004" }
+    },
+    "pauseWriteRpcEnv": { "bsc": "BSC_RPC_1", "wantos": "WANTOS_RPC3_LOCAL" },
+    "telegram": { "botTokenCredential": "telegram-bot-token", "chatIdCredential": "telegram-chat-id" },
+    "requireTelegram": true,
+    "heartbeat": { "urlCredential": "heartbeat-url" },
+    "externalRpc": { "maxRequestsPerMinute": 120, "burst": 20, "maxLogsBlockRange": 200 },
+    "ackDir": "/var/lib/savebridge-watcher/ack"
+  }
+}

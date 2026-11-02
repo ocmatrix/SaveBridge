@@ -239,3 +239,21 @@ describe("TelegramAlertSink degradation", () => {
     expect(pings).toBe(3);
   });
 });
+
+describe("shipped template deploy/relayer.config.example.json", () => {
+  it("parses, holds no URLs / secrets, and resolves to rpc3 write + rpc1/rpc2 read-only cross-checks", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const text = readFileSync(resolve(__dirname, "../../../deploy/relayer.config.example.json"), "utf8");
+    const raw = JSON.parse(text) as RelayerConfig;
+    const cfg = parseConfig(raw);
+    expect(text.replace(/"https:\/\/bridge\.wanto\.pro"/, "")).not.toMatch(/:\/\//);
+    expect(text).not.toMatch(/[0-9a-fA-F]{64}/);
+    expect(cfg.signer.kind).toBe("local-keystore");
+    expect(cfg.api.host).toBe("127.0.0.1");
+    const ep = resolveEndpoints(cfg, ENV);
+    expect(ep.wantos.write.url).toBe("https://rpc3.wantos.io");
+    expect(ep.warnings).toEqual([]);
+    expect(cfg.poll.intervalMs).toBeGreaterThanOrEqual(5000);
+  });
+});

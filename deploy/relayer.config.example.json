@@ -1,0 +1,33 @@
+{
+  "wantos": {
+    "chainId": 13555,
+    "startBlock": 0,
+    "primaryRpcUrlEnv": "WANTOS_RPC3",
+    "writeRpcUrlEnv": "WANTOS_RPC3",
+    "crossCheckRpcUrlEnvs": ["WANTOS_RPC1_READONLY", "WANTOS_RPC2_READONLY"],
+    "bridgeAddress": "0x00000000000000000000000000000000000b0001",
+    "confirmations": 6
+  },
+  "bsc": {
+    "chainId": 56,
+    "rpcUrlEnvs": ["BSC_RPC_1", "BSC_RPC_2", "BSC_RPC_3"],
+    "writeRpcUrlEnv": "BSC_RPC_1",
+    "bridgeAddress": "0x00000000000000000000000000000000000b0001",
+    "startBlock": 0
+  },
+  "signer": {
+    "kind": "local-keystore",
+    "wantos": { "keystorePath": "/var/lib/savebridge/keystore/relayer-wantos.json", "passphraseCredential": "relayer-wantos-pass", "address": "0x0000000000000000000000000000000000000A01" },
+    "bsc": { "keystorePath": "/var/lib/savebridge/keystore/relayer-bsc.json", "passphraseCredential": "relayer-bsc-pass", "address": "0x0000000000000000000000000000000000000A02" }
+  },
+  "submitter": { "kind": "local-keystore", "keystorePath": "/var/lib/savebridge/keystore/submitter.json", "passphraseCredential": "submitter-pass", "address": "0x0000000000000000000000000000000000000A03" },
+  "rpcNodes": { "WANTOS_RPC3": "rpc3", "WANTOS_RPC1_READONLY": "rpc1", "WANTOS_RPC2_READONLY": "rpc2" },
+  "externalRpc": { "maxRequestsPerMinute": 60, "burst": 10, "maxLogsBlockRange": 200 },
+  "alerts": { "telegram": { "botTokenCredential": "telegram-bot-token", "chatIdCredential": "telegram-chat-id" }, "requireTelegram": true, "logFile": "/var/log/savebridge/alerts.jsonl" },
+  "db": { "urlEnv": "RELAYER_DATABASE_URL" },
+  "api": { "host": "127.0.0.1", "port": 8080, "corsOrigins": ["https://bridge.wanto.pro"] },
+  "poll": { "intervalMs": 5000, "rescanBlocks": 100, "maxBlockRange": 2000 },
+  "tx": { "replaceByFee": true, "stuckAfterMs": 120000, "feeBumpPercent": 15, "maxFeeBumps": 5 },
+  "gas": { "wantosMinBalanceWei": "1000000000000000000", "bscMinBalanceWei": "50000000000000000" },
+  "heartbeat": { "intervalMs": 60000, "staleAfterMs": 300000, "urlCredential": "heartbeat-url" }
+}

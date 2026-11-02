@@ -9,3 +9,4 @@ export * from "./types.js";
 export * from "./verifier.js";
 export * from "./watcher.js";
 export * from "./wiring.js";
+export * from "./deploy.js";
