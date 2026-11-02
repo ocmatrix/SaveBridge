@@ -86,7 +86,7 @@
 | 4.8 | **`start`【A6】**、`verify` | 先于付款程序启动；确认**零一级告警**；邻居服务与节点块高不受影响 |
 | — | `ack <key>` | 负责人确认一级告警（Telegram 消息里的「确认键」）后停止 24h 重复 |
 
-注：rpc3 若是 Ubuntu 22.04（systemd 249），`LoadCredentialEncrypted=` 不可用：`put_credential` / `keys` 会自动改存为 `/etc/credstore.encrypted/<name>`（root 0600 明文文件），需把单元里的 `LoadCredentialEncrypted=` 改为 `LoadCredential=`（待确认项 Q6）。
+注：rpc3 是 Ubuntu 22.04（systemd 249，2026-11-02 已核实），`LoadCredentialEncrypted=` 不可用：`put_credential` / `keys` 自动改存为 `/etc/credstore.encrypted/<name>`（root 0600 明文文件），`systemd` 步骤安装单元时自动把 `LoadCredentialEncrypted=` 换成 `LoadCredential=`，`dry-run-service` 同样（`unit_for_systemd` / `cred_property`，模拟测试已覆盖 249 与 257）。监控钥匙只有暂停权限，明文口令文件风险可接受；换 KMS 后一并清理。
 
 ## 5. 启动顺序与灰度（与 RUNBOOK §6 / §10 一致）
 

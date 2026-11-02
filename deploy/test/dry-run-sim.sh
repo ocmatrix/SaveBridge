@@ -22,7 +22,7 @@ done
 # systemctl / swapon: read-only sub-commands allowed, others are writes
 cat >"$T/bin/systemctl" <<STUB
 #!/bin/sh
-for a in "\$@"; do case "\$a" in is-active|status|show|list-units|--version) echo "RO systemctl \$*" >> "$LOG"; [ "\$a" = --version ] && echo "systemd 257 (257.4-1)"; exit 0;; esac; done
+for a in "\$@"; do case "\$a" in is-active|status|show|list-units|--version) echo "RO systemctl \$*" >> "$LOG"; [ "\$a" = --version ] && echo "systemd \${SIM_SYSTEMD:-257} (\${SIM_SYSTEMD:-257}.4-1)"; exit 0;; esac; done
 echo "RW systemctl \$*" >> "$LOG"
 STUB
 cat >"$T/bin/curl" <<STUB
@@ -84,5 +84,14 @@ if grep -q '\[dry-run\] .*pnpm install --frozen-lockfile --ignore-scripts --filt
 # put_file: a differing existing file is never overwritten without --allow-overwrite
 # shellcheck source=../lib/common.sh disable=SC2034
 ( source "$ROOT/deploy/lib/common.sh"; SB_APPLY=1; echo old >"$T/f"; if echo new | put_file "$T/f" 0644 "$(id -un):$(id -gn)" >/dev/null 2>&1; then echo "FAIL [put_file overwrite guard]"; exit 1; fi; [[ "$(cat "$T/f")" == old ]] && echo "ok   [put_file]: differing file kept without --allow-overwrite" ) || fail=1
+
+# systemd < 250 (rpc3 = Ubuntu 22.04 / 249): the unit must not use LoadCredentialEncrypted; >= 250 keeps it
+# shellcheck source=../lib/app.sh disable=SC2034
+( source "$ROOT/deploy/lib/common.sh"; source "$ROOT/deploy/lib/app.sh"; U="$ROOT/deploy/rpc3-watcher/files/savebridge-watcher.service"
+  o249="$(SIM_SYSTEMD=249 unit_for_systemd "$U")"; o257="$(SIM_SYSTEMD=257 unit_for_systemd "$U")"
+  if grep -q '^LoadCredentialEncrypted=' <<<"$o249" || ! grep -q '^LoadCredential=pauser-bsc-pass:' <<<"$o249"; then echo "FAIL [unit 249]: still encrypted credentials"; exit 1; fi
+  if ! grep -q '^LoadCredentialEncrypted=pauser-bsc-pass:' <<<"$o257" || grep -q '^LoadCredential=' <<<"$o257"; then echo "FAIL [unit 257]: changed"; exit 1; fi
+  [[ "$(SIM_SYSTEMD=249 cred_property)" == LoadCredential && "$(SIM_SYSTEMD=257 cred_property)" == LoadCredentialEncrypted ]] || { echo "FAIL [cred_property]"; exit 1; }
+  echo "ok   [unit]: systemd 249 -> LoadCredential=, 257 -> LoadCredentialEncrypted= (same credential names)" ) || fail=1
 
 exit "$fail"
