@@ -14,7 +14,7 @@ import { hashTypedData } from "viem";
 export async function until(ctx: Ctx, sys: { r?: RelayerSys | null; w?: WatcherSys | null }, pred: () => Promise<boolean>, what: string, o: { rounds?: number; stepSec?: number } = {}): Promise<boolean> {
   for (let i = 0; i < (o.rounds ?? 40); i++) {
     if (await pred()) return true;
-    if (ctx.cfg.waitMode === "warp") await ctx.advance(o.stepSec ?? 15, what);
+    await ctx.advance(o.stepSec ?? 15, what); // warp: time travel; real: wait that much chain time
     await pump(ctx, sys);
   }
   return pred();
