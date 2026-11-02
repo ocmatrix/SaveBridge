@@ -27,8 +27,10 @@ const M = [
   // rule: fresh funds (10 min)
   ["fresh", "engine.ts", "t - new Date(first).getTime() <= p.freshWindowMs", "t - new Date(first).getTime() < p.freshWindowMs"],
   ["fresh", "engine.ts", "if (order.amountWei >= p.freshMinAmount)", "if (order.amountWei > p.freshMinAmount)"],
-  ["fresh", "engine.ts", "select min(block_time) as first", "select max(block_time) as first"],
-  ["fresh", "engine.ts", "where to_addr = $1 and from_addr <> to_addr and block_time <= $2", "where to_addr = $1 and from_addr <> to_addr"],
+  ["fresh", "engine.ts", "select min(x.block_time) as first", "select max(x.block_time) as first"],
+  ["fresh", "engine.ts", "where x.to_addr = $1 and x.from_addr <> x.to_addr and x.block_time <= $2`", "where x.to_addr = $1 and x.from_addr <> x.to_addr`"],
+  ["fresh", "engine.ts", "where x.to_addr = $1 and x.from_addr <> x.to_addr and x.block_time <= $2`", "where x.to_addr = $1 and x.block_time <= $2`"],
+  ["fresh", "engine.ts", "risk_flows x ${this.minJoin(3)}", "risk_flows x ${this.minJoin(3).replace(/ and x\\.amount >= mn_x\\.mn/, \"\")}"],
   // rule: common funder
   ["funder", "engine.ts", "having count(distinct f.to_addr) >= $6", "having count(distinct f.to_addr) > $6"],
   ["funder", "engine.ts", "r.block_time > $2 and r.block_time <= $4)", "r.block_time > $2 and r.block_time <= $3)"],
@@ -50,13 +52,33 @@ const M = [
   ["merge", "engine.ts", ".filter((x): x is string => !!x))].sort();", ".filter((x): x is string => !!x))];"],
   // rule: index (indexer)
   ["indexer", "indexer.ts", "src: isPair ? tf : from,", "src: from,"],
-  ["indexer", "indexer.ts", "if (out > 0n) valueUsdt = out;", ""],
   ["indexer", "indexer.ts", "const target = head - BigInt(this.o.confirmations);", "const target = head;"],
   ["indexer", "indexer.ts", "if (lc(cur.hash) !== lc(st.lastBlockHash)) {", "if (false) {"],
   ["indexer", "indexer.ts", "if (!(await reader.txSucceeded(t.hash))) continue;", ""],
-  ["indexer", "indexer.ts", "&& s.logIndex > l.logIndex)", ")"],
   ["indexer", "indexer.ts", "if (first && st.lastBlock >= 0n && lc(first.parentHash) !== lc(st.lastBlockHash)) {", "if (false) {"],
   ["indexer", "indexer.ts", "await t.query(\"delete from risk_flows where block_number between $1 and $2\", [from.toString(), to.toString()]);", ""],
+  // Gate2 r1 A1: 0-amount / dust griefing, per-asset minimums
+  ["A1", "indexer.ts", "if (amount === 0n) continue;", ""],
+  ["A1", "engine.ts", "risk_flows f ${this.minJoin(7, \"f\")}", "risk_flows f ${this.minJoin(7, \"f\").replace(/ and f\\.amount >= mn_f\\.mn/, \"\")}"],
+  ["A1", "engine.ts", "risk_flows x ${this.minJoin(7)}", "risk_flows x ${this.minJoin(7).replace(/ and x\\.amount >= mn_x\\.mn/, \"\")}"],
+  ["A1", "engine.ts", "on mn_${alias}.asset = ${alias}.asset and", "on true and"],
+  ["A1", "engine.ts", "${alias}.amount >= mn_${alias}.mn", "${alias}.amount > mn_${alias}.mn"],
+  ["A1", "config.ts", "funderMinAmount: { USDT: 10n ** BigInt(usdtDecimals),", "funderMinAmount: { USDT: 1n,"],
+  ["A1", "config.ts", "if (!(v > 0n)) throw", "if (v < 0n) throw"],
+  ["A1", "engine.ts", "having count(distinct f.to_addr) >= $6", "having count(f.to_addr) >= $6"],
+  ["A1", "engine.ts", "where x.to_addr = $1 and x.block_time > $2 and x.block_time <= $3)", "where x.to_addr = $1 and x.block_time <= $3)"],
+  // r1 guards for aligner survivors
+  ["ratio", "engine.ts", "const stop = [user, ZERO_ADDRESS", "const stop = [ZERO_ADDRESS"],
+  ["ratio", "engine.ts", "uncontrolled.set(hexOf(r.src), v - cv)", "uncontrolled.set(hexOf(r.src), v)"],
+  ["ratio", "engine.ts", "[srcs, start, end]", "[srcs, new Date(0), end]"],
+  // Gate2 r1 B2: pricing = transfer amount
+  ["B2", "indexer.ts", "const valueUsdt = asset === \"USDT\" ? amount : 0n;", "const valueUsdt = asset === \"USDT\" ? (isPair ? 1n : amount) : 0n;"],
+  ["B2", "indexer.ts", "const valueUsdt = asset === \"USDT\" ? amount : 0n;", "const valueUsdt = amount;"],
+  // r1 small fixes
+  ["indexer", "indexer.ts", "lc(blocks.get(n)!.parentHash) !== lc(blocks.get(n - 1n)!.hash)", "false"],
+  ["redact", "indexer.ts", "indexer tick failed: ${errText(e)}", "indexer tick failed: ${(e as Error).message}"],
+  ["redact", "engine.ts", "risk assessment failed: ${errText(e)}", "risk assessment failed: ${(e as Error).message}"],
+  ["pairs", "pairs.ts", "if (!Number.isInteger(expectCount) || expectCount < 1) throw", "if (false) throw"],
 ];
 
 function setupCopy(dir) {
