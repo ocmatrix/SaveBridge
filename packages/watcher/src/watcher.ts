@@ -280,7 +280,11 @@ export class Watcher {
    */
   private reopenAfter(t: number): void {
     const d = this.state.meta.decided;
-    for (const [id, at] of Object.entries(d)) if ((id.startsWith("w2b:") || id.startsWith("depositRefund:")) && at >= t) delete d[id];
+    for (const [id, at] of Object.entries(d))
+      if ((id.startsWith("w2b:") || id.startsWith("depositRefund:")) && at >= t) {
+        delete d[id];
+        this.alerts.resolvePrefix(`autopause:${id}`); // r4: a re-opened check may auto-pause (and alert) again
+      }
   }
 
   private snapshot(): void {

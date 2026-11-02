@@ -53,4 +53,45 @@ describe("round-4 hardening", () => {
       expect(Object.keys(t.w.state.derived.timelockOps)).toHaveLength(0);
     });
   });
+
+  it("item 1: after a rollback re-opens an auto-paused check, a second auto-pause raises AUTO_PAUSE again", async () => {
+    const t = await makeWatcher(H);
+    await H.settle();
+    await t.w.tick(); // S1 — stays canonical
+    const fork = await H.wantos.snapshot();
+    const r = await forge(41n);
+    await H.settle();
+    t.clock.now = r.timestamp + 10;
+    await t.w.tick();
+    t.clock.now = r.timestamp + 301;
+    await t.w.tick();
+    const id = t.sink.alerts.find((a) => a.code === "AUTO_PAUSE")!.detail["check"] as { id: string };
+    await H.wantos.revert(fork);
+    await H.wantos.rpc("evm_setNextBlockTimestamp", [(await H.wantos.latest()).timestamp + 500]);
+    await H.wantos.mine(12);
+    t.clock.now += 600;
+    await t.w.tick();
+    expect(t.codes()).toContain("WANTOS_REORG");
+    const again = t.sink.alerts.filter((a) => a.code === "AUTO_PAUSE" && (a.detail["check"] as { id?: string } | undefined)?.id === id.id);
+    expect(again).toHaveLength(2);
+  });
+
+  it("M5: a range that fails is retried from the same cursor and its Released still gets a check", async () => {
+    let fail = false;
+    const mk = () => tamperedClient(H.bsc, (m) => (fail && m === "eth_getLogs" ? { handled: true, result: new Error("down") } : { handled: false }));
+    const t = await makeWatcher(H, { endpoints: { bsc: [{ label: "x", client: mk() }, { label: "y", client: mk() }] } });
+    await H.settle();
+    await t.w.tick();
+    const before = t.w.state.derived.bsc.cursor!.number;
+    fail = true;
+    const r = await forge(61n);
+    await H.settle();
+    t.clock.now = r.timestamp + 10;
+    await t.w.tick();
+    expect(t.w.state.derived.bsc.cursor!.number).toBe(before);
+    expect(t.w.state.derived.pending).toHaveLength(0);
+    fail = false;
+    await t.w.tick();
+    expect(t.w.state.derived.pending.map((p) => p.txHash)).toContain(r.hash);
+  });
 });
