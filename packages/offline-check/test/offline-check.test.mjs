@@ -186,12 +186,17 @@ describe("CLI", () => {
       [file, "--action"],
       ["--decode", "0x8456cb59", "--action", "add"],
       ["--decode", "0x8456cb59", "x.txt"],
+      ["--decode", ""],
+      ["--decode", "  "],
     ];
     for (const argv of bad) {
       const r = oc.runCli(argv, () => vectors.cases[0].text);
       expect(r.code, JSON.stringify(argv)).toBe(64);
       expect(r.out).not.toContain("messageHash");
     }
+    // the error says why (the "=" form is called out, not reported as an unknown option)
+    expect(oc.runCli([...base, `--expect-list-hash=${H}`], () => "").out).toContain("不支持的写法");
+    expect(oc.runCli([...base, "--expect-listhash", H], () => "").out).toContain("未知选项");
     // the same through a real process
     expect(spawnSync(process.execPath, [TOOL, ...base, `--expect-list-hash=${H}`]).status).toBe(64);
     expect(oc.runCli(["--decode", "0x8456cb59", "--json"], () => "").code).toBe(0);

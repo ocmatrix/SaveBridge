@@ -135,6 +135,15 @@ describe("whitelist page", () => {
     fireEvent.click(prepareBtn());
     await screen.findByTestId("listHash");
     expect(screen.getByTestId("offline-cmd")).toHaveTextContent("--action remove");
+    // and back: 移除 → 添加 also voids the prepared batch
+    fireEvent.click(screen.getByLabelText("添加", { selector: "input" }));
+    expect(screen.getByTestId("op")).toHaveTextContent("添加");
+    expect(screen.queryByTestId("hashes")).toBeNull();
+    expect(screen.queryByRole("button", { name: /签名并写入|重试/ })).toBeNull();
+    fireEvent.click(screen.getByLabelText("移除", { selector: "input" }));
+    fireEvent.click(prepareBtn());
+    await screen.findByTestId("listHash");
+    expect(screen.getByTestId("offline-cmd")).toHaveTextContent("--action remove");
     wl.log.length = 0;
     fireEvent.click(screen.getByRole("button", { name: "签名并写入两条链" }));
     await waitFor(() => expect(screen.getByTestId("progress")).toHaveTextContent(/WANTOS：已写入.*BSC：已写入/s), { timeout: 20_000 });
@@ -146,7 +155,11 @@ describe("whitelist page", () => {
   it("A2: the page's own offline command (multi-batch, batch 2) makes the tool print exactly the message hashes on screen", async () => {
     const list = Array.from({ length: 501 }, (_, i) => keccak256(toBytes(`a2-${i}`)).slice(0, 42));
     const rawFile = list.join("\n");
-    renderApp(w, localSigner(w, w.act.wl));
+    // make the two chains' nonces differ so a swapped --bsc-nonce/--wantos-nonce would show
+    const wl = localSigner(w, w.act.wl);
+    await invalidateNonce(w.chains.bsc, wl);
+    await invalidateNonce(w.chains.bsc, wl);
+    renderApp(w, wl);
     paste(rawFile);
     const sel = await screen.findByLabelText("选择批次");
     fireEvent.change(sel, { target: { value: "1" } });
