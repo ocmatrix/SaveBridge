@@ -1,0 +1,19 @@
+{
+  "_comment": "PR-9 real testnet run (WANTON 1345 + BSC testnet 97). Runs ONLY with the owner's authorization: --authorized and PR9_TESTNET_AUTHORIZED=1. RPC URLs come from the env vars named here (WANTON via SSH tunnel / VPC to rpc-test). Test USDT: null = deploy a MockToken (18 decimals) on that chain; or put an existing 18-decimal test token address.",
+  "profile": "testnet",
+  "waitMode": "real",
+  "chains": {
+    "wantos": { "chainId": 1345, "rpcUrlEnvs": ["WANTON_RPC_PRIMARY", "WANTON_RPC_CROSSCHECK_1"], "token": null, "confirmations": 6 },
+    "bsc": { "chainId": 97, "rpcUrlEnvs": ["BSC_TESTNET_RPC_1", "BSC_TESTNET_RPC_2", "BSC_TESTNET_RPC_3"], "token": null, "confirmations": 6 }
+  },
+  "params": {
+    "bsc": { "dailyCap": 8000, "perAddrDailyCap": 300, "largeThreshold": 150, "releaseDelaySec": 120, "minDeposit": 10, "maxDepositPerTx": 1000 },
+    "wantos": { "w2bMinAmount": 10, "w2bPerAddrDailyCap": 2000, "b2wDailyCap": 3000, "b2wDelaySec": 90 },
+    "supplyHeadroom": 10000
+  },
+  "reserves": { "bsc": 20000, "wantos": 20000 },
+  "watcherGrace": { "w2bSeconds": 60, "b2wBeforeEtaSeconds": 30, "refundBeforeExecSeconds": 60, "depositRefundBeforeExecSeconds": 60 },
+  "gasWei": { "role": "20000000000000000", "user": "2000000000000000" },
+  "e2e": { "smallW2B": 40, "largeW2B": 15, "b2w": 25, "quota": 5, "review": 5, "refund": 5, "negative": 5 },
+  "tickSeconds": 3
+}

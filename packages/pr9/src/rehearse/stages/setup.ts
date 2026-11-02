@@ -58,13 +58,18 @@ export async function stageDeploy(ctx: Ctx): Promise<void> {
     for (const s of SIDES) for (const a of all) await chains[s].setBalance(a, BigInt(cfg.gasWei.role));
   } else {
     // testnet: the funder (filled by Testor / faucet after the owner's authorization) tops up every test key
+    const users = new Set(keys.users(1, 100).map((u) => u.address));
     for (const s of SIDES) {
-      const need = BigInt(cfg.gasWei.role);
-      const low: Address[] = [];
-      for (const a of all) if (a !== funder.address && (await chains[s].pub.getBalance({ address: a })) < need / 2n) low.push(a);
+      const top: Array<{ to: Address; value: bigint }> = [];
+      for (const a of all) {
+        if (a === funder.address) continue;
+        const need = BigInt(users.has(a) ? cfg.gasWei.user : cfg.gasWei.role);
+        if ((await chains[s].pub.getBalance({ address: a })) < need / 2n) top.push({ to: a, value: need });
+      }
+      const total = top.reduce((x, t) => x + t.value, 0n);
       const have = await chains[s].pub.getBalance({ address: funder.address });
-      ctx.check(`D0-gas-${s}`, `${s} 资助钱包余额足够给 ${low.length} 个测试钥匙补 gas`, have > need * BigInt(low.length), `funder ${have} wei`);
-      await chains[s].sendMany(funder, low.map((a) => ({ to: a, value: need })));
+      ctx.check(`D0-gas-${s}`, `${s} 资助钱包余额足够给 ${top.length} 个测试钥匙补 gas`, have > total, `need ${total} wei, funder ${have} wei`);
+      await chains[s].sendMany(funder, top);
     }
   }
   for (const s of SIDES) {
