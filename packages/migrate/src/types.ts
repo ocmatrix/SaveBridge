@@ -28,13 +28,13 @@ export interface OldPayout {
   amount: string;
   srcTxHash?: Hex;
   srcLogIndex?: number;
+  /** Unix seconds of the payout block. Loose payouts strictly before an order's time cannot be for it; unknown = always counts. */
+  timestamp?: number;
 }
 
 export interface LegacySourceData {
   orders: SourceOrder[];
   payouts: OldPayout[];
-  /** Loader findings that need a human look (e.g. a payout spec that returned nothing). */
-  warnings?: string[];
 }
 
 export type ScanStatus =

@@ -5,7 +5,7 @@
  *   scan      --source <file.json> | --rpc-config <file.json>   --cutoff <T> --vault <0x> --bsc-chain-id <id> [--paid-keys <file>] [--controlled <file>] --out <dir>
  *   validate  <manifest.csv> [--hash <0x>] [--controlled <file>]
  *   propose   <manifest.csv> --hash <0x> --timelock <0x> [--round N] [--exclude <oldKey file>] --out <dir>
- *   preflight <manifest.csv> --hash <0x> --rpc-config <old-bridge.json> --rpc <new-vault url> --vault <0x> [--timelock <0x> --batch i [--round N] [--exclude <file>]]
+ *   preflight <manifest.csv> --hash <0x> --rpc-config <old-bridge.json> --rpc <new-vault url> --vault <0x> [--data <CallScheduled payLegacyBatch calldata>]
  *   verify-call <manifest.csv> --hash <0x> --target <0x> --data <0x> --delay <sec> [--value 0] [--predecessor 0x..]
  *   reconcile <manifest.csv>... --rpc <url> --vault <0x> --from-block <n>
  *   drill     <manifest.csv>
@@ -13,13 +13,12 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { createPublicClient, getAddress, http, zeroHash, type Hex, type PublicClient } from "viem";
+import { createPublicClient, getAddress, http, isAddress, zeroHash, type Hex, type PublicClient } from "viem";
 import { runDrill, startLocalVault } from "./drill.js";
 import { parseSourceJson } from "./io.js";
 import { buildManifest, loadManifest, validateManifest } from "./manifest.js";
-import { buildProposals, renderProposals, verifyScheduledCall } from "./proposal.js";
+import { MIN_DELAY, buildProposals, renderProposals, verifyScheduledCall } from "./proposal.js";
 import { legacyPaidReader, preflightBatch, readLegacyPaid, reconcileLegacy } from "./reconcile.js";
-import { oldKey } from "./oldkey.js";
 import { scanLegacy } from "./scan.js";
 import { loadFromRpc, type RpcSourceConfig, type SourceClient } from "./source-rpc.js";
 import type { LegacySourceData } from "./types.js";
@@ -39,7 +38,7 @@ async function main(argv: string[]): Promise<number> {
     options: {
       source: { type: "string" }, "rpc-config": { type: "string" }, cutoff: { type: "string" }, vault: { type: "string" }, "bsc-chain-id": { type: "string" },
       "paid-keys": { type: "string" }, out: { type: "string" }, hash: { type: "string" }, rpc: { type: "string" }, controlled: { type: "string" },
-      timelock: { type: "string" }, batch: { type: "string" }, exclude: { type: "string" }, round: { type: "string" }, target: { type: "string" }, data: { type: "string" },
+      timelock: { type: "string" }, exclude: { type: "string" }, round: { type: "string" }, target: { type: "string" }, data: { type: "string" },
       delay: { type: "string" }, value: { type: "string" }, predecessor: { type: "string" }, "from-block": { type: "string" },
     },
   });
@@ -50,21 +49,33 @@ async function main(argv: string[]): Promise<number> {
     for (const [id, url] of Object.entries(raw.rpc)) clients[Number(id)] = client(url);
     return loadFromRpc(raw, clients);
   };
-  const excludeSet = (): Set<string> => new Set(o.exclude ? lines(o.exclude).map((k) => k.toLowerCase()) : []);
+  /** Every non-comment line must be an address (B2: no silent skipping of typos). */
+  const addrLines = (f: string): string[] =>
+    lines(f).map((l) => {
+      if (!isAddress(l, { strict: false })) throw new Error(`${f}: "${l}" is not an address`);
+      return l.toLowerCase();
+    });
+  /** Every non-comment line must be a 32-byte hex key. */
+  const keyLines = (f: string): string[] =>
+    lines(f).map((l) => {
+      if (!/^0x[0-9a-fA-F]{64}$/.test(l)) throw new Error(`${f}: "${l}" is not a 32-byte oldKey`);
+      return l.toLowerCase();
+    });
+  const excludeSet = (): Set<string> => new Set(o.exclude ? keyLines(o.exclude) : []);
   switch (cmd) {
     case "scan": {
       let data: LegacySourceData;
       if (o.source) data = parseSourceJson(readFileSync(o.source, "utf8"));
       else data = await fromRpcConfig(need(o["rpc-config"], "rpc-config"));
       const cutoverT = Number(need(o.cutoff, "cutoff"));
-      const alreadyPaid = new Set(o["paid-keys"] ? lines(o["paid-keys"]).map((k) => k.toLowerCase()) : []);
-      const r = scanLegacy(data, { cutoverT, alreadyPaid, controlled: o.controlled ? lines(o.controlled) : [] });
+      const alreadyPaid = new Set(o["paid-keys"] ? keyLines(o["paid-keys"]) : []);
+      const r = scanLegacy(data, { cutoverT, alreadyPaid, controlled: o.controlled ? addrLines(o.controlled) : [] });
       const out = need(o.out, "out");
       mkdirSync(out, { recursive: true });
       writeFileSync(join(out, "scan-report.json"), json(r));
       const counts: Record<string, number> = {};
       for (const e of r.entries) counts[e.status] = (counts[e.status] ?? 0) + 1;
-      process.stdout.write(json({ counts, duplicatesDropped: r.duplicatesDropped, orphanPayouts: r.orphanPayouts.length, warnings: r.warnings }));
+      process.stdout.write(json({ counts, duplicatesDropped: r.duplicatesDropped, orphanPayouts: r.orphanPayouts.length }));
       if (r.payable.length === 0) return 0;
       const m = buildManifest(r.payable, { bscChainId: Number(need(o["bsc-chain-id"], "bsc-chain-id")), vault: getAddress(need(o.vault, "vault")), cutoverT });
       writeFileSync(join(out, "manifest.csv"), m.csv);
@@ -74,7 +85,7 @@ async function main(argv: string[]): Promise<number> {
     case "validate": {
       const opts: Parameters<typeof validateManifest>[1] = {};
       if (o.hash) opts.expectedHash = o.hash as Hex;
-      if (o.controlled) opts.controlled = lines(o.controlled);
+      if (o.controlled) opts.controlled = addrLines(o.controlled);
       const v = await validateManifest(readFileSync(need(pos[0], "manifest"), "utf8"), opts);
       process.stdout.write(json({ ok: v.ok, hash: v.hash, count: v.count, total: v.total, errors: v.errors }));
       return v.ok ? 0 : 1;
@@ -95,17 +106,20 @@ async function main(argv: string[]): Promise<number> {
       const m = await loadManifest(readFileSync(need(pos[0], "manifest"), "utf8"), need(o.hash, "hash") as Hex);
       const vault = getAddress(need(o.vault, "vault"));
       if (vault !== m.header.vault) throw new Error(`--vault ${vault} is not the manifest vault ${m.header.vault}`);
-      const old = await fromRpcConfig(need(o["rpc-config"], "rpc-config"));
-      const knownOrders = new Set(old.orders.map((x) => oldKey(x.txHash, x.logIndex)));
       let entries = m.entries;
-      if (o.batch !== undefined) {
-        const ps = buildProposals(m, { timelock: getAddress(need(o.timelock, "timelock")), exclude: excludeSet() }, Number(o.round ?? 0));
-        const p = ps[Number(o.batch)];
-        if (!p) throw new Error(`no batch ${o.batch}`);
-        entries = p.entries;
+      if (o.data !== undefined) {
+        // the batch is exactly what was scheduled: decode the CallScheduled calldata (no re-batching by flags)
+        const c = verifyScheduledCall({ target: m.header.vault, value: 0n, data: o.data as Hex, predecessor: zeroHash, delay: MIN_DELAY }, m);
+        if (!c.ok) {
+          process.stdout.write(json({ ok: false, blockers: c.errors.map((e) => `calldata: ${e}`), checked: 0 }));
+          return 1;
+        }
+        entries = c.entries;
       }
-      const r = await preflightBatch(entries, { isLegacyPaid: legacyPaidReader(client(need(o.rpc, "rpc")), vault), oldPayouts: old.payouts, knownOrders });
-      process.stdout.write(json({ ...r, checked: entries.length, loaderWarnings: old.warnings ?? [] }));
+      // the loader fails closed on missing / stale payout coverage and on double-captured orders
+      const old = await fromRpcConfig(need(o["rpc-config"], "rpc-config"));
+      const r = await preflightBatch(entries, { isLegacyPaid: legacyPaidReader(client(need(o.rpc, "rpc")), vault), oldPayouts: old.payouts, orders: old.orders });
+      process.stdout.write(json({ ...r, checked: entries.length }));
       return r.ok ? 0 : 1;
     }
     case "verify-call": {

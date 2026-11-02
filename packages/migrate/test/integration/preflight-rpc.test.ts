@@ -1,64 +1,134 @@
-/** A4: read-only `preflight` CLI against a real node (local anvil): loadFromRpc → old payouts → blockers. */
+/**
+ * Read-only `scan --rpc-config` and `preflight` CLI against real nodes: two local anvils (BSC-like 5600 with the
+ * PR-1 vault, WANTOS-like 13500), real Transfer logs standing in for the old bridge. Covers A-1 (stale payout
+ * coverage), A-2 (missing / double coverage fails closed), B1 (preflight --data) and the A4 basics.
+ */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { encodeFunctionData, parseEther } from "viem";
+import { encodeFunctionData, parseAbi, parseEther, type Address } from "viem";
 import { mnemonicToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { DRILL_ACCOUNTS, LOCAL_CHAIN_ID, startLocalVault, tokenAbi, type LocalVault } from "../../src/drill.js";
+import { DRILL_ACCOUNTS, LOCAL_CHAIN_ID, startLocalVault, type LocalVault } from "../../src/drill.js";
 import { manifestHash } from "../../src/manifest.js";
 
 const PKG = join(__dirname, "../..");
 const run = (...args: string[]) => spawnSync(join(PKG, "node_modules/.bin/tsx"), [join(PKG, "src/cli.ts"), ...args], { encoding: "utf8", cwd: PKG });
 const acct = (i: number) => mnemonicToAccount("test test test test test test test test test test test junk", { addressIndex: i });
 const USER = acct(5);
-const OLD_VAULT = acct(6); // stands in for the old BSC vault 0xec6e
+const OLD_BSC = acct(6); // stands in for the old BSC vault 0xec6e
+const OLD_WANTOS = acct(7); // stands in for the old WANTOS vault 0x8dFd
+const OTHER = acct(8);
+const WANTOS_ID = 13500;
+const tok = parseAbi(["function mint(address to, uint256 amount)", "function transfer(address to, uint256 amount) returns (bool)"]);
+const TRANSFER = "event Transfer(address indexed from, address indexed to, uint256 value)";
 
-let lv: LocalVault;
+let bsc: LocalVault;
+let wantos: LocalVault;
 beforeAll(async () => {
-  lv = await startLocalVault();
+  [bsc, wantos] = await Promise.all([startLocalVault(), startLocalVault(WANTOS_ID)]);
 });
-afterAll(() => lv?.stop());
+afterAll(() => {
+  bsc?.stop();
+  wantos?.stop();
+});
 
-const transfer = (from: ReturnType<typeof acct>, to: string, n: string) => lv.send(from, lv.token, encodeFunctionData({ abi: [...tokenAbi, { type: "function", name: "transfer", stateMutability: "nonpayable", inputs: [{ type: "address" }, { type: "uint256" }], outputs: [{ type: "bool" }] }], functionName: "transfer", args: [to as `0x${string}`, parseEther(n)] }));
+const mint = (c: LocalVault, to: Address, n: string) => c.send(DRILL_ACCOUNTS.tokenDeployer, c.token, encodeFunctionData({ abi: tok, functionName: "mint", args: [to, parseEther(n)] }));
+const transfer = (c: LocalVault, from: ReturnType<typeof acct>, to: Address, n: string) => c.send(from, c.token, encodeFunctionData({ abi: tok, functionName: "transfer", args: [to, parseEther(n)] }));
+const head = async (c: LocalVault) => c.pub.getBlockNumber({ cacheTime: 0 });
+const mine = async (c: LocalVault, n: number) => {
+  await fetch(c.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "anvil_mine", params: [`0x${n.toString(16)}`] }) });
+};
 
-describe("preflight CLI on anvil", () => {
-  it("passes before the old bridge pays, blocks after a fee-reduced payout to the depositor", async () => {
-    await lv.send(DRILL_ACCOUNTS.tokenDeployer, lv.token, encodeFunctionData({ abi: tokenAbi, functionName: "mint", args: [USER.address, parseEther("100")] }));
-    await transfer(USER, OLD_VAULT.address, "10"); // the stuck B2W deposit
+describe("scan / preflight CLI on two anvils", () => {
+  it("full flow: fail-closed coverage, stale payout coverage, late fee-reduced payout, --data", async () => {
+    // history: both old vaults paid someone before (so their payout specs are not empty)
+    await mint(bsc, OLD_BSC.address, "100");
+    await transfer(bsc, OLD_BSC, OTHER.address, "1");
+    await mint(wantos, OLD_WANTOS.address, "100");
+    await transfer(wantos, OLD_WANTOS, OTHER.address, "1");
+    await mint(bsc, USER.address, "100");
+    await transfer(bsc, USER, OLD_BSC.address, "10"); // the stuck B2W deposit
+    const T = Math.floor(Date.now() / 1000) + 10_000_000;
     const dir = mkdtempSync(join(tmpdir(), "pr8-pf-"));
-    const cfg = (toBlock: bigint) => {
-      const ev = "event Transfer(address indexed from, address indexed to, uint256 value)";
+    const orderTo = (await head(bsc)).toString();
+    const cfg = (name: string, over: { payouts?: unknown[]; orders?: unknown[]; bscPayoutTo?: string } = {}) => {
       const c = {
-        rpc: { [LOCAL_CHAIN_ID]: lv.url },
-        orders: [{ chainId: LOCAL_CHAIN_ID, address: lv.token, token: lv.token, event: ev, args: { to: OLD_VAULT.address }, fromBlock: "0n", toBlock: `${toBlock}n`, decimals: 18, direction: "B2W", fields: { from: "from", amount: "value" } }],
-        payouts: [{ chainId: LOCAL_CHAIN_ID, address: lv.token, token: lv.token, event: ev, args: { from: OLD_VAULT.address }, fromBlock: "0n", toBlock: `${toBlock}n`, decimals: 18, fields: { to: "to", amount: "value" } }],
+        rpc: { [LOCAL_CHAIN_ID]: bsc.url, [WANTOS_ID]: wantos.url },
+        orders: over.orders ?? [{ chainId: LOCAL_CHAIN_ID, address: bsc.token, token: bsc.token, event: TRANSFER, args: { to: OLD_BSC.address }, fromBlock: "0n", toBlock: `${orderTo}n`, decimals: 18, direction: "B2W", fields: { from: "from", amount: "value" } }],
+        payouts: over.payouts ?? [
+          { chainId: LOCAL_CHAIN_ID, address: bsc.token, token: bsc.token, event: TRANSFER, args: { from: OLD_BSC.address }, fromBlock: "0n", toBlock: over.bscPayoutTo ?? "latest", decimals: 18, fields: { to: "to", amount: "value" } },
+          { chainId: WANTOS_ID, address: wantos.token, event: TRANSFER, args: { from: OLD_WANTOS.address }, fromBlock: "0n", toBlock: "latest", decimals: 18, fields: { to: "to", amount: "value" } },
+        ],
       };
-      writeFileSync(join(dir, "old.json"), JSON.stringify(c));
-      return join(dir, "old.json");
+      const f = join(dir, `${name}.json`);
+      writeFileSync(f, JSON.stringify(c));
+      return f;
     };
-    const s = run("scan", "--rpc-config", cfg(await lv.pub.getBlockNumber({ cacheTime: 0 })), "--cutoff", String(Math.floor(Date.now() / 1000) + 10_000_000), "--vault", lv.vault, "--bsc-chain-id", String(LOCAL_CHAIN_ID), "--out", dir);
+    const scan = (cfgPath: string, out: string) => run("scan", "--rpc-config", cfgPath, "--cutoff", String(T), "--vault", bsc.vault, "--bsc-chain-id", String(LOCAL_CHAIN_ID), "--out", out);
+
+    // A-2 ① payout spec at a wrong address -> exit 1, no manifest written
+    const goodPayouts = JSON.parse(readFileSync(cfg("tmp"), "utf8")).payouts as Record<string, unknown>[];
+    const bad1 = scan(cfg("wrong-addr", { payouts: [{ ...goodPayouts[0], address: OTHER.address }, goodPayouts[1]] }), join(dir, "o1"));
+    expect(bad1.status).toBe(1);
+    expect(bad1.stderr).toMatch(/payout spec #0 .* returned no logs/);
+    expect(existsSync(join(dir, "o1", "manifest.csv"))).toBe(false);
+    // A-2 ② no payout specs at all -> exit 1
+    const bad2 = scan(cfg("no-payouts", { payouts: [] }), join(dir, "o2"));
+    expect(bad2.status).toBe(1);
+    expect(bad2.stderr).toMatch(/no payout spec/);
+    // A-2 ③ the deposit captured by two order specs -> exit 1
+    const goodOrder = JSON.parse(readFileSync(cfg("tmp"), "utf8")).orders[0] as Record<string, unknown>;
+    const bad3 = scan(cfg("double", { orders: [goodOrder, { ...goodOrder, args: { from: USER.address } }] }), join(dir, "o3"));
+    expect(bad3.status).toBe(1);
+    expect(bad3.stderr).toMatch(/captured by order specs #0 and #1/);
+    expect(existsSync(join(dir, "o3", "manifest.csv"))).toBe(false);
+
+    // good scan
+    const out = join(dir, "ok");
+    const s = scan(cfg("good"), out);
     expect(s.status, s.stderr).toBe(0);
-    expect(s.stdout).toMatch(/payout spec #0 .* returned no logs/);
-    const csvPath = join(dir, "manifest.csv");
+    const csvPath = join(out, "manifest.csv");
     const csv = readFileSync(csvPath, "utf8");
     expect(csv).toContain(`,B2W,${USER.address},${USER.address},10000000000000000000,10\n`);
     const hash = manifestHash(csv);
+    const pf = (cfgPath: string, ...extra: string[]) => run("preflight", csvPath, "--hash", hash, "--rpc-config", cfgPath, "--rpc", bsc.url, "--vault", bsc.vault, ...extra);
 
-    const pf = (cfgPath: string) => run("preflight", csvPath, "--hash", hash, "--rpc-config", cfgPath, "--rpc", lv.url, "--vault", lv.vault);
-    const ok = pf(cfg(await lv.pub.getBlockNumber({ cacheTime: 0 })));
+    const ok = pf(cfg("good"));
     expect(ok.status, ok.stderr + ok.stdout).toBe(0);
     expect(JSON.parse(ok.stdout)).toMatchObject({ ok: true, checked: 1 });
+    expect(run("propose", csvPath, "--hash", hash, "--timelock", bsc.timelock, "--out", join(dir, "p")).status).toBe(0);
+    const ps = JSON.parse(readFileSync(join(dir, "p", "proposals.json"), "utf8")) as { payCalldata: string }[];
+    const okData = pf(cfg("good"), "--data", ps[0]!.payCalldata);
+    expect(okData.status, okData.stdout + okData.stderr).toBe(0);
+    expect(JSON.parse(okData.stdout)).toMatchObject({ ok: true, checked: 1 });
 
-    await transfer(OLD_VAULT, USER.address, "9.9"); // the old bridge refunds late, minus a fee
-    const blocked = pf(cfg(await lv.pub.getBlockNumber({ cacheTime: 0 })));
+    // A-1: a config frozen at scan time is refused once the chain has moved on (> 12 blocks)
+    const frozen = cfg("frozen", { bscPayoutTo: `${await head(bsc)}n` });
+    expect(pf(frozen).status).toBe(0); // still within the lag
+    await mine(bsc, 13);
+    const stale = pf(frozen);
+    expect(stale.status).toBe(1);
+    expect(stale.stderr).toMatch(/payout spec #0 stops at block \d+, chain 5600 head is \d+/);
+
+    // the old bridge refunds late, minus a fee -> "latest" config sees it, preflight blocks
+    await transfer(bsc, OLD_BSC, USER.address, "9.9");
+    const blocked = pf(cfg("good"));
     expect(blocked.status, blocked.stdout + blocked.stderr).toBe(1);
     expect(JSON.parse(blocked.stdout).blockers.join()).toContain(`not linked to this order went to ${USER.address}`);
 
-    expect(run("preflight", csvPath, "--hash", hash, "--rpc-config", join(dir, "old.json"), "--rpc", lv.url, "--vault", DRILL_ACCOUNTS.admin.address).stderr).toMatch(/not the manifest vault/);
-    const b0 = run("preflight", csvPath, "--hash", hash, "--rpc-config", join(dir, "old.json"), "--rpc", lv.url, "--vault", lv.vault, "--timelock", lv.timelock, "--batch", "0");
-    expect(b0.status).toBe(1);
-    expect(run("preflight", csvPath, "--hash", hash, "--rpc-config", join(dir, "old.json"), "--rpc", lv.url, "--vault", lv.vault, "--timelock", lv.timelock, "--batch", "1").stderr).toMatch(/no batch 1/);
+    // misc: wrong vault; B1 --data of the scheduled batch; garbage data; removed flags
+    expect(pf(cfg("good")).status).toBe(1);
+    expect(run("preflight", csvPath, "--hash", hash, "--rpc-config", cfg("good"), "--rpc", bsc.url, "--vault", DRILL_ACCOUNTS.admin.address).stderr).toMatch(/not the manifest vault/);
+    const withData = pf(cfg("good"), "--data", ps[0]!.payCalldata);
+    expect(withData.status).toBe(1);
+    expect(JSON.parse(withData.stdout)).toMatchObject({ ok: false, checked: 1 });
+    const garbage = pf(cfg("good"), "--data", "0xdeadbeef");
+    expect(garbage.status).toBe(1);
+    expect(JSON.parse(garbage.stdout).blockers.join()).toMatch(/calldata: cannot decode/);
+    const removed = pf(cfg("good"), "--batch", "0");
+    expect(removed.status).toBe(1);
+    expect(removed.stderr).toMatch(/Unknown option '--batch'/);
   });
 });

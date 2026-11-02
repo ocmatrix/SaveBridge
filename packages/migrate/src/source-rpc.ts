@@ -12,7 +12,8 @@ export interface EventSpec {
   /** e.g. "event Transfer(address indexed from, address indexed to, uint256 value)" */
   event: string;
   fromBlock: bigint;
-  toBlock: bigint;
+  /** A block number, or "latest" (resolved with getBlockNumber when the load starts). */
+  toBlock: bigint | "latest";
   /** Token decimals of the amount argument. */
   decimals: number;
   /** When set, `decimals()` of this token must equal `decimals` (checked once per spec). */
@@ -37,7 +38,13 @@ export interface RpcSourceConfig {
   chunk?: bigint;
 }
 
-export type SourceClient = Pick<PublicClient, "getLogs" | "getBlock" | "readContract">;
+export type SourceClient = Pick<PublicClient, "getLogs" | "getBlock" | "readContract" | "getBlockNumber" | "getChainId">;
+
+/**
+ * Payout specs must be read up to the current chain head (minus at most this many blocks): a late old-bridge
+ * payout is exactly what the scan / preflight must not miss. Order specs may stop at T.
+ */
+export const MAX_PAYOUT_LAG_BLOCKS = 12n;
 
 interface RawLog {
   address: Address;
@@ -50,7 +57,9 @@ interface RawLog {
 
 const decimalsAbi = [{ type: "function", name: "decimals", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] }] as const;
 
-async function fetchLogs(client: SourceClient, s: EventSpec, chunk: bigint): Promise<RawLog[]> {
+type ResolvedSpec = EventSpec & { toBlock: bigint };
+
+async function fetchLogs(client: SourceClient, s: ResolvedSpec, chunk: bigint): Promise<RawLog[]> {
   if (s.toBlock < s.fromBlock) throw new Error(`toBlock < fromBlock for ${s.event}`);
   if (s.token) {
     const d = Number(await client.readContract({ address: s.token, abi: decimalsAbi, functionName: "decimals" }));
@@ -85,6 +94,12 @@ function amountOf(l: RawLog, name: string, decimals: number): string {
   return formatUnits(v, decimals);
 }
 
+/**
+ * Loads old orders and payouts. Fails closed (throws) on anything that could hide a payment:
+ * a chain with order specs but no payout spec, a payout spec that is not read up to the current head
+ * (MAX_PAYOUT_LAG_BLOCKS), a payout spec that returns no logs (wrong address / range), and a tx captured
+ * by two different order specs (one deposit would become two oldKeys).
+ */
 export async function loadFromRpc(cfg: RpcSourceConfig, clients: Record<number, SourceClient>): Promise<LegacySourceData> {
   const chunk = cfg.chunk ?? 5000n;
   const client = (id: number): SourceClient => {
@@ -92,6 +107,19 @@ export async function loadFromRpc(cfg: RpcSourceConfig, clients: Record<number, 
     if (!c) throw new Error(`no RPC client for chain ${id}`);
     return c;
   };
+  // every order chain needs payout coverage on itself (refunds from the old vault) and on another chain (the bridge payout)
+  const payoutChains = new Set(cfg.payouts.map((p) => p.chainId));
+  for (const o of cfg.orders) {
+    if (!payoutChains.has(o.chainId)) throw new Error(`chain ${o.chainId} has order specs but no payout spec`);
+    if (![...payoutChains].some((c) => c !== o.chainId)) throw new Error(`orders on chain ${o.chainId} need a payout spec on the other chain`);
+  }
+  const heads = new Map<number, bigint>();
+  for (const id of new Set([...cfg.orders, ...cfg.payouts].map((x) => x.chainId))) {
+    const got = await client(id).getChainId();
+    if (got !== id) throw new Error(`RPC for chain ${id} serves chain ${got}`);
+    heads.set(id, await client(id).getBlockNumber({ cacheTime: 0 }));
+  }
+  const resolve = <S extends EventSpec>(s: S): S & ResolvedSpec => ({ ...s, toBlock: s.toBlock === "latest" ? heads.get(s.chainId)! : s.toBlock });
   const tsCache = new Map<string, number>();
   const ts = async (id: number, n: bigint): Promise<number> => {
     const k = `${id}:${n}`;
@@ -102,14 +130,13 @@ export async function loadFromRpc(cfg: RpcSourceConfig, clients: Record<number, 
     }
     return t;
   };
-  const warnings: string[] = [];
   const orders: SourceOrder[] = [];
   const txSpec = new Map<string, number>();
   for (const [si, s] of cfg.orders.entries()) {
-    for (const l of await fetchLogs(client(s.chainId), s, chunk)) {
+    for (const l of await fetchLogs(client(s.chainId), resolve(s), chunk)) {
       const tk = `${s.chainId}|${l.transactionHash.toLowerCase()}`;
       const prev = txSpec.get(tk);
-      if (prev !== undefined && prev !== si) warnings.push(`tx ${l.transactionHash} was captured by order specs #${prev} and #${si} (two oldKeys) — confirm manually`);
+      if (prev !== undefined && prev !== si) throw new Error(`tx ${l.transactionHash} was captured by order specs #${prev} and #${si} (it would become two oldKeys)`);
       txSpec.set(tk, si);
       orders.push({
         srcChainId: s.chainId,
@@ -124,15 +151,18 @@ export async function loadFromRpc(cfg: RpcSourceConfig, clients: Record<number, 
     }
   }
   const payouts: OldPayout[] = [];
-  for (const [si, s] of cfg.payouts.entries()) {
+  for (const [si, raw] of cfg.payouts.entries()) {
+    const s = resolve(raw);
+    const head = heads.get(s.chainId)!;
+    if (s.toBlock + MAX_PAYOUT_LAG_BLOCKS < head) throw new Error(`payout spec #${si} stops at block ${s.toBlock}, chain ${s.chainId} head is ${head} (max lag ${MAX_PAYOUT_LAG_BLOCKS}); use "latest"`);
     const logs = await fetchLogs(client(s.chainId), s, chunk);
-    if (logs.length === 0) warnings.push(`payout spec #${si} (${s.event} @ ${s.address}) returned no logs — check address/range`);
+    if (logs.length === 0) throw new Error(`payout spec #${si} (${s.event} @ ${s.address}) returned no logs — check address/range`);
     for (const l of logs) {
-      const p: OldPayout = { chainId: s.chainId, txHash: l.transactionHash, logIndex: l.logIndex, to: getAddress(field(l, s.fields.to) as string), amount: amountOf(l, s.fields.amount, s.decimals) };
+      const p: OldPayout = { chainId: s.chainId, txHash: l.transactionHash, logIndex: l.logIndex, timestamp: await ts(s.chainId, l.blockNumber), to: getAddress(field(l, s.fields.to) as string), amount: amountOf(l, s.fields.amount, s.decimals) };
       if (s.fields.srcTxHash) p.srcTxHash = field(l, s.fields.srcTxHash) as Hex;
       if (s.fields.srcLogIndex) p.srcLogIndex = Number(field(l, s.fields.srcLogIndex));
       payouts.push(p);
     }
   }
-  return { orders, payouts, warnings };
+  return { orders, payouts };
 }

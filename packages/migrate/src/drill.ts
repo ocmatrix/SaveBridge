@@ -82,11 +82,11 @@ export interface LocalVault {
   stop(): void;
 }
 
-export async function startLocalVault(): Promise<LocalVault> {
+export async function startLocalVault(chainId: number = LOCAL_CHAIN_ID): Promise<LocalVault> {
   const port = await freePort();
   const url = `http://127.0.0.1:${port}`;
-  const proc = spawn("anvil", ["--host", "127.0.0.1", "--port", String(port), "--chain-id", String(LOCAL_CHAIN_ID), "--silent"], { stdio: "ignore" });
-  const chain = defineChain({ id: LOCAL_CHAIN_ID, name: "local-bsc", nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: [url] } } });
+  const proc = spawn("anvil", ["--host", "127.0.0.1", "--port", String(port), "--chain-id", String(chainId), "--silent"], { stdio: "ignore" });
+  const chain = defineChain({ id: chainId, name: `local-${chainId}`, nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: [url] } } });
   const pub = createPublicClient({ chain, transport: http(url, { retryCount: 0 }) }) as PublicClient;
   const rpc = async (method: string, params: unknown[] = []): Promise<unknown> => {
     const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
@@ -98,7 +98,7 @@ export async function startLocalVault(): Promise<LocalVault> {
     let up = false;
     for (let i = 0; i < 200 && !up; i++) {
       try {
-        up = (await pub.getChainId()) === LOCAL_CHAIN_ID;
+        up = (await pub.getChainId()) === chainId;
       } catch {
         await new Promise((r) => setTimeout(r, 50));
       }

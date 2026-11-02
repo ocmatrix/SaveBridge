@@ -36,11 +36,11 @@ describe("P1 / P4: a payout linked to the wrong logIndex is not silently ignored
     expect(r.ok).toBe(false);
     expect(r.blockers.join()).toMatch(/another logIndex/);
   });
-  it("preflight: knownOrders lets a correctly linked payout of another order through", async () => {
+  it("preflight: re-read orders let a correctly linked payout of another order through", async () => {
     const paid: OldPayout = { ...mislinked, srcTxHash: tx("d"), srcLogIndex: 0 };
-    const otherKey = scanLegacy({ orders: [{ ...w2b, txHash: tx("d"), logIndex: 0 }], payouts: [] }, { cutoverT: T }).entries[0]!.oldKey;
+    const other: SourceOrder = { ...w2b, txHash: tx("d"), logIndex: 0 };
     expect((await preflightBatch(rows(w2b), { isLegacyPaid: none, oldPayouts: [paid] })).ok).toBe(false); // default: strict
-    expect((await preflightBatch(rows(w2b), { isLegacyPaid: none, oldPayouts: [paid], knownOrders: new Set([otherKey]) })).ok).toBe(true);
+    expect((await preflightBatch(rows(w2b), { isLegacyPaid: none, oldPayouts: [paid], orders: [w2b, other] })).ok).toBe(true);
   });
 });
 

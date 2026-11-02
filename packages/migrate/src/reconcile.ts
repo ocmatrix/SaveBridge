@@ -1,7 +1,8 @@
 import { bscVaultV2Abi } from "@bridge/abi";
 import { getAddress, type Address, type Hex, type PublicClient } from "viem";
+import { oldKey } from "./oldkey.js";
 import { indexOldPayouts, looseHit } from "./scan.js";
-import type { LegacyPaidEvent, Manifest, ManifestEntry, OldPayout } from "./types.js";
+import type { LegacyPaidEvent, Manifest, ManifestEntry, OldPayout, SourceOrder } from "./types.js";
 
 export interface PreflightInput {
   /** `vault.legacyPaid(oldKey)` on the new vault. */
@@ -9,10 +10,12 @@ export interface PreflightInput {
   /** Old-bridge payouts re-read right before execution (DESIGN §10: "每批放款前再查一次旧 BSC 金库"). */
   oldPayouts: OldPayout[];
   /**
-   * oldKeys of every old order known (e.g. all orders the RPC loader returned). Payouts linked to an oldKey outside
-   * this set are "loose" and block any row whose address they paid. Default: only the rows being checked (strictest).
+   * All old orders re-read from the source (CLI: the RPC loader's orders). When given: payouts correctly linked to
+   * another known order do not taint a row; the row's sender `from` is watched too; its order time filters out
+   * loose payouts made before it; and a row whose order is no longer found (re-org / wrong source) is a blocker.
+   * When omitted (library use), only the rows themselves are known and every loose payout counts (strictest).
    */
-  knownOrders?: ReadonlySet<string>;
+  orders?: SourceOrder[];
 }
 
 export interface PreflightResult {
@@ -23,13 +26,18 @@ export interface PreflightResult {
 /** Run before `execute`: any blocker means do not execute (cancel the operation and re-propose without that row). */
 export async function preflightBatch(entries: ManifestEntry[], input: PreflightInput): Promise<PreflightResult> {
   const blockers: string[] = [];
-  const known = new Set([...(input.knownOrders ?? []), ...entries.map((e) => e.oldKey)].map((k) => k.toLowerCase()));
+  const byKey = new Map((input.orders ?? []).map((o) => [oldKey(o.txHash, o.logIndex), o] as const));
+  const known = new Set([...byKey.keys(), ...entries.map((e) => e.oldKey.toLowerCase())]);
   const idx = indexOldPayouts(input.oldPayouts, known);
   for (const e of entries) {
+    const k = e.oldKey.toLowerCase() as Hex;
+    const order = byKey.get(k);
+    if (input.orders && !order) blockers.push(`${e.oldKey}: order not found in the re-read old orders (re-org or wrong source)`);
     if (await input.isLegacyPaid(e.oldKey)) blockers.push(`${e.oldKey}: already paid on the new vault`);
-    const l = idx.linked.get(e.oldKey.toLowerCase() as Hex);
+    const l = idx.linked.get(k);
     if (l) blockers.push(`${e.oldKey}: old bridge paid ${l.sum} for this order since the manifest was built`);
-    const loose = looseHit(idx, e.srcTxHash, [e.to, e.srcRecipient]);
+    const addrs = [e.to, e.srcRecipient, ...(order ? [getAddress(order.from)] : [])];
+    const loose = looseHit(idx, e.srcTxHash, addrs, order?.timestamp ?? 0);
     if (loose) blockers.push(`${e.oldKey}: ${loose}`);
   }
   return { ok: blockers.length === 0, blockers };

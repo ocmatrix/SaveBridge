@@ -14,7 +14,8 @@ describe("cli (offline commands)", () => {
     const s = run("scan", "--source", join(PKG, "test/fixtures/legacy-basic.json"), "--cutoff", "1762000000", "--vault", "0x00000000000000000000000000000000000b5c01", "--bsc-chain-id", "56", "--out", out);
     expect(s.status, s.stderr).toBe(0);
     const csv = join(out, "manifest.csv");
-    const m = { hash: manifestHash(readFileSync(csv, "utf8")) };
+    const orig = readFileSync(csv, "utf8");
+    const m = { hash: manifestHash(orig) };
     expect(s.stdout).toContain(`manifest 5 rows`);
     expect(s.stdout).toContain(m.hash);
     expect(run("validate", csv, "--hash", m.hash).status).toBe(0);
@@ -37,6 +38,21 @@ describe("cli (offline commands)", () => {
     expect(run("validate", csv).status).toBe(0); // direction is informative; hash binding catches it:
     expect(run("validate", csv, "--hash", m.hash).status).toBe(1);
     expect(run("bogus").status).toBe(2);
+    writeFileSync(csv, orig);
+    // B2: list files must contain only well-formed lines
+    for (const bad of ["0xabc", "R2", "0x00000000000000000000000000000000000b5c01 extra"]) {
+      writeFileSync(join(out, "ctl.txt"), `# controlled\n0x00000000000000000000000000000000000b5c01\n${bad}\n`);
+      const v = run("validate", csv, "--controlled", join(out, "ctl.txt"));
+      expect(v.status, bad).toBe(1);
+      expect(v.stderr).toContain(`"${bad}" is not an address`);
+      expect(run("scan", "--source", join(PKG, "test/fixtures/legacy-basic.json"), "--cutoff", "1762000000", "--vault", "0x00000000000000000000000000000000000b5c01", "--bsc-chain-id", "56", "--controlled", join(out, "ctl.txt"), "--out", join(out, "s2")).status).toBe(1);
+    }
+    writeFileSync(join(out, "ctl.txt"), "0x00000000000000000000000000000000000b5c01\n");
+    expect(run("validate", csv, "--controlled", join(out, "ctl.txt")).status).toBe(0);
+    writeFileSync(join(out, "ex.txt"), "0x1234\n");
+    expect(run("propose", csv, "--hash", m.hash, "--timelock", "0x00000000000000000000000000000000000071e1", "--exclude", join(out, "ex.txt"), "--out", out).stderr).toMatch(/not a 32-byte oldKey/);
+    writeFileSync(join(out, "pk.txt"), "nope\n");
+    expect(run("scan", "--source", join(PKG, "test/fixtures/legacy-basic.json"), "--cutoff", "1762000000", "--vault", "0x00000000000000000000000000000000000b5c01", "--bsc-chain-id", "56", "--paid-keys", join(out, "pk.txt"), "--out", join(out, "s3")).status).toBe(1);
     expect(run("propose", csv).stderr).toMatch(/--hash is required/);
   });
 });
