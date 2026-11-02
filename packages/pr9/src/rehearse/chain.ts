@@ -215,10 +215,11 @@ export class Chain {
 }
 
 /** Spawns a local anvil on 127.0.0.1:<random port> (state is persisted through stage checkpoints, see checkpoint.ts). */
-export async function spawnAnvil(side: Side, chainId: number, genesisTs: number, blockTimeSec?: number): Promise<Chain> {
+export async function spawnAnvil(side: Side, chainId: number, genesisTs: number, blockTimeSec?: number, loadStateFile?: string): Promise<Chain> {
   const port = await freePort();
   const args = ["--host", "127.0.0.1", "--port", String(port), "--chain-id", String(chainId), "--slots-in-an-epoch", "1", "--timestamp", String(genesisTs), "--silent", "--gas-price", "1000000000", "--base-fee", "1000000000"];
-  if (blockTimeSec) args.push("--block-time", String(blockTimeSec)); // real-time rehearsal: interval mining like a testnet
+  if (blockTimeSec) args.push("--block-time", String(blockTimeSec));
+  if (loadStateFile) args.push("--load-state", loadStateFile); // real-time rehearsal: interval mining like a testnet
   const proc = spawn("anvil", args, { stdio: "ignore" });
   const c = new Chain(side, chainId, [`http://127.0.0.1:${port}`], "local", proc);
   for (let i = 0; i < 200; i++) {

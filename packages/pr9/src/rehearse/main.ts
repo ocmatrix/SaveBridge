@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Chain, spawnAnvil } from "./chain";
-import { hasCheckpoint, restoreChains, restoreOffchain, saveCheckpoint } from "./checkpoint";
+import { checkpointStateFiles, hasCheckpoint, restoreChains, restoreOffchain, saveCheckpoint } from "./checkpoint";
 import { loadConfig, rpcUrls } from "./config";
 import { Ctx } from "./ctx";
 import { assertTestnetAuthorized, type Side } from "./guard";
@@ -47,7 +47,10 @@ async function main(): Promise<void> {
   if (restoreFrom) restoreOffchain(runDir, restoreFrom);
   if (cfg.profile === "local") {
     const genesis = Math.floor(Date.now() / 1000);
-    [chains.wantos, chains.bsc] = await Promise.all([spawnAnvil("wantos", cfg.chains.wantos.chainId, genesis, cfg.localBlockTimeSec), spawnAnvil("bsc", cfg.chains.bsc.chainId, genesis, cfg.localBlockTimeSec)]);
+    [chains.wantos, chains.bsc] = await Promise.all(await (async () => {
+      const files = restoreFrom ? checkpointStateFiles(runDir, restoreFrom) : null;
+      return Promise.all([spawnAnvil("wantos", cfg.chains.wantos.chainId, genesis, cfg.localBlockTimeSec, files?.wantos), spawnAnvil("bsc", cfg.chains.bsc.chainId, genesis, cfg.localBlockTimeSec, files?.bsc)]);
+    })());
     if (restoreFrom) {
       await restoreChains(runDir, restoreFrom, chains);
       console.log(`restored checkpoint of stage ${restoreFrom}`);

@@ -1,5 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import type { Chain } from "./chain";
 import type { Side } from "./guard";
 
@@ -33,9 +34,28 @@ export function restoreOffchain(runDir: string, stage: string): void {
   for (const n of readdirSync(src)) cpSync(join(src, n), join(runDir, n), { recursive: true });
 }
 
-/** Loads the chain part into freshly spawned (empty) anvils. */
-export async function restoreChains(runDir: string, stage: string, chains: Record<Side, Chain>): Promise<void> {
-  for (const s of ["wantos", "bsc"] as Side[]) await chains[s].rpc("anvil_loadState", [readFileSync(join(checkpointDir(runDir, stage), `${s}.hex`), "utf8").trim()]);
+/**
+ * Writes the saved chain state as anvil `--load-state` JSON files (anvil_dumpState is gzipped JSON; large states
+ * exceed the RPC request limit of anvil_loadState, so they are loaded at process start instead).
+ */
+export function checkpointStateFiles(runDir: string, stage: string): Record<Side, string> {
+  const out = {} as Record<Side, string>;
+  for (const s of ["wantos", "bsc"] as Side[]) {
+    const raw = Buffer.from(readFileSync(join(checkpointDir(runDir, stage), `${s}.hex`), "utf8").trim().replace(/^0x/, ""), "hex");
+    let json: Buffer;
+    try {
+      json = gunzipSync(raw);
+    } catch {
+      json = raw;
+    }
+    out[s] = join(checkpointDir(runDir, stage), `${s}.state.json`);
+    writeFileSync(out[s], json);
+  }
+  return out;
+}
+
+/** After anvils were started with the checkpoint's state files: keep chain time monotonic and aligned. */
+export async function restoreChains(_runDir: string, _stage: string, chains: Record<Side, Chain>): Promise<void> {
   // anvil resumes from the wall clock after a load (time would run backwards): continue from the saved head, both chains aligned
   // (interval-mining anvils may mine in between: retry with a fresh head)
   for (let attempt = 0; ; attempt++) {
