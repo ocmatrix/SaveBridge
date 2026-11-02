@@ -53,7 +53,7 @@ node offline-check.mjs --decode 0x<calldata>
 
 ## 3. 管理后台页面（DESIGN §8.2）
 
-所有写按钮都由 `perm.gate()` 依据**合约读数**（`timelock.adminWallet()`、`bridge.whitelistManager()`、待接收/恢复候选、暂停/冻结/恢复标志、时间）决定可用性；不可用时按钮旁显示原因（如"当前钱包不是 BSC 的白名单钱包（链上为 0x…）"）。页面顶部显示连接钱包的链上身份。服务器数据只用于审核订单列表、受控集合、参考信息、报告，**从不用于判定角色**。每笔交易先 `simulateContract`（以连接钱包身份）拿到解码后的回滚原因，再交给钱包。
+所有写按钮都由 `perm.gate()` 依据**合约读数**（`timelock.adminWallet()`、`bridge.whitelistManager()`、待接收/恢复候选、暂停/冻结/恢复标志、时间）决定可用性；不可用时按钮旁显示原因（如"当前钱包不是 BSC 的白名单钱包（链上为 0x…）"）。页面顶部显示连接钱包的链上身份。服务器数据只用于审核订单列表、参考信息、报告，**从不用于判定角色**。每笔交易先 `simulateContract`（以连接钱包身份）拿到解码后的回滚原因，再交给钱包。
 
 | 页面 | 实现 | 门禁 |
 |---|---|---|
@@ -114,7 +114,7 @@ node offline-check.mjs --decode 0x<calldata>
 | Q4 | 单批上限 500 待 PR-0 ④（硬件钱包显示能力）定稿 | 页面与工具常量 500，改一处即可 |
 | Q5 | FAILED 订单人工"重试 / 拒绝"（PR3 §4.2 建议 `decision: retry|reject-failed`） | 未在页面开放（付款程序还没有对应签名格式与端点） |
 | Q6 | 每日变更报告、告警、对账的数据源（PR-7/PR-3） | 页面只按 `/admin/report` 展示 |
-| Q7 | 网体、上级、历史跨出、可疑名单的数据源（PR-4） | 页面按 `/admin/address-info` 展示，缺省为 — |
+| Q7 | 网体、上级、历史跨出的数据源（原定 PR-4，v0.9.5 已取消；由谁提供待确认） | 页面按 `/admin/address-info` 展示，缺省为 — |
 | Q8 | 仓库根 `packageManager: "pnpm@10"` 不是完整版本（PR3 Q8） | 未改；本地用 pnpm 10.34.5 直接调用 |
 
 ## 7. Cloudflare 与供应链（DESIGN §8.4；本 PR **不部署**）
@@ -245,7 +245,7 @@ node offline-check.mjs --decode 0x<calldata>
 | B2 | 签名/提交使用准备时的 nonce；nonce 变了或待签内容与准备时哈希不同 → 停止、要求重新准备（重试按钮不可用并写明原因）；未准备的批次拒绝；准备开始先清旧哈希 | `integration/whitelist` › 两个用例；`component/whitelist` › B2（含准备失败时旧哈希消失） |
 | B3 | 时间锁调用显示完整目标地址 + 【桥/时间锁/其他】，按目标 ABI 解码，【其他】红字不解码 | `integration/governance` › decode by target；`component/pages` › timelock targets |
 | B4 | 白名单页明示：每批每条链 2 次确认、两链共 4 次；两链都要 gas | `component/whitelist`（文字断言） |
-| B5 | — | `integration/params`（逐字段方向与合约 `NotTightening(i)` 对照，两条链，含 releaseDelay/b2wDelay）；`unit/misc` › 完整 CSP 字符串、Worker `/api/x` 404、验签异常不当通过；`component/pages` › 接口受控集合不覆盖附录 A |
+| B5 | — | `integration/params`（逐字段方向与合约 `NotTightening(i)` 对照，两条链，含 releaseDelay/b2wDelay）；`unit/misc` › 完整 CSP 字符串、Worker `/api/x` 404、验签异常不当通过；`component/pages` › 接口受控集合不覆盖附录 A（v0.9.5 已随受控集合删除） |
 | B6 | 证明 issuedAt：超过 7 天或在未来 10 分钟以上拒绝；新地址与已验证地址不同时红条 | `unit/misc`、`component/pages` › handover |
 | B7 | 紧急移除输入不跳表头 | `component/pages` › emergency strict |
 | B8 | 文本与 `--json` 共用同一判定 | `offline-check` › `--batch K` 用例中两种模式逐一断言 |
@@ -281,7 +281,7 @@ node offline-check.mjs --decode 0x<calldata>
 | R23 | B5（N24） | releaseDelay 方向反 | 杀死 | integration/params › bsc |
 | R24 | B5（N35） | 去掉 frame-ancestors | 杀死 | unit/misc › CSP |
 | R25 | B5（N36） | style-src 加 unsafe-inline | 杀死 | unit/misc › CSP |
-| R26 | B5（N38） | 接口受控集合覆盖附录 A | 杀死 | component/pages › appendix A |
+| R26 | B5（N38） | 接口受控集合覆盖附录 A | 杀死（v0.9.5 代码与用例已删除，不再适用） | component/pages › appendix A |
 | R27 | B5（N33） | Worker 放行 `/api/*` | 杀死 | unit/misc › Worker 404 |
 | R28 | B5（N29） | 验签异常当通过 | 杀死 | unit/misc › proof |
 | R29 | B3 | 其他目标当桥解码 | 杀死 | component/pages › timelock targets |

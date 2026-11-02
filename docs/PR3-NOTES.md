@@ -3,6 +3,7 @@
 > 依据：`docs/DESIGN.md` v0.9.4（§5、§6、§7 钩子、§9.3、§13 PR-3 验收）、`docs/PR1-NOTES.md` §5（合约契约）、`@bridge/abi`。分支 `pr-3-relayer`。
 > 范围：只写代码与本地测试。**未连接任何真实网络/节点，未发送任何真实链上交易，未读写任何真实私钥。** 测试只用本机 anvil（127.0.0.1，chainId 31337 当 WANTOS、31338 当 BSC，另有 31339 做 reader 单测），私钥只用 anvil 公开开发账户或 `generatePrivateKey()` 临时生成。配置示例里只有 `*.example.invalid` 占位 URL 和 `0x…dEaD` 占位地址。
 > 17 条已拍板决定未改动。
+> **v0.9.5 同步（2026-11-02）**：风控只靠白名单，PR-4 已取消。代码已删除 `controlled_set` 表与 WAITING 原因 `index`；`RiskEngine` 保留为「链上默认检查，可替换」的接口。下文涉及 PR-4、索引、受控集合的条目已按此改写或标注。
 
 ## 1. 文件
 
@@ -10,7 +11,7 @@
 |---|---|
 | `packages/relayer/src/config.ts` | 配置类型、示例（占位）、校验：BSC ≥ 2 个 RPC、WANTOS 交叉核对 RPC 必须存在且与主节点不同、确认数 ≥ 6、回扫 ≥ 100 块、**拒绝任何密钥材料**（键名含 priv/secret/mnemonic/seed/password 或 64 位十六进制值） |
 | `src/eventKey.ts` | PR1-NOTES §5.2 eventKey（W2B / B2W 两个包装） |
-| `src/db/{types,pg,pglite,migrations}.ts` | 小 DB 接口；生产 `pg` 适配器、测试 PGlite 适配器；DESIGN §6.5 五张表 + 内部列/索引，迁移可重复执行（`if not exists` + `schema_migrations`） |
+| `src/db/{types,pg,pglite,migrations}.ts` | 小 DB 接口；生产 `pg` 适配器、测试 PGlite 适配器；DESIGN §6.5 四张表（v0.9.5 删除 `controlled_set`）+ 内部列/索引，迁移可重复执行（`if not exists` + `schema_migrations`） |
 | `src/chain/reader.ts` | `ChainReader` 只读接口 + viem 实现 |
 | `src/chain/wantosScanner.ts` | WANTOS 数据源：主节点 + 交叉核对；6 确认；receipt 两源一致；游标 hash 校验；摄取 `BridgeOut` |
 | `src/chain/bscScanner.ts` | BSC 数据源：≥ 2 RPC、只处理 `finalized`、两源 finalized 块 hash 一致、日志集合一致；摄取 `Deposited` |
@@ -22,7 +23,7 @@
 | `src/stateMachine.ts` | §6.3 状态、转移表、WAITING 原因（B2W 无白名单）、每个状态的超时阈值 |
 | `src/classify.ts` | §6.3 回滚原因分类表 |
 | `src/orders.ts` | 订单仓库：幂等插入、按 §6.3 转移表做 compare-and-set、`reasons` jsonb 记录全部转移历史 |
-| `src/risk.ts` | 风控钩子 `RiskEngine` + 仅用链上信息的默认实现（PR-4 替换） |
+| `src/risk.ts` | 付款决策接口 `RiskEngine` + 仅用链上信息的默认实现 `DefaultRiskEngine`（链上默认检查，可替换；测试注入用） |
 | `src/review.ts` | 订单审核：管理钱包 personal_sign 验签（EOA / ERC-1271 都走 viem `verifyMessage`），写 `audit_log` |
 | `src/processor.ts` | 订单处理主体（§6.3 两个方向、最终块结算、回滚分类、queueRelease 重放、到期执行、退款跟踪、FAILED 人工处理入口） |
 | `src/timeouts.ts` | 每状态超时告警（每个 订单×状态×原因 只告一次，状态/原因变化后重新计时） |
@@ -49,7 +50,7 @@
 
 ### 2.3 订单状态机（§6.3）
 - 状态与转移表见 `stateMachine.ts`；两个方向共用转移表，方向差异在原因上：**B2W 不允许 `whitelist` 原因**（也不出现 `amount_limit`）。
-- WAITING 原因：`index / whitelist / quota / reserve / paused / amount_limit`；`amount_limit` 不会停在 WAITING，按 §6.3 直接转 REVIEW(audit)。
+- WAITING 原因：`whitelist / quota / reserve / paused / amount_limit`（v0.9.5 删除从未产生的 `index`；原因缺失或无法识别时按 10 分钟超时告警）；`amount_limit` 不会停在 WAITING，按 §6.3 直接转 REVIEW(audit)。
 - 终态 RELEASED / REFUNDED；FAILED 只能人工 `retryFailed`（→ DETECTED 重新评估）或 `rejectFailed`（→ REJECTED）。
 - **所有"已成事实"的状态（RELEASED / QUEUED / REJECTED / REFUNDING / REFUNDED）只依据付款链在最终块（BSC finalized / WANTOS head−6）上读到的合约状态**；非最终块上读到的 Released/Voided 只会让订单等待。
 - 每个状态都有出口和超时告警（阈值见 §3.1 D6）。
@@ -102,14 +103,14 @@
 | D3 | 审核通过的订单若风控仍返回 REVIEW，按 **DELAY（走排队）** 处理，不走即时 `release` | §6.3 REVIEW | 给通过的单再留一个 `releaseDelay` 可撤销窗口 |
 | D4 | QUEUED 期间地址被移出白名单：`executeRelease` 回滚 `NotWhitelisted`，订单保持 QUEUED(reason=whitelist) 并触发 QUEUED 超时告警；负责人 `cancelRelease` 后（最终块 Voided）才 REJECTED | §6.3 QUEUED 出口 vs 分类表 | 分类表"先读 status：Queued→QUEUED"优先；作废只能由负责人钱包执行 |
 | D5 | 储备检查：金库余额 ≥ 本单 + 同方向 QUEUED/SUBMITTED 订单金额之和（已付款但未最终确认的 SUBMITTED 也计入） | §6.3 储备 | 宁可多等，不超付 |
-| D6 | 规格未给出的超时阈值：DETECTED 10 分钟、WAITING(quota) 6h、WAITING(paused) 1h、SUBMITTED 30 分钟、QUEUED 到期 + 30 分钟（无到期时间 24h）、REJECTED 72h、REFUNDING 72h、FAILED 立即。规格给出的照用：索引 10 分钟、白名单 30 分钟、储备立即、审核 72h、冻结 7 天 | §6.3 | 均可配置（`Timeouts`） |
+| D6 | 规格未给出的超时阈值：DETECTED 10 分钟、WAITING(quota) 6h、WAITING(paused) 1h、SUBMITTED 30 分钟、QUEUED 到期 + 30 分钟（无到期时间 24h）、REJECTED 72h、REFUNDING 72h、FAILED 立即。规格给出的照用：白名单 30 分钟（原因缺失 / 无法识别 10 分钟，即原「索引」阈值，v0.9.5 删除该原因后保留为兜底）、储备立即、审核 72h、冻结 7 天 | §6.3 | 均可配置（`Timeouts`） |
 | D7 | 同 nonce 加价替换**默认开启且可配置**（`tx.replaceByFee`） | §6.4、PR-0 ⑥ | PR-0 ⑥ 未实测，见 Q1 |
 | D8 | 每把钥匙同一时刻只允许一个在途 nonce（严格串行） | §6.4 "单进程串行发送" | 恢复与加价逻辑最简单；吞吐约每块一笔，远高于日额度所需 |
 | D9 | 重组后两条链的**所有发送**都停止（不只受影响的链），直到人工清除 | §6.2、§9.1 | §9.1 WANTOS 回滚要求暂停两条链；relayer 无 PAUSER 钥匙，只暴露 `onReorg` 回调 |
 | D10 | 订单审核签名格式自定（EIP-191 personal_sign 文本，见 §4.2），签名者 = 付款链桥合约的 `adminWallet()`，`expires` 不得超过 24h | §6.1 | 规格只写"管理钱包签名、付款程序验签"；需与 PR-6 对齐（Q4） |
-| D11 | 对外状态把 DETECTED/WAITING/FAILED 也并入 `processing` | §7"对外不公开" | 只把 REVIEW 显示为 processing，用户仍能从差异推断出 REVIEW |
+| D11 | 对外状态把 DETECTED/WAITING/FAILED 也并入 `processing` | §8.1「待人工审核的订单统一显示"处理中"」（v0.9.4 为 §7「对外不公开」） | 只把 REVIEW 显示为 processing，用户仍能从差异推断出 REVIEW |
 | D12 | B2W 超过当日 `b2wDailyCap` → WAITING(quota)（6h 超时告警），不自动发起入账退款 | §5.3"超过当日额度直接走入账退款" | 入账退款由管理钱包发起，relayer 不持有该权限 |
-| D13 | 默认风控对 W2B 重读 WANTOS 订单时，状态非 Locked 或用户/金额不一致 → REVIEW(freeze) + 告警，不直接 REJECTED | §5.3 第三道防线 | 不付款是硬约束；如何处置交负责人 |
+| D13 | 默认检查对 W2B 重读 WANTOS 订单时，状态非 Locked 或用户/金额不一致 → REVIEW(freeze) + 告警，不直接 REJECTED | §5.3 第三道防线 | 不付款是硬约束；如何处置交负责人 |
 | D15 | 负责人「拒绝」前先读付款链 `payouts[eventKey]`，已 Released → 拒绝该签名并发一级 `PAYOUT_ALREADY_RELEASED`；REJECTED 阶段读到最终 Released → 告警且永不推进到 REFUNDING（Gate2 B1） | §6.3 REJECTED | 防止「已放款又退款」 |
 | D16 | 模拟失败但**没有 revert 数据**（传输/节点错误或空 revert）不做分类：订单保持原状态并告警 `RPC_UNAVAILABLE`；读 receipt 出错（不是「确认不存在」）中止本轮，不会判为 dropped（Gate2 B2） | §6.3 | 网络抖动不应把订单送进只能人工处理的 FAILED |
 | D17 | RPC URL 只从环境变量读取（配置里只写变量名，配置中出现 `://` 直接拒绝，`api.corsOrigins` 除外）；所有拼进告警的异常文本先脱敏（URL 的 userinfo/路径/查询、Authorization/Bearer、64 位十六进制），结构化字段（`data` 里的 eventKey 等）不经过脱敏（Gate2 B3） | §6.1 | RPC URL 常带 API key |
@@ -123,7 +124,7 @@
 |---|---|---|---|
 | Q1 | **WANTOS 是否支持同 nonce 替换（PR-0 ⑥）** 未实测；不通过不能上线 | §6.4、§13 PR-0 | 可配置、默认开；不支持时置 `replaceByFee=false`，卡住只告警 + 人工流程 |
 | Q2 | **KMS 签名器未实现**（只有接口与实现步骤注释）；`main.ts` 用它时任何发送都会以 `KMS_FAILURE` 失败 | §6.1 | 选定云 KMS 后补实现；地址在配置中固定并于启动时核对 |
-| Q3 | **自建交易索引**（WANTOS 上 USDT/MG/TIDE `Transfer`、原生币转账、工厂下 8 个交易对 `Swap`）未在 PR-3 实现；`WAITING(index)` 原因已保留，默认风控不会产生它 | §6.2、§7 | 建议随 PR-4 一起做（PR-4 是唯一消费者），表结构由 PR-4 定 |
+| Q3 | （v0.9.5 关闭）自建交易索引的唯一消费者是 PR-4，PR-4 已取消，DESIGN §6.2 已删该条；`WAITING(index)` 已从代码删除 | — | 不做 |
 | Q4 | 订单审核签名消息格式（§4.2）需 PR-6 确认；多签管理钱包走 ERC-1271（`verifyMessage` 已支持），但多签的离线签名流程需 PR-6 设计 | §6.1、§8.2 | 现格式见 §4.2 |
 | Q5 | 管理后台 SIWE 会话校验只有接口占位 | §8.2 | PR-6 实现 `AdminSessionVerifier` |
 | Q6 | 白名单批次的代提交（"提交服务按顺序提交两条链"）未实现，只做了时间锁自动执行 | §4.1、§8.2 | 建议 PR-6 定接口后在提交服务里加 `submitWhitelistBatch`（添加先 BSC 后 WANTOS；移除反之），复用 `TxSender` |
@@ -132,20 +133,23 @@
 | Q9 | QUEUED 订单在 SUBMITTED 后若交易所在块被 WANTOS 回滚（>6 块重组），只靠游标 hash 检测与 SUBMITTED 30 分钟超时告警，不自动重发 | §6.2 | 发生重组时 relayer 已停机，需人工处理 |
 | Q12 | Gate2 r2 backlog（按总控指示本轮不做，留待后续）：①WANTOS 主节点落后于交叉核对节点时的告警/处理（aligner B1）；②时间锁执行器只扫 finalized 区块并做重叠回扫，防重组丢提议（aligner B4）；③限流按来源区分、脱敏覆盖更多异常字段等补漏（aligner B6） | §6.2、§4.1 | — |
 | Q11 | 审核签名改 EIP-712：按总控指示**不在 PR-3 做**，交 PR-6 定稿后再改（避免来回改） | §6.1 | 现为 personal_sign 文本 |
-| Q10 | `index` 等待原因之外，数据源整体不可用不会产生订单，因此"索引 > 10 分钟"告警目前由 `RPC_UNAVAILABLE/RPC_MISMATCH`（去重后）承担 | §6.3 | PR-4 接入索引后由风控返回 WAIT(index) |
+| Q10 | （v0.9.5 关闭）不再有「索引」等待原因；节点 / RPC 不可用或落后由 `RPC_UNAVAILABLE/RPC_MISMATCH`（去重后）告警，与 DESIGN §6.3 一致 | §6.3 | — |
 
 ## 4. 给下游的接口约定
 
-### 4.1 PR-4 风控（`src/risk.ts`）
+### 4.1 付款决策接口（`src/risk.ts`）
+
+> v0.9.5：PR-4 风控已取消（风控只靠白名单）。接口保留为「链上默认检查，可替换」，生产使用 `DefaultRiskEngine`，测试注入其他实现。
+
 ```ts
 type RiskDecision = { kind: "AUTO" } | { kind: "DELAY" } | { kind: "REVIEW"; level: "audit" | "freeze"; reason?: string } | { kind: "WAIT"; reason: WaitReason };
 interface RiskEngine { evaluate(order: Order, ctx: { outstandingWei: bigint }): Promise<RiskDecision>; }
 ```
 - `Order`（`src/orders.ts`）提供：`eventKey, direction, srcChain, srcEventNonce, srcTxHash, srcBlockNumber, userAddr, toAddr, amountWei, status, reason, reviewLevel, stateSince, createdAt, approvedAt, approvedLevel, approvedReason`。
 - 源订单 Locked/存款一致检查**不在引擎里**，由处理器在调用引擎前和每次发交易前强制执行，引擎无法关闭它（Gate2 A1）。
-- 约定：PR-4 引擎应**包住**（而不是丢掉）`DefaultRiskEngine` 的链上检查（暂停、两链白名单、额度、储备），再叠加资金来源与行为规则；索引不可用或落后时返回 `WAIT("index")`（§7 降级，不放松规则）；REVIEW 的 `reason` 会存进 `orders.reason`，但**永不对外**。
-- 引擎每轮会被反复调用（WAITING 订单每轮重评），需幂等、无副作用；审核通过后引擎若仍返回**同一 level+reason** 的 REVIEW，会按 DELAY 处理（D3）；返回不同 level/reason（例如 PR-4 新发现的 freeze 级风险）会使旧批准作废。
-- 受控集合表 `controlled_set`、审计表 `audit_log` 已建（§6.5），PR-4/PR-6 直接使用。
+- 任何替换实现都应**包住**（而不是丢掉）`DefaultRiskEngine` 的链上检查（暂停、两链白名单、额度、储备）；REVIEW 的 `reason` 会存进 `orders.reason`，但**永不对外**。
+- 引擎每轮会被反复调用（WAITING 订单每轮重评），需幂等、无副作用；审核通过后引擎若仍返回**同一 level+reason** 的 REVIEW，会按 DELAY 处理（D3）；返回不同 level/reason 会使旧批准作废。
+- 审计表 `audit_log` 已建（§6.5），PR-6 直接使用。
 
 ### 4.2 PR-6 管理后台
 - 只读：`GET /v1/orders`、`GET /v1/quota`（§2.8）；`/admin/*` 需实现 `AdminSessionVerifier`（`src/api.ts`）。
