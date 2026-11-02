@@ -82,3 +82,11 @@ BSC 全局日额 `dailyCap` 5 万 → **50 万**（合约上限）。大额阈�
 2. 开源验证三个合约（BscScan 与 scan.wantos.io）。
 3. 写监控 / 付款程序的真实配置（桥、时间锁地址、startBlock、BSC 节点、心跳、Telegram），启动顺序：监控 → 付款程序。
 4. 首批白名单（白名单钱包两链各签一次）→ 注资 → 冒烟 → 开放。
+
+## 部署者收尾（负责人亲自签名，2026-11-02）
+
+- 误转的 2 USDT 已退回 `0xf49334e15FDd743ddc0E73FD57561D5E40e40929`：WANTOS 交易 0x2bfd2a36994b88d9a549b7ab58a56cbfe30b6352fbff8742b9686428e7d0905a（区块 3458884）。
+- 剩余 WANT（1.72）退回同地址：0x808bdeea91cc2c081ce67df65fbc880b33a7ff1c897b42a2f4cf47faf8c75cc5（区块 3458890）。
+- 剩余 BNB（0.00264）退回同地址：BSC 0xb58772ef521cab5709a64ad0446c43f9ce7ec0063886a873c795df4097eebbce（区块 131221256）。
+- 部署者现余：WANTOS 约 0.005 WANT、BSC 约 0.0000047 BNB、0 USDT（零头，不再转）。部署者不持有任何合约角色（验收脚本断言）。
+- 待办：销毁部署者钥匙文件 `~/.savebridge-deployer/deployer`，并忘掉其密码。
