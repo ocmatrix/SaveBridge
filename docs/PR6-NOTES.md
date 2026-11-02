@@ -163,6 +163,17 @@ node offline-check.mjs --decode 0x<calldata>
 
 - `pnpm-lock.yaml`：新增 `apps/admin-web`、`packages/offline-check` 的依赖条目（`pnpm install` 生成）。根 `package.json`、`pnpm-workspace.yaml` 未改（`apps/*` 已在工作区内）。
 
+## 第 3 轮收尾（复审放行后的小修）
+
+| 项 | 修复 | 测试（先红后绿） |
+|---|---|---|
+| B1 | 「签名并写入」结束时只要有链失败或未完成就抛错，按钮旁显示红色失败原因，不再出现绿色「已完成」 | `component/whitelist` › partial failure：失败时该按钮的 `.action .ok` 不存在、`.err` 写明 WANTOS；补完后才出现「已完成」（变异 U01 去掉抛错 → 红） |
+| B2 | — | `integration/whitelist` › 模拟通过后、广播前 nonce 被消耗 → 链上回滚 → 该链 failed、无 txHash、isComplete=false（变异 U02 = T11 去掉回执状态检查 → 红） |
+| B3 | `run` 开头用 ref 防重入（双击自保） | `component/whitelist` › 双击只签 2 次、只发 2 笔。注：按钮在执行中本已禁用，所以去掉该守卫的变异 U03 仍绿（等价，守卫为纵深防御） |
+| T22/T23 | — | `component/race` › 准备中对禁用的单选 / 勾选框直接派发 click：结果要么被丢弃并提示，要么与表单一致（去掉代数守卫 → 两例均红） |
+
+验证：typecheck 通过；admin-web **88 通过**（unit 21、integration 33、component 34）；offline-check 30 通过（本轮未改）；构建通过。
+
 ## 验证结果（本地，2026-11-02，第 2 轮修复后）
 
 | 项 | 结果 |
