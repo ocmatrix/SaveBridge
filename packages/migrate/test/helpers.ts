@@ -8,7 +8,7 @@ export const T = 1762000000;
 export const VAULT: Address = getAddress("0x00000000000000000000000000000000000b5c01");
 export const TIMELOCK: Address = getAddress("0x00000000000000000000000000000000000071e1");
 export const tx = (c: string): Hex => `0x${c.repeat(64)}` as Hex;
-export const R = (i: number): Address => getAddress(`0x${(0x1000 + i).toString(16).padStart(40, "0")}`);
+export const R = (i: number): Address => getAddress(`0xabc${(0x1000 + i).toString(16).padStart(37, "0")}`);
 
 export function fixture(name: string): SourceFile {
   return parseSourceJson(readFileSync(join(__dirname, "fixtures", name), "utf8"));
