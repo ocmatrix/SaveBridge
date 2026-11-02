@@ -26,7 +26,7 @@ export const en: Dict = {
   "cta.w2b": "Bridge out {amount} USDT",
   "cta.b2w": "Deposit {amount} USDT",
   "info.w2b": "Left today {amount} USDT · per tx {min} ~ {max}",
-  "info.b2w": "Credit left today {amount} USDT · per tx {min} ~ {max}",
+  "info.b2w": "Minimum {min} USDT to bridge",
   "steps.hint": "Step 1 approve › Step 2 submit",
   "amount.approveNote": "The approval covers this amount only: {amount} USDT.",
   "amount.receive": "Amount received (USDT)",
@@ -60,7 +60,6 @@ export const en: Dict = {
   "b2w.recipientInvalid": "Invalid recipient address",
   "b2w.confirmRecipient": "Depositing {amount} USDT to WANTOS address: {to}",
   "b2w.eta": "After the BSC deposit, funds arrive on WANTOS after a ~15 minute queue.",
-  "b2w.notOpenNote": "Bridging out is not enabled for this address: after a deposit you need access before moving funds back to BSC.",
 
   "quota.today": "Remaining today",
   "quota.w2bAddr": "You can bridge out today: {amount} USDT",

@@ -24,7 +24,7 @@ export const zh = {
   "cta.w2b": "跨出 {amount} USDT",
   "cta.b2w": "存入 {amount} USDT",
   "info.w2b": "今日剩余额度 {amount} USDT · 单笔 {min} ~ {max}",
-  "info.b2w": "今日剩余入账额度 {amount} USDT · 单笔 {min} ~ {max}",
+  "info.b2w": "≥{min} USDT 起跨链",
   "steps.hint": "第 1 步 授权 › 第 2 步 提交跨链",
   "amount.approveNote": "授权只用本次金额 {amount} USDT。",
   "amount.receive": "接收金额（USDT）",
@@ -58,7 +58,6 @@ export const zh = {
   "b2w.recipientInvalid": "收款地址无效",
   "b2w.confirmRecipient": "将存入 {amount} USDT，到账 WANTOS 地址：{to}",
   "b2w.eta": "BSC 存入后约 15 分钟排队，到账 WANTOS。",
-  "b2w.notOpenNote": "当前地址未开通跨出：存入后需先开通，才能从 WANTOS 转回 BSC。",
 
   "quota.today": "今日剩余额度",
   "quota.w2bAddr": "本地址今日可跨出：{amount} USDT",

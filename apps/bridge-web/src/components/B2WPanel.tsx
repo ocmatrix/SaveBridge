@@ -133,7 +133,7 @@ export function B2WPanel({ state, onDeposit, wallet, onFlip }: { state: BridgeSt
           {recipient && !recipientOk && <p className="error">{t("b2w.recipientInvalid")}</p>}
         </div>
       )}
-      {state && <p className="info">{t("info.b2w", { amount: f(state.b2wRemaining), min: f(state.bsc.minDeposit), max: f(state.bsc.maxDepositPerTx) })}</p>}
+      {state && <p className="info">{t("info.b2w", { min: f(state.bsc.minDeposit) })}</p>}
       {problem && <p className="error">{t(problem.key, problem.params)}</p>}
       {canSubmit && !flow.step && (
         <p className="info">
@@ -145,7 +145,6 @@ export function B2WPanel({ state, onDeposit, wallet, onFlip }: { state: BridgeSt
       <PendingTx flow={flow} chain={cfg.bsc} />
       {flow.done && <p className="ok">{flow.done}</p>}
       {flow.error && <p className="error">{flow.error}</p>}
-      {address && state && state.wl !== "open" && <p className="bar note">{t("b2w.notOpenNote")}</p>}
       <button type="button" className="cta" data-testid="submit" disabled={address ? !canSubmit : wallet.connecting} onClick={() => (address ? void submit() : wallet.setOpen(true))}>
         {label}
       </button>
