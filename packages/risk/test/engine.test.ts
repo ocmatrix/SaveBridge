@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { A, BRIDGE, DAY, EXCH, Fx, H, MIN, PAIR, T0, U } from "./helpers/fx";
-import { merge } from "../src/engine";
+import { SourceRiskEngine, merge } from "../src/engine";
 import { putState } from "../src/store";
 
 const C = A("c001"); // controlled
@@ -9,6 +9,9 @@ const S = A("5001"); // intermediate
 const S2 = A("5002");
 const X = A("a001"); // bridging user
 const OTHER = A("0b01");
+const Y = A("a002");
+const Z = A("a003");
+const ATT = A("bad1"); // third party
 const T = T0 + 30 * DAY; // order time
 
 const AUTO = { kind: "AUTO" } as const;
@@ -123,6 +126,54 @@ describe("fund-source ratio (§7 tracing)", () => {
     expect(await fx.evaluate(await fx.bridgeOut(X, 100n * U, T))).toEqual(freeze());
   });
 
+  it("hop 2 respects the window start for the intermediate's inflows", async () => {
+    const fx = await Fx.create();
+    await fx.controlled(C);
+    await fx.flow({ from: C, to: S, amount: 1000n * U, at: T - 30 * DAY });
+    await fx.flow({ from: OTHER, to: S, amount: 1000n * U, at: T - 3 * DAY });
+    await fx.flow({ from: S, to: X, amount: 1000n * U, at: T - 2 * DAY });
+    expect(await fx.evaluate(await fx.bridgeOut(X, 100n * U, T))).toEqual(AUTO);
+  });
+
+  it("a partly controlled source only sends its uncontrolled part to hop 2 (v − cv)", async () => {
+    const fx = await Fx.create();
+    await fx.controlled(C, new Date(T - 2 * DAY));
+    await fx.controlled(C2);
+    await fx.flow({ from: C2, to: C, amount: 1000n * U, at: T - 4 * DAY }); // C itself is 100% controlled-funded
+    await fx.flow({ from: C, to: X, amount: 1000n * U, at: T - 3 * DAY }); // before effective_from → hop 2
+    await fx.flow({ from: C, to: X, amount: 1000n * U, at: T - DAY }); // controlled
+    await fx.flow({ from: OTHER, to: X, amount: 10_000n * U, at: T - DAY });
+    expect(await fx.evaluate(await fx.bridgeOut(X, 100n * U, T))).toEqual(audit()); // 2000/12000 = 16.7%
+  });
+
+  it("the user's own pool swaps are not traced through the user", async () => {
+    const fx = await Fx.create();
+    await fx.controlled(C);
+    await fx.flow({ from: C, to: X, amount: 150n * U, at: T - 2 * DAY });
+    await fx.flow({ from: PAIR, to: X, amount: 850n * U, at: T - DAY, txFrom: X });
+    expect(await fx.evaluate(await fx.bridgeOut(X, 100n * U, T))).toEqual(audit()); // 15%, not 27.75%
+  });
+
+  it("KNOWN LIMITATION (P14, characterization): round-tripping the same money dilutes the ratio", async () => {
+    const fx = await Fx.create();
+    await fx.controlled(C);
+    await fx.flow({ from: C, to: X, amount: 1000n * U, at: T - 2 * DAY });
+    for (let i = 0; i < 20; i++) {
+      await fx.flow({ from: X, to: Y, amount: 1000n * U, at: T - DAY + i * MIN });
+      await fx.flow({ from: Y, to: X, amount: 1000n * U, at: T - DAY + i * MIN + 1000 });
+    }
+    // current behaviour: 1000 / 21000 = 4.76% → AUTO. Pending owner decision (PR4-NOTES P14).
+    expect(await fx.evaluate(await fx.bridgeOut(X, 1000n * U, T))).toEqual(AUTO);
+  });
+
+  it("KNOWN LIMITATION (P14, characterization): own pool round trips dilute the ratio", async () => {
+    const fx = await Fx.create();
+    await fx.controlled(C);
+    await fx.flow({ from: C, to: X, amount: 1000n * U, at: T - 2 * DAY });
+    for (let i = 0; i < 20; i++) await fx.flow({ from: PAIR, to: X, amount: 990n * U, at: T - DAY + i * MIN, txFrom: X });
+    expect(await fx.evaluate(await fx.bridgeOut(X, 1000n * U, T))).toEqual(AUTO);
+  });
+
   it("controlled_set.effective_from: only movements at/after it count (old vault after T)", async () => {
     const fx = await Fx.create();
     await fx.controlled(C, new Date(T - 2 * DAY));
@@ -156,29 +207,120 @@ describe("behaviour rules", () => {
     expect(await fx.evaluate(await fx.bridgeOut(X, amount, T))).toEqual(want);
   });
 
-  it("fresh funds counts the FIRST receipt of any asset (native gas counts)", async () => {
+  it("fresh funds: a native receipt at/above its minimum is a first receipt", async () => {
     const fx = await Fx.create();
-    await fx.flow({ from: OTHER, to: X, amount: 1n, asset: "NATIVE", at: T - DAY });
+    await fx.flow({ from: OTHER, to: X, amount: U, asset: "NATIVE", at: T - DAY });
     await fx.flow({ from: OTHER, to: X, amount: 2000n * U, at: T - MIN });
     expect(await fx.evaluate(await fx.bridgeOut(X, 600n * U, T))).toEqual(AUTO);
   });
 
-  it("fresh funds with a later first receipt in another asset still triggers", async () => {
+  it("A1: fresh funds — a native receipt below its minimum is not a first receipt", async () => {
     const fx = await Fx.create();
-    await fx.flow({ from: OTHER, to: X, amount: 1n, asset: "MG", at: T - 5 * MIN });
+    await fx.flow({ from: OTHER, to: X, amount: U - 1n, asset: "NATIVE", at: T - DAY });
+    await fx.flow({ from: OTHER, to: X, amount: 2000n * U, at: T - MIN });
     expect(await fx.evaluate(await fx.bridgeOut(X, 600n * U, T))).toEqual(audit("fresh_funds"));
+  });
+
+  it("A1: fresh funds — assets without a configured minimum never count as a receipt", async () => {
+    const fx = await Fx.create();
+    await fx.flow({ from: OTHER, to: X, amount: 10n ** 30n, asset: "MG", at: T - DAY });
+    await fx.flow({ from: OTHER, to: X, amount: U, at: T - 5 * MIN }); // exactly the USDT minimum
+    expect(await fx.evaluate(await fx.bridgeOut(X, 600n * U, T))).toEqual(audit("fresh_funds"));
+  });
+
+  it("A1: a 0-amount transfer a day earlier does not disable the 10-minute rule", async () => {
+    const fx = await Fx.create();
+    await fx.flow({ from: ATT, to: X, amount: 0n, at: T - DAY });
+    await fx.flow({ from: S, to: X, amount: 5000n * U, at: T - MIN });
+    expect(await fx.evaluate(await fx.bridgeOut(X, 5000n * U, T))).toEqual(audit("fresh_funds"));
+  });
+
+  it("A1: a dust transfer (below 1 USDT) a day earlier does not disable the 10-minute rule", async () => {
+    const fx = await Fx.create();
+    await fx.flow({ from: ATT, to: X, amount: U - 1n, at: T - DAY });
+    await fx.flow({ from: S, to: X, amount: 5000n * U, at: T - MIN });
+    expect(await fx.evaluate(await fx.bridgeOut(X, 5000n * U, T))).toEqual(audit("fresh_funds"));
+  });
+
+  it("self-transfers are never a first receipt", async () => {
+    const fx = await Fx.create();
+    await fx.flow({ from: X, to: X, amount: 5000n * U, at: T - DAY });
+    await fx.flow({ from: S, to: X, amount: 5000n * U, at: T - MIN });
+    expect(await fx.evaluate(await fx.bridgeOut(X, 5000n * U, T))).toEqual(audit("fresh_funds"));
   });
 
   it("one source funds 3 addresses that all bridge out within 24h → all REVIEW + alert", async () => {
     const fx = await Fx.create();
     const users = [A("a101"), A("a102"), A("a103")];
-    for (const u of users) await fx.flow({ from: S, to: u, amount: 100n * U, at: T - 2 * H, asset: "MG" });
+    for (const u of users) await fx.flow({ from: S, to: u, amount: 100n * U, at: T - 2 * H });
     const orders = [];
     for (const [i, u] of users.entries()) orders.push(await fx.bridgeOut(u, 100n * U, T + i * H));
     for (const o of orders) expect(await fx.evaluate(o)).toEqual(audit("common_funder"));
     expect(fx.alerts.alerts.filter((a) => a.kind === "COMMON_FUNDER").length).toBe(3);
     expect(fx.alerts.alerts[0]!.key).toBe(`common_funder:${S.toLowerCase()}`);
     expect(fx.alerts.alerts[0]!.data).toMatchObject({ addresses: users.map((u) => u.toLowerCase()) });
+  });
+
+  it("A1: an attacker's 0-amount transfers to 3 bridging users do not push them into REVIEW", async () => {
+    const fx = await Fx.create();
+    const users = [A("a101"), A("a102"), A("a103")];
+    for (const u of users) await fx.flow({ from: ATT, to: u, amount: 0n, at: T - H });
+    const os = [];
+    for (const u of users) os.push(await fx.bridgeOut(u, 100n * U, T));
+    for (const o of os) expect(await fx.evaluate(o)).toEqual(AUTO);
+    expect(fx.alerts.alerts).toEqual([]);
+  });
+
+  it("A1: dust funding below the per-asset minimum does not count (boundary: exactly 1 USDT counts)", async () => {
+    const fx = await Fx.create();
+    const users = [A("a101"), A("a102"), A("a103")];
+    for (const u of users) await fx.flow({ from: ATT, to: u, amount: U - 1n, at: T - H });
+    const os = [];
+    for (const u of users) os.push(await fx.bridgeOut(u, 100n * U, T));
+    expect(await fx.evaluate(os[0]!)).toEqual(AUTO);
+    for (const u of users) await fx.flow({ from: ATT, to: u, amount: U, at: T - H });
+    expect(await fx.evaluate(os[0]!)).toEqual(audit("common_funder"));
+  });
+
+  it("A1: funding in an asset without a configured minimum (MG) does not count", async () => {
+    const fx = await Fx.create();
+    const users = [A("a101"), A("a102"), A("a103")];
+    for (const u of users) await fx.flow({ from: S, to: u, amount: 10n ** 30n, asset: "MG", at: T - H });
+    const o = await fx.bridgeOut(users[0]!, 100n * U, T);
+    await fx.bridgeOut(users[1]!, 100n * U, T);
+    await fx.bridgeOut(users[2]!, 100n * U, T);
+    expect(await fx.evaluate(o)).toEqual(AUTO);
+  });
+
+  it("A1: funding by a below-minimum transfer to the user does not make S the user's funder", async () => {
+    const fx = await Fx.create();
+    const users = [A("a101"), A("a102"), A("a103")];
+    await fx.flow({ from: S, to: users[0]!, amount: 1n, at: T - H });
+    for (const u of users.slice(1)) await fx.flow({ from: S, to: u, amount: U, at: T - H });
+    await fx.flow({ from: S, to: A("a104"), amount: U, at: T - H });
+    const o = await fx.bridgeOut(users[0]!, 100n * U, T);
+    for (const u of [...users.slice(1), A("a104")]) await fx.bridgeOut(u, 100n * U, T);
+    expect(await fx.evaluate(o)).toEqual(AUTO);
+  });
+
+  it("the same address funded 3 times counts once", async () => {
+    const fx = await Fx.create();
+    for (let i = 0; i < 3; i++) await fx.flow({ from: S, to: X, amount: U, at: T - H + i });
+    await fx.flow({ from: S, to: Y, amount: U, at: T - H });
+    const o = await fx.bridgeOut(X, 100n * U, T);
+    await fx.bridgeOut(Y, 100n * U, T);
+    expect(await fx.evaluate(o)).toEqual(AUTO);
+  });
+
+  it("the user's own funders are limited to the 24h window", async () => {
+    const fx = await Fx.create();
+    await fx.flow({ from: S, to: X, amount: U, at: T - 25 * H });
+    for (const u of [Y, Z]) await fx.flow({ from: S, to: u, amount: U, at: T - H });
+    await fx.flow({ from: S, to: X, amount: 0n, at: T - H }); // 0-amount in-window touch does not re-qualify
+    const o = await fx.bridgeOut(X, 100n * U, T);
+    await fx.bridgeOut(Y, 100n * U, T);
+    await fx.bridgeOut(Z, 100n * U, T);
+    expect(await fx.evaluate(o)).toEqual(AUTO);
   });
 
   it("only 2 funded addresses bridge out → no REVIEW", async () => {
@@ -194,15 +336,15 @@ describe("behaviour rules", () => {
   it("funding older than 24h, or bridge-outs more than 24h apart, do not count", async () => {
     const fx = await Fx.create();
     const users = [A("a101"), A("a102"), A("a103")];
-    await fx.flow({ from: S, to: users[0]!, amount: 1n, at: T - 2 * H });
-    await fx.flow({ from: S, to: users[1]!, amount: 1n, at: T - 2 * H });
-    await fx.flow({ from: S, to: users[2]!, amount: 1n, at: T - 25 * H }); // funded > 24h before
+    await fx.flow({ from: S, to: users[0]!, amount: U, at: T - 2 * H });
+    await fx.flow({ from: S, to: users[1]!, amount: U, at: T - 2 * H });
+    await fx.flow({ from: S, to: users[2]!, amount: U, at: T - 25 * H }); // funded > 24h before
     const o = await fx.bridgeOut(users[0]!, 100n * U, T);
     await fx.bridgeOut(users[1]!, 100n * U, T);
     await fx.bridgeOut(users[2]!, 100n * U, T);
     expect(await fx.evaluate(o)).toEqual(AUTO);
     const fx2 = await Fx.create();
-    for (const u of users) await fx2.flow({ from: S, to: u, amount: 1n, at: T - 2 * H });
+    for (const u of users) await fx2.flow({ from: S, to: u, amount: U, at: T - 2 * H });
     const o2 = await fx2.bridgeOut(users[0]!, 100n * U, T);
     await fx2.bridgeOut(users[1]!, 100n * U, T);
     await fx2.bridgeOut(users[2]!, 100n * U, T + 25 * H);
@@ -212,7 +354,7 @@ describe("behaviour rules", () => {
   it("only W2B orders count as bridge-outs of funded addresses", async () => {
     const fx = await Fx.create();
     const users = [A("a101"), A("a102"), A("a103")];
-    for (const u of users) await fx.flow({ from: S, to: u, amount: 1n, at: T - H });
+    for (const u of users) await fx.flow({ from: S, to: u, amount: U, at: T - H });
     const o = await fx.bridgeOut(users[0]!, 100n * U, T);
     await fx.bridgeOut(users[1]!, 100n * U, T);
     const o3 = await fx.bridgeOut(users[2]!, 100n * U, T);
@@ -223,7 +365,7 @@ describe("behaviour rules", () => {
   it("bridge payouts / exempt / mint sources are never a common funder", async () => {
     const fx = await Fx.create();
     const users = [A("a101"), A("a102"), A("a103")];
-    for (const src of [BRIDGE, EXCH, A(0)]) for (const u of users) await fx.flow({ from: src, to: u, amount: 1n, at: T - H });
+    for (const src of [BRIDGE, EXCH, A(0)]) for (const u of users) await fx.flow({ from: src, to: u, amount: U, at: T - H });
     const o = await fx.bridgeOut(users[0]!, 100n * U, T);
     await fx.bridgeOut(users[1]!, 100n * U, T);
     await fx.bridgeOut(users[2]!, 100n * U, T);
@@ -322,6 +464,20 @@ describe("degradation: index unavailable or behind → WAIT(index)", () => {
     await fx.db.query("drop table risk_flows");
     expect(await fx.evaluate(o)).toEqual(WAIT);
     expect(fx.alerts.alerts.map((a) => a.kind)).toEqual(["INDEX_ERROR"]);
+  });
+});
+
+describe("redaction", () => {
+  it("assessment errors are alerted with redacted text", async () => {
+    const fx = await Fx.create();
+    const o = await fx.bridgeOut(X, 100n * U, T);
+    const secret = "https://user:pa55@rpc.example.invalid/v1/KEY123?apikey=SECRET";
+    const db = { ...fx.db, query: async () => { throw new Error(`connect failed ${secret}`); } } as typeof fx.db;
+    const eng = new SourceRiskEngine({ db, inner: { evaluate: async () => ({ kind: "AUTO" }) }, cfg: fx.cfg, alerts: fx.alerts });
+    expect(await eng.evaluate(o, { outstandingWei: 0n })).toEqual({ kind: "WAIT", reason: "index" });
+    const msg = fx.alerts.alerts[0]!.message;
+    expect(msg).toContain("rpc.example.invalid");
+    expect(msg).not.toMatch(/pa55|KEY123|SECRET/);
   });
 });
 

@@ -12,6 +12,8 @@ describe("config", () => {
     expect(p).toMatchObject({ lookbackMs: 30 * 86_400_000, freezeBps: 2000, auditBps: 500, freshWindowMs: 600_000, funderWindowMs: 86_400_000, funderMinAddrs: 3 });
     expect(p.freshMinAmount).toBe(500n * 10n ** 18n);
     expect(defaultParams(6).freshMinAmount).toBe(500_000_000n);
+    expect(p.funderMinAmount).toEqual({ USDT: 10n ** 18n, NATIVE: 10n ** 18n });
+    expect(defaultParams(6).funderMinAmount.USDT).toBe(1_000_000n);
   });
   it("normalises addresses", () => {
     const c = parseRiskConfig({ ...base(), usdt: USDT.toLowerCase() as `0x${string}` });
@@ -28,6 +30,8 @@ describe("config", () => {
     ["freshMinAmount < 0", (c: RiskConfig) => (c.params.freshMinAmount = -1n)],
     ["stale 0", (c: RiskConfig) => (c.params.indexStaleMs = 0)],
     ["lag 0", (c: RiskConfig) => (c.params.indexMaxLagBlocks = 0)],
+    ["funderMinAmount 0", (c: RiskConfig) => (c.params.funderMinAmount = { USDT: 0n })],
+    ["funderMinAmount negative", (c: RiskConfig) => (c.params.funderMinAmount = { NATIVE: -1n })],
     ["no pairs", (c: RiskConfig) => (c.pairs = [])],
     ["dup pair", (c: RiskConfig) => (c.pairs = [{ address: PAIR, usdtIndex: 1 }, { address: PAIR, usdtIndex: 1 }])],
     ["bad address", (c: RiskConfig) => (c.bridge = "0x1234" as `0x${string}`)],
@@ -62,6 +66,9 @@ describe("loadPairsFromFactory", () => {
       { address: P2, usdtIndex: 1 },
       { address: P3, usdtIndex: null },
     ]);
+  });
+  it("expectCount is mandatory", async () => {
+    await expect(loadPairsFromFactory(reader(3n), A("fac7"), USDT, undefined as unknown as number)).rejects.toThrow(/expectCount/);
   });
   it("refuses an unexpected pair count", async () => {
     await expect(loadPairsFromFactory(reader(3n), A("fac7"), USDT, 8)).rejects.toThrow(/expected 8/);

@@ -73,32 +73,69 @@ describe("TxIndexer", () => {
     expect(getAddress(fromBytes(sw.rows[0]!.tx_from)!)).toBe(C);
   });
 
-  it("pair output is valued at the Swap event's USDT out (not the raw transfer)", async () => {
+  it("B2: pair output is valued at the transfer amount; Swap is kept for cross-checks only", async () => {
     const { db, chain, ix } = await setup();
     chain.add([{ from: C, to: ROUTER, logs: [(t) => transferLog(USDT, PAIR, X, 41n, t), (t) => swapLog(PAIR, ROUTER, X, [9n, 0n, 0n, 40n], t)] }]);
     chain.add([{ from: C, to: ROUTER, logs: [(t) => transferLog(USDT, PAIR, X, 41n, t)] }]); // no Swap (e.g. LP burn) → transfer amount
     chain.add([{ from: C, to: ROUTER, logs: [(t) => transferLog(USDT, PAIR, Y, 41n, t), (t) => swapLog(PAIR, ROUTER, X, [9n, 0n, 0n, 40n], t)] }]); // Swap to someone else
     chain.mine(6);
     await ix.tick();
-    expect((await flows(db)).map((f) => f.value)).toEqual([40n, 41n, 41n]);
+    expect((await flows(db)).map((f) => f.value)).toEqual([41n, 41n, 41n]);
   });
 
-  it("matches the Swap that FOLLOWS the transfer (UniswapV2 emits Transfer before Swap)", async () => {
-    const { db, chain, ix } = await setup();
+  it("B2: a skim followed by a tiny swap in the same tx keeps the skimmed value (no Swap mis-pairing)", async () => {
+    const { db, chain, ix } = await setup({ native: false });
     chain.add([
       {
         from: C,
         to: ROUTER,
         logs: [
-          (t) => swapLog(PAIR, ROUTER, X, [1n, 0n, 0n, 7n], t),
-          (t) => transferLog(USDT, PAIR, X, 41n, t),
-          (t) => swapLog(PAIR, ROUTER, X, [9n, 0n, 0n, 40n], t),
+          (t) => transferLog(USDT, C, PAIR, 10_000n * U, t),
+          (t) => transferLog(USDT, PAIR, X, 10_000n * U, t), // skim
+          (t) => transferLog(USDT, PAIR, X, 1n, t), // tiny swap output
+          (t) => swapLog(PAIR, ROUTER, X, [1n, 0n, 0n, 1n], t),
         ],
       },
     ]);
     chain.mine(6);
     await ix.tick();
-    expect((await flows(db)).map((f) => f.value)).toEqual([40n]);
+    expect((await flows(db)).filter((f) => f.to === X).map((f) => [f.amount, f.value, f.src])).toEqual([
+      [10_000n * U, 10_000n * U, C],
+      [1n, 1n, C],
+    ]);
+  });
+
+  it("A1: 0-amount Transfer events are not indexed", async () => {
+    const { db, chain, ix } = await setup();
+    chain.add([
+      { from: A("bad1"), to: USDT, logs: [(t) => transferLog(USDT, C, X, 0n, t)] }, // transferFrom(C, X, 0) by anyone
+      { from: C, to: MG, logs: [(t) => transferLog(MG, C, X, 0n, t)] },
+      { from: C, to: USDT, logs: [(t) => transferLog(USDT, C, X, 1n, t)] },
+    ]);
+    chain.mine(6);
+    await ix.tick();
+    expect((await flows(db)).map((f) => [f.asset, f.amount])).toEqual([["USDT", 1n]]);
+  });
+
+  it("indexNative: a broken parentHash link inside the range aborts the tick without writing", async () => {
+    const { db, chain, ix } = await setup({ native: true });
+    chain.add([{ from: C, to: USDT, logs: [(t) => transferLog(USDT, C, X, 1n, t)] }]); // 1
+    chain.mine(10);
+    chain.blocks[3]!.parentHash = `0x${"ab".repeat(32)}`; // 3 does not follow 2
+    await expect(ix.tick()).rejects.toThrow(/parent/);
+    expect(await flows(db)).toEqual([]);
+    expect((await getState(db))!.lastBlock).toBe(0n);
+  });
+
+  it("indexer alerts carry redacted error text", async () => {
+    const { chain, alerts, ix } = await setup();
+    chain.mine(10);
+    chain.getLogs = async () => {
+      throw new Error("request to https://u:pw@rpc.example.invalid/key/ABCDEF?token=SECRET failed");
+    };
+    await ix.runTick();
+    expect(alerts.alerts[0]!.message).toContain("rpc.example.invalid");
+    expect(alerts.alerts[0]!.message).not.toMatch(/pw@|ABCDEF|SECRET/);
   });
 
   it("skips reverted native transfers, zero-value txs, contract creations and non-ERC20 Transfer logs", async () => {

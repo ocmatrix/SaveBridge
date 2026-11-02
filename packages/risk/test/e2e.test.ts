@@ -14,8 +14,9 @@ import { defaultParams, parseRiskConfig } from "../src/config";
 import { migrateRisk } from "../src/migrations";
 import { TxIndexer, ViemIndexReader } from "../src/indexer";
 import { SourceRiskEngine } from "../src/engine";
-import { upsertControlled } from "../src/store";
+import { b, insertFlows, upsertControlled } from "../src/store";
 import { A } from "./helpers/fx";
+import { keccak256, toHex } from "viem";
 
 /** Local anvil only (127.0.0.1): real logs/blocks through ViemIndexReader + the PR-3 processor. */
 describe("e2e: index on anvil + SourceRiskEngine inside the PR-3 relayer", () => {
@@ -124,5 +125,59 @@ describe("e2e: index on anvil + SourceRiskEngine inside the PR-3 relayer", () =>
     expect(o).toMatchObject({ status: "REVIEW", reviewLevel: "freeze", reason: "controlled_source" });
     expect(o.approvedAt).toBeNull();
     expect(await actions(db)).toEqual([]);
+  });
+  it("same level, different reason set (controlled_source → common_funder+controlled_source) voids the approval", async () => {
+    const { db, ix, sys, repo, approve } = await build();
+    await upsertControlled(db, "test", { addr: world.act.funder.address });
+    await transfer(world.act.funder, world.act.user.address, 10_000n * U); // 9% → audit
+    await bridgeOut(world, world.act.user, 100n * U);
+    await confirmWantos(world);
+    await ix.tick();
+    await sys.relayer.tick();
+    expect(await repo.get(wKey(1n))).toMatchObject({ status: "REVIEW", reviewLevel: "audit", reason: "controlled_source" });
+    await approve(wKey(1n));
+    // New evidence: S funded the user and two siblings that bridged out (rows placed at block 0, already indexed).
+    const o = (await repo.get(wKey(1n)))!;
+    const t = ((await db.query<{ block_time: Date }>("select block_time from risk_flows where tx_hash = $1", [b(o.srcTxHash)])).rows[0]!).block_time.getTime();
+    const S = A("5001");
+    const sibs = [A("a201"), A("a202")];
+    const zero = (k: string) => keccak256(toHex(k));
+    const row = (k: string, from: Hex, to: Hex, at: number) => ({ txHash: zero(k), logIndex: 0, blockNumber: 0n, blockHash: zero("b0"), blockTime: new Date(at), asset: "USDT", from, to, txFrom: from, src: from, amount: 5n * U, valueUsdt: 5n * U });
+    await insertFlows(db, [
+      row("f-user", S, world.act.user.address, t - 3_600_000),
+      ...sibs.map((s, i) => row(`f-${i}`, S, s, t - 3_600_000)),
+      ...sibs.map((s, i) => row(`out-${i}`, s, world.w.bridge, t - 1_800_000)),
+    ]);
+    for (const [i, s] of sibs.entries())
+      await db.query(
+        `insert into orders (event_key, direction, src_chain, src_event_nonce, src_tx_hash, user_addr, to_addr, amount_wei, status)
+         values ($1,'W2B',$2,$3,$4,$5,$5,$6,'RELEASED')`,
+        [b(zero(`sib-order-${i}`)), WANTOS_ID, 1000 + i, b(zero(`out-${i}`)), b(s), (5n * U).toString()],
+      );
+    await ix.tick();
+    await sys.relayer.tick();
+    await sys.relayer.tick();
+    const after = (await repo.get(wKey(1n)))!;
+    expect(after).toMatchObject({ status: "REVIEW", reviewLevel: "audit", reason: "common_funder+controlled_source" });
+    expect(after.approvedAt).toBeNull();
+    expect(await actions(db)).toEqual([]);
+  });
+
+  it("an approved order that hits WAIT(index) resumes as DELAY once the index recovers", async () => {
+    const { db, ix, sys, repo, approve } = await build();
+    await upsertControlled(db, "test", { addr: world.act.funder.address });
+    await transfer(world.act.funder, world.act.user.address, 10_000n * U);
+    await bridgeOut(world, world.act.user, 100n * U);
+    await confirmWantos(world);
+    await ix.tick();
+    await sys.relayer.tick();
+    await approve(wKey(1n));
+    await db.query("update risk_index_state set checked_at = now() - interval '1 hour'"); // index stale
+    await sys.relayer.tick();
+    expect(await repo.get(wKey(1n))).toMatchObject({ status: "WAITING", reason: "index" });
+    expect(await actions(db)).toEqual([]);
+    await ix.tick(); // index healthy again
+    await sys.relayer.tick();
+    expect(await actions(db)).toEqual(["queueRelease"]);
   });
 });
