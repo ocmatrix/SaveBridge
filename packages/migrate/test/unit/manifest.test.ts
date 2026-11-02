@@ -86,6 +86,15 @@ describe("validateManifest", () => {
       const foot = c.match(/# count=[^\n]*\n# total=[^\n]*\n/)![0];
       return c.replace(foot, "").replace(/(oldKey,srcChainId)/, foot + "$1");
     }, /footer key "count" before the rows/],
+    ["bscChainId in hex (B6)", (c) => c.replace("# bscChainId=56", "# bscChainId=0x38"), /bscChainId/],
+    ["bscChainId with trailing space (B6)", (c) => c.replace("# bscChainId=56", "# bscChainId=56 "), /bscChainId/],
+    ["cutoverT in scientific notation (B6)", (c) => c.replace(/# cutoverT=\d+/, "# cutoverT=1.762e9"), /cutoverT/],
+    ["count with trailing space (B6)", (c) => c.replace("# count=4", "# count=4 "), /footer count/],
+    ["count in hex (B6)", (c) => c.replace("# count=4", "# count=0x4"), /footer count/],
+    ["duplicated title line (B6)", (c) => c.replace("# bscChainId=", "# wantos-bridge-v2 legacy payout manifest v1\n# bscChainId="), /unexpected comment line/],
+    ["extra column (B6)", (c) => editRow(c, 0, (f) => [...f, "x"]), /malformed row/],
+    ["B2W zero srcRecipient (B6)", (c) => editRow(c, 0, (f) => [...f.slice(0, 6), "0x0000000000000000000000000000000000000000", ...f.slice(7)]), /zero srcRecipient/],
+    ["lower-case vault (B6)", (c) => c.replace(/# vault=(0x\w+)/, (_m, v: string) => `# vault=${v.toLowerCase()}`), /bad vault/],
     ["row after footer (P5)", (c) => c.replace(/(# count=4\n)/, "$1" + c.split("\n").find((l) => l.startsWith("0x"))! + "\n"), /malformed row/],
     ["unknown key", (c) => c.replace("# cutoverT=", "# fee=1\n# cutoverT="), /unknown key/],
     ["stray comment", (c) => c.replace("# cutoverT=", "# hello\n# cutoverT="), /unexpected comment/],

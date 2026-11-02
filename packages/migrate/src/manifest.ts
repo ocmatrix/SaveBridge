@@ -9,6 +9,7 @@ export const CSV_COLUMNS = "oldKey,srcChainId,srcTxHash,srcLogIndex,direction,to
 const HEADER_KEYS = ["bscChainId", "vault", "cutoverT", "oldKey", "amountUnit"] as const;
 const FOOTER_KEYS = ["count", "total"] as const;
 const AMOUNT_UNIT = "wei (18 decimals)";
+const POS_INT = /^[1-9]\d*$/;
 
 export function manifestHash(csv: string): Hex {
   return keccak256(stringToBytes(csv));
@@ -91,15 +92,15 @@ function parseAndCheck(csv: string): Omit<ValidationReport, "ok"> {
       seenKeys.add(k);
       if ((HEADER_KEYS as readonly string[]).includes(k)) {
         if (sawColumns) errors.push(`line ${ln}: header key "${k}" after the column line`);
-        if (k === "bscChainId") header.bscChainId = Number(v);
+        if (k === "bscChainId") header.bscChainId = POS_INT.test(v) ? Number(v) : NaN;
         else if (k === "vault") header.vault = v as Address;
-        else if (k === "cutoverT") header.cutoverT = Number(v);
+        else if (k === "cutoverT") header.cutoverT = POS_INT.test(v) ? Number(v) : NaN;
         else if (k === "oldKey" && v !== OLD_KEY_ENCODING) errors.push(`line ${ln}: unexpected oldKey encoding`);
         else if (k === "amountUnit" && v !== AMOUNT_UNIT) errors.push(`line ${ln}: unexpected amountUnit`);
       } else if ((FOOTER_KEYS as readonly string[]).includes(k)) {
         if (!sawColumns) errors.push(`line ${ln}: footer key "${k}" before the rows`);
         sawFooter = true;
-        if (k === "count") footerCount = Number(v);
+        if (k === "count") footerCount = /^(0|[1-9]\d*)$/.test(v) ? Number(v) : NaN;
         else footerTotal = /^\d+$/.test(v) ? BigInt(v) : -1n;
       } else errors.push(`line ${ln}: unknown key "${k}"`);
       continue;
@@ -137,13 +138,14 @@ function parseAndCheck(csv: string): Omit<ValidationReport, "ok"> {
     if (oldKey(tx, e.srcLogIndex) !== k) errors.push(`line ${ln}: oldKey does not match srcTxHash/srcLogIndex`);
     if (formatAmount(e.amount) !== disp) errors.push(`line ${ln}: amount column does not match amountWei`);
     if (e.to === zeroAddress) errors.push(`line ${ln}: zero recipient`);
+    if (e.srcRecipient === zeroAddress) errors.push(`line ${ln}: zero srcRecipient`);
     if (e.amount === 0n) errors.push(`line ${ln}: zero amount`);
     entries.push(e);
   }
   if (!sawTitle) errors.push("missing manifest title line");
   if (!sawColumns) errors.push("missing column header");
   if (!header.bscChainId || !Number.isSafeInteger(header.bscChainId)) errors.push("missing/bad bscChainId");
-  if (!header.vault || !isAddress(header.vault, { strict: true })) errors.push("missing/bad vault");
+  if (!header.vault || !isAddress(header.vault, { strict: true }) || header.vault !== getAddress(header.vault)) errors.push("missing/bad vault");
   if (!header.cutoverT || !Number.isSafeInteger(header.cutoverT)) errors.push("missing/bad cutoverT");
   const keys = new Set<string>();
   for (const [i, e] of entries.entries()) {
