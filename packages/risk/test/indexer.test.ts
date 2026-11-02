@@ -83,6 +83,24 @@ describe("TxIndexer", () => {
     expect((await flows(db)).map((f) => f.value)).toEqual([40n, 41n, 41n]);
   });
 
+  it("matches the Swap that FOLLOWS the transfer (UniswapV2 emits Transfer before Swap)", async () => {
+    const { db, chain, ix } = await setup();
+    chain.add([
+      {
+        from: C,
+        to: ROUTER,
+        logs: [
+          (t) => swapLog(PAIR, ROUTER, X, [1n, 0n, 0n, 7n], t),
+          (t) => transferLog(USDT, PAIR, X, 41n, t),
+          (t) => swapLog(PAIR, ROUTER, X, [9n, 0n, 0n, 40n], t),
+        ],
+      },
+    ]);
+    chain.mine(6);
+    await ix.tick();
+    expect((await flows(db)).map((f) => f.value)).toEqual([40n]);
+  });
+
   it("skips reverted native transfers, zero-value txs, contract creations and non-ERC20 Transfer logs", async () => {
     const { db, chain, ix } = await setup();
     const bad = chain.tx();
@@ -143,6 +161,20 @@ describe("TxIndexer", () => {
     expect(alerts.alerts.map((a) => a.kind)).toEqual(["INDEX_REORG"]);
     await ix.tick();
     expect((await flows(db)).map((f) => [f.amount, f.to])).toEqual([[1n, X], [2n, X], [33n, Y]]);
+  });
+
+  it("a same-height reorg while caught up is detected at the cursor", async () => {
+    const { db, chain, alerts, ix } = await setup({ range: 2 });
+    chain.add([{ from: C, to: USDT, logs: [(t) => transferLog(USDT, C, X, 1n, t)] }]); // 1
+    chain.add([{ from: C, to: USDT, logs: [(t) => transferLog(USDT, C, X, 2n, t)] }]); // 2
+    chain.mine(8); // head 10
+    await ix.tick(); // 1..2
+    await ix.tick(); // 3..4
+    chain.reorgFrom(3n);
+    chain.mine(8); // head 10 again, blocks 3.. have new hashes; nothing new to index
+    await ix.tick();
+    expect(alerts.alerts.map((a) => a.kind)).toEqual(["INDEX_REORG"]);
+    expect((await getState(db))!.lastBlock).toBe(2n);
   });
 
   it("a reorg deeper than every checkpoint marks the index broken until rewindTo()", async () => {

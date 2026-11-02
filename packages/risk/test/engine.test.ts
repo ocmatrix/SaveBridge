@@ -108,6 +108,21 @@ describe("fund-source ratio (§7 tracing)", () => {
     expect(await fx.evaluate(await fx.bridgeOut(X, 100n * U, T))).toEqual(AUTO);
   });
 
+  it("window end is inclusive: an inflow in the order's own block counts", async () => {
+    const fx = await Fx.create();
+    await fx.controlled(C);
+    await fx.flow({ from: C, to: X, amount: 1000n * U, at: T });
+    expect(await fx.evaluate(await fx.bridgeOut(X, 100n * U, T))).toEqual(freeze());
+  });
+
+  it("self-transfers are not inflows (cannot dilute the ratio)", async () => {
+    const fx = await Fx.create();
+    await fx.controlled(C);
+    await fx.flow({ from: C, to: X, amount: 1000n * U, at: T - DAY });
+    await fx.flow({ from: X, to: X, amount: 100_000n * U, at: T - DAY });
+    expect(await fx.evaluate(await fx.bridgeOut(X, 100n * U, T))).toEqual(freeze());
+  });
+
   it("controlled_set.effective_from: only movements at/after it count (old vault after T)", async () => {
     const fx = await Fx.create();
     await fx.controlled(C, new Date(T - 2 * DAY));
@@ -192,6 +207,17 @@ describe("behaviour rules", () => {
     await fx2.bridgeOut(users[1]!, 100n * U, T);
     await fx2.bridgeOut(users[2]!, 100n * U, T + 25 * H);
     expect(await fx2.evaluate(o2)).toEqual(AUTO);
+  });
+
+  it("only W2B orders count as bridge-outs of funded addresses", async () => {
+    const fx = await Fx.create();
+    const users = [A("a101"), A("a102"), A("a103")];
+    for (const u of users) await fx.flow({ from: S, to: u, amount: 1n, at: T - H });
+    const o = await fx.bridgeOut(users[0]!, 100n * U, T);
+    await fx.bridgeOut(users[1]!, 100n * U, T);
+    const o3 = await fx.bridgeOut(users[2]!, 100n * U, T);
+    await fx.db.query("update orders set direction = 'B2W' where event_key = decode($1, 'hex')", [o3.eventKey.slice(2)]);
+    expect(await fx.evaluate(o)).toEqual(AUTO);
   });
 
   it("bridge payouts / exempt / mint sources are never a common funder", async () => {
@@ -288,6 +314,7 @@ describe("degradation: index unavailable or behind → WAIT(index)", () => {
     const o = await fx.bridgeOut(X, 100n * U, T);
     await fx.db.query("delete from risk_flows");
     expect(await fx.evaluate(o)).toEqual(WAIT);
+    expect(fx.alerts.alerts).toEqual([]); // a clean WAIT, not an error path
   });
   it("database error → WAIT(index) + INDEX_ERROR alert (rules never relaxed)", async () => {
     const fx = await Fx.create();
