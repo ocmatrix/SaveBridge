@@ -32,9 +32,6 @@ importers:
       '@bridge/offline-check':
         specifier: workspace:*
         version: link:../../packages/offline-check
-      '@bridge/relayer':
-        specifier: workspace:*
-        version: link:../../packages/relayer
       '@testing-library/jest-dom':
         specifier: ^6.9.1
         version: 6.10.0(@testing-library/dom@10.4.2)
