@@ -1,96 +1,86 @@
 /**
- * Production entry point (skeleton). Not exercised by tests; never pointed at a real network from
- * this repository. Usage: RELAYER_CONFIG=/path/config.json RELAYER_DATABASE_URL=postgres://... tsx src/main.ts
- *
- * NOTE: KmsSigner is an interface placeholder in PR-3 and refuses to sign, so this process cannot
- * send transactions until the KMS implementation lands (see PR3-NOTES 待决).
+ * Production entry point (payout server ss02). Not exercised by tests; all wiring lives in
+ * `bootstrap.ts` (tested). Run under systemd (deploy/ss02-payout):
+ *   RELAYER_CONFIG=/etc/savebridge/relayer.json  node --import tsx src/main.ts
+ * Secrets: keystore passphrases, Telegram token / chat id and the heartbeat URL arrive as systemd
+ * credentials ($CREDENTIALS_DIRECTORY); RPC URLs from EnvironmentFile; the config file holds neither.
+ * Fail-closed: any configuration / keystore / RPC-policy problem exits with 78 (EX_CONFIG, systemd
+ * does not restart it: RestartPreventExitStatus=78) after a best-effort level-1 alert.
  */
 import { readFileSync } from "node:fs";
 import pg from "pg";
-import { createPublicClient, http, type PublicClient } from "viem";
-import { parseConfig, resolveRpcUrls, type RelayerConfig } from "./config";
+import { HttpHeartbeat, readCredentialText, redact } from "@bridge/ops";
+import { parseConfig, type RelayerConfig } from "./config";
 import { PgDb } from "./db/pg";
 import { migrate } from "./db/migrations";
-import { DedupAlertSink, LogAlertSink } from "./alerts";
 import { SafetyState } from "./safety";
-import { KmsSigner } from "./signer";
-import { ViemChainReader } from "./chain/reader";
 import { Relayer } from "./relayer";
 import { createApi, CachedQuotaReader, ChainQuotaReader, DenyAllAdminSessions } from "./api";
 import { TxSender } from "./chain/sender";
 import { TimelockExecutor, runTimelockTicks } from "./timelockExecutor";
+import { assertChainIds, buildAlerts, buildClients, buildRelayerDeps, buildSigners, gatedHeartbeat, resolveEndpoints, type AlertWiring } from "./bootstrap";
 
-const client = (url: string): PublicClient => createPublicClient({ transport: http(url, { retryCount: 2 }) }) as PublicClient;
+const EX_CONFIG = 78;
+const log = (o: Record<string, unknown>, secrets: readonly string[] = []) => process.stderr.write(`${redact(JSON.stringify(o), secrets)}\n`);
 
 async function main(): Promise<void> {
-  const path = process.env.RELAYER_CONFIG;
-  if (!path) throw new Error("RELAYER_CONFIG is required");
-  const cfg: RelayerConfig = parseConfig(JSON.parse(readFileSync(path, "utf8")));
-  const dbUrl = process.env[cfg.db.urlEnv];
-  if (!dbUrl) throw new Error(`${cfg.db.urlEnv} is required`);
-  const db = new PgDb(new pg.Pool({ connectionString: dbUrl }));
-  await migrate(db);
+  let alerts: AlertWiring | undefined;
+  let stage = "config";
+  try {
+    const path = process.env.RELAYER_CONFIG;
+    if (!path) throw new Error("RELAYER_CONFIG is required");
+    const cfg: RelayerConfig = parseConfig(JSON.parse(readFileSync(path, "utf8")));
+    stage = "alerts";
+    alerts = buildAlerts(cfg);
+    stage = "rpc";
+    const ep = resolveEndpoints(cfg);
+    for (const w of ep.warnings) log({ event: "rpc_warning", warning: w });
+    const clients = buildClients(cfg, ep, { onEvent: (e) => e.event !== "budget" && log({ ...e, event: "rpc_guard", guard: e.event }) });
+    await assertChainIds(cfg, clients, ep);
+    stage = "signer";
+    const signers = await buildSigners(cfg);
+    log({ event: "signers_loaded", wantos: signers.wantos.address, bsc: signers.bsc.address, submitter: signers.submitter.address });
+    stage = "database";
+    const dbUrl = process.env[cfg.db.urlEnv];
+    if (!dbUrl) throw new Error(`${cfg.db.urlEnv} is required`);
+    const db = new PgDb(new pg.Pool({ connectionString: dbUrl, max: 5 }));
+    await migrate(db);
+    stage = "start";
 
-  const alerts = new DedupAlertSink(new LogAlertSink(), 15 * 60_000);
-  const safety = new SafetyState(alerts);
-  safety.onReorg((side, info) => console.error(JSON.stringify({ event: "reorg", side, block: info.block.toString() })));
+    const safety = new SafetyState(alerts.sink);
+    safety.onReorg((side, info) => log({ event: "reorg", side, block: info.block.toString() }));
+    const hb = cfg.heartbeat.urlCredential ? new HttpHeartbeat({ url: readCredentialText(cfg.heartbeat.urlCredential), minIntervalMs: cfg.heartbeat.intervalMs }) : undefined;
+    const relayer = new Relayer(
+      buildRelayerDeps({ cfg, clients, signers, db, alerts: alerts.sink, safety, heartbeat: hb ? gatedHeartbeat(() => hb.ping(), alerts.telegram) : undefined }),
+    );
+    await relayer.start();
 
-  const urls = resolveRpcUrls(cfg); // RPC URLs (may embed API keys) come from the environment only
-  const wPrimary = client(urls.wantosPrimary);
-  const bPrimary = client(urls.bsc[0]!);
-  const relayer = new Relayer({
-    db,
-    alerts,
-    safety,
-    wantos: {
-      chainId: cfg.wantos.chainId,
-      bridge: cfg.wantos.bridgeAddress,
-      client: wPrimary,
-      primary: new ViemChainReader("wantos-primary", wPrimary),
-      crossChecks: urls.wantosCross.map((u, i) => new ViemChainReader(`wantos-cross-${i}`, client(u))),
-      signer: new KmsSigner({ keyId: cfg.signer.wantosKeyId, address: cfg.signer.wantosAddress }),
-      confirmations: cfg.wantos.confirmations,
-      startBlock: BigInt(cfg.wantos.startBlock),
-      minBalanceWei: BigInt(cfg.gas.wantosMinBalanceWei),
-    },
-    bsc: {
-      chainId: cfg.bsc.chainId,
-      vault: cfg.bsc.bridgeAddress,
-      client: bPrimary,
-      readers: urls.bsc.map((u, i) => new ViemChainReader(`bsc-${i}`, client(u))),
-      signer: new KmsSigner({ keyId: cfg.signer.bscKeyId, address: cfg.signer.bscAddress }),
-      startBlock: BigInt(cfg.bsc.startBlock),
-      minBalanceWei: BigInt(cfg.gas.bscMinBalanceWei),
-    },
-    sender: cfg.tx,
-    poll: { rescanBlocks: cfg.poll.rescanBlocks, maxBlockRange: cfg.poll.maxBlockRange },
-    heartbeat: { staleAfterMs: cfg.heartbeat.staleAfterMs },
-    submitterAddress: cfg.submitter.address,
-  });
-  await relayer.start();
+    const executors = [
+      { chainId: cfg.wantos.chainId, c: clients.wantos.write, bridge: cfg.wantos.bridgeAddress, from: cfg.wantos.startBlock },
+      { chainId: cfg.bsc.chainId, c: clients.bsc.write, bridge: cfg.bsc.bridgeAddress, from: cfg.bsc.startBlock },
+    ].map(async ({ chainId, c, bridge, from }) => {
+      const timelock = (await c.readContract({
+        address: bridge,
+        abi: [{ type: "function", name: "timelock", inputs: [], outputs: [{ type: "address" }], stateMutability: "view" }],
+        functionName: "timelock",
+      })) as `0x${string}`;
+      const sender = new TxSender({ chainId, client: c, signer: signers.submitter, db, alerts: alerts!.sink, safety, cfg: cfg.tx });
+      return new TimelockExecutor({ chainId, timelock, client: c, sender, db, alerts: alerts!.sink, maxBlockRange: cfg.poll.maxBlockRange, fromBlock: BigInt(from) });
+    });
+    const tl = await Promise.all(executors);
+    setInterval(() => void runTimelockTicks(tl, alerts!.sink), 60_000);
+    if (alerts.telegram) setInterval(() => void alerts!.telegram!.flush(), 30_000);
 
-  const submitter = new KmsSigner({ keyId: cfg.submitter.keyId, address: cfg.submitter.address });
-  const executors = [
-    { chainId: cfg.wantos.chainId, c: wPrimary },
-    { chainId: cfg.bsc.chainId, c: bPrimary },
-  ].map(async ({ chainId, c }) => {
-    const timelock = (await c.readContract({
-      address: chainId === cfg.wantos.chainId ? cfg.wantos.bridgeAddress : cfg.bsc.bridgeAddress,
-      abi: [{ type: "function", name: "timelock", inputs: [], outputs: [{ type: "address" }], stateMutability: "view" }],
-      functionName: "timelock",
-    })) as `0x${string}`;
-    const sender = new TxSender({ chainId, client: c, signer: submitter, db, alerts, safety, cfg: cfg.tx });
-    return new TimelockExecutor({ chainId, timelock, client: c, sender, db, alerts, maxBlockRange: cfg.poll.maxBlockRange, fromBlock: BigInt(chainId === cfg.wantos.chainId ? cfg.wantos.startBlock : cfg.bsc.startBlock) });
-  });
-  const tl = await Promise.all(executors);
-  setInterval(() => void runTimelockTicks(tl, alerts), 60_000);
-
-  const api = createApi({ orders: relayer.orders, quota: new CachedQuotaReader(new ChainQuotaReader(relayer.wantosView, relayer.bscView), { ttlMs: 15_000, maxPerSecond: 20 }), admin: DenyAllAdminSessions, corsOrigins: cfg.api.corsOrigins ?? [] });
-  await api.listen(cfg.api.port, cfg.api.host);
-  await relayer.run({ intervalMs: cfg.poll.intervalMs });
+    const api = createApi({ orders: relayer.orders, quota: new CachedQuotaReader(new ChainQuotaReader(relayer.wantosView, relayer.bscView), { ttlMs: 15_000, maxPerSecond: 20 }), admin: DenyAllAdminSessions, corsOrigins: cfg.api.corsOrigins ?? [] });
+    await api.listen(cfg.api.port, cfg.api.host); // parseConfig only allows loopback (Cloudflare Tunnel in front)
+    log({ event: "started", api: `${cfg.api.host}:${cfg.api.port}` });
+    await relayer.run({ intervalMs: cfg.poll.intervalMs });
+  } catch (e) {
+    const msg = redact(e instanceof Error ? e.message : String(e), alerts?.secrets ?? []);
+    log({ event: "fatal", stage, error: msg });
+    if (alerts) await alerts.sink.emit({ kind: "STARTUP_FAILED", message: `付款程序启动失败（${stage}）：${msg}` }).catch(() => undefined);
+    process.exit(stage === "start" ? 1 : EX_CONFIG);
+  }
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+void main();

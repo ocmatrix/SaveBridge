@@ -205,6 +205,9 @@ importers:
       '@bridge/abi':
         specifier: workspace:*
         version: link:../abi
+      '@bridge/ops':
+        specifier: workspace:*
+        version: link:../ops
       pg:
         specifier: ^8.23.1
         version: 8.23.1
@@ -239,6 +242,9 @@ importers:
       '@bridge/abi':
         specifier: workspace:*
         version: link:../abi
+      '@bridge/ops':
+        specifier: workspace:*
+        version: link:../ops
       viem:
         specifier: ^2.57.14
         version: 2.57.14(typescript@7.0.2)(zod@3.25.76)

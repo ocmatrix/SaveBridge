@@ -17,6 +17,11 @@ export interface RelayerConfig {
     bridgeAddress: Address;
     /** §6.2: WANTOS events wait 6 more blocks. */
     confirmations: number;
+    /**
+     * deploy-prep: env var of the ONLY endpoint that broadcasts WANTOS transactions (rpc3). Defaults to
+     * the primary. Never rpc1/rpc2 (read-only authorisation) — checked at startup.
+     */
+    writeRpcUrlEnv?: string;
   };
   bsc: {
     chainId: number;
@@ -24,11 +29,24 @@ export interface RelayerConfig {
     rpcUrlEnvs: string[];
     bridgeAddress: Address;
     startBlock: number;
+    /** deploy-prep: env var of the BSC broadcast endpoint; defaults to rpcUrlEnvs[0]. */
+    writeRpcUrlEnv?: string;
   };
   /** KMS key ids plus the (public) addresses they control; checked at startup. */
-  signer: { kind: "kms"; wantosKeyId: string; wantosAddress: Address; bscKeyId: string; bscAddress: Address };
+  signer:
+    | { kind: "kms"; wantosKeyId: string; wantosAddress: Address; bscKeyId: string; bscAddress: Address }
+    | { kind: "local-keystore"; wantos: KeystoreRef; bsc: KeystoreRef };
   /** Submission-service hot key (no contract role): timelock execution. */
-  submitter: { kind: "kms"; keyId: string; address: Address };
+  submitter: { kind: "kms"; keyId: string; address: Address } | ({ kind: "local-keystore" } & KeystoreRef);
+  /**
+   * deploy-prep: node identity per RPC env var name (e.g. both rpc3 URLs → "rpc3"). URLs of the same
+   * node (same host or same label) count as ONE source; startup refuses too few distinct sources.
+   */
+  rpcNodes?: Record<string, string>;
+  /** deploy-prep: politeness limits towards the read-only external nodes (rpc1 / rpc2). */
+  externalRpc?: { maxRequestsPerMinute: number; burst: number; maxLogsBlockRange: number };
+  /** deploy-prep: Telegram credentials are systemd credential NAMES, never values. */
+  alerts?: { telegram?: { botTokenCredential: string; chatIdCredential: string }; requireTelegram?: boolean; logFile?: string };
   db: { urlEnv: string };
   /** corsOrigins: exact origins allowed to call /v1/* from a browser; absent = none. */
   api: { host: string; port: number; corsOrigins?: string[] };
@@ -41,8 +59,19 @@ export interface RelayerConfig {
     maxFeeBumps: number;
   };
   gas: { wantosMinBalanceWei: string; bscMinBalanceWei: string };
-  heartbeat: { intervalMs: number; staleAfterMs: number };
+  /** urlCredential: systemd credential NAME holding the external dead-man-switch ping URL. */
+  heartbeat: { intervalMs: number; staleAfterMs: number; urlCredential?: string };
 }
+
+/** Local encrypted keystore reference (deploy-prep). The passphrase is a systemd credential NAME. */
+export interface KeystoreRef {
+  keystorePath: string;
+  passphraseCredential: string;
+  address: Address;
+}
+
+/** Minimum poll interval when rpc1/rpc2 (read-only external nodes) are configured (user authorisation). */
+export const MIN_POLL_MS_WITH_EXTERNAL_RPC = 5000;
 
 export const EXAMPLE_CONFIG: RelayerConfig = {
   wantos: {
@@ -62,11 +91,11 @@ export const EXAMPLE_CONFIG: RelayerConfig = {
   signer: {
     kind: "kms",
     wantosKeyId: "kms-key-id-placeholder-wantos",
-    wantosAddress: "0x000000000000000000000000000000000000dEaD",
+    wantosAddress: "0x0000000000000000000000000000000000000A01",
     bscKeyId: "kms-key-id-placeholder-bsc",
-    bscAddress: "0x000000000000000000000000000000000000dEaD",
+    bscAddress: "0x0000000000000000000000000000000000000A02",
   },
-  submitter: { kind: "kms", keyId: "kms-key-id-placeholder-submitter", address: "0x000000000000000000000000000000000000dEaD" },
+  submitter: { kind: "kms", keyId: "kms-key-id-placeholder-submitter", address: "0x0000000000000000000000000000000000000A03" },
   db: { urlEnv: "RELAYER_DATABASE_URL" },
   api: { host: "127.0.0.1", port: 8080, corsOrigins: ["https://bridge.wanto.pro"] },
   poll: { intervalMs: 3000, rescanBlocks: 100, maxBlockRange: 2000 },
@@ -74,6 +103,44 @@ export const EXAMPLE_CONFIG: RelayerConfig = {
   gas: { wantosMinBalanceWei: "1000000000000000000", bscMinBalanceWei: "50000000000000000" },
   heartbeat: { intervalMs: 60_000, staleAfterMs: 300_000 },
 };
+
+const LOOPBACK_HOSTS = ["127.0.0.1", "::1"];
+const CRED_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+function credName(n: unknown, what: string): string {
+  if (typeof n !== "string" || !CRED_NAME.test(n)) throw new Error(`config: ${what} must be a systemd credential name`);
+  return n;
+}
+
+export type KeyRefResolved = ({ kind: "kms"; keyId: string; address: Address }) | ({ kind: "local-keystore" } & KeystoreRef);
+
+function keystoreRef(r: unknown, what: string): KeystoreRef {
+  const o = (r ?? {}) as Partial<KeystoreRef>;
+  if (typeof o.keystorePath !== "string" || !o.keystorePath.startsWith("/") || o.keystorePath.includes("..")) throw new Error(`config: ${what}.keystorePath must be an absolute path`);
+  credName(o.passphraseCredential, `${what}.passphraseCredential`);
+  if (typeof o.address !== "string" || !isAddress(o.address, { strict: false })) throw new Error(`config: ${what}.address is not a valid address`);
+  return { keystorePath: o.keystorePath, passphraseCredential: o.passphraseCredential!, address: o.address };
+}
+
+/** The three sending keys (two payout keys + submission service), normalised; validates their shape. */
+export function keyRefs(c: RelayerConfig): { wantos: KeyRefResolved; bsc: KeyRefResolved; submitter: KeyRefResolved } {
+  const s = c.signer as Record<string, unknown> & { kind?: string };
+  let wantos: KeyRefResolved, bsc: KeyRefResolved, submitter: KeyRefResolved;
+  if (s?.kind === "kms") {
+    const k = c.signer as Extract<RelayerConfig["signer"], { kind: "kms" }>;
+    wantos = { kind: "kms", keyId: k.wantosKeyId, address: k.wantosAddress };
+    bsc = { kind: "kms", keyId: k.bscKeyId, address: k.bscAddress };
+  } else if (s?.kind === "local-keystore") {
+    wantos = { kind: "local-keystore", ...keystoreRef(s["wantos"], "signer.wantos") };
+    bsc = { kind: "local-keystore", ...keystoreRef(s["bsc"], "signer.bsc") };
+  } else throw new Error(`config: signer.kind must be "kms" or "local-keystore"`);
+  const u = c.submitter as Record<string, unknown> & { kind?: string };
+  if (u?.kind === "kms") submitter = { kind: "kms", keyId: String(u["keyId"]), address: u["address"] as Address };
+  else if (u?.kind === "local-keystore") submitter = { kind: "local-keystore", ...keystoreRef(u, "submitter") };
+  else throw new Error(`config: submitter.kind must be "kms" or "local-keystore"`);
+  for (const [n, r] of [["signer.wantos", wantos], ["signer.bsc", bsc], ["submitter", submitter]] as const)
+    if (!isAddress(r.address, { strict: false })) throw new Error(`config: ${n} address is not a valid address`);
+  return { wantos, bsc, submitter };
+}
 
 const KEY_NAME = /priv|secret|mnemonic|seed|password/i;
 const RAW_KEY = /^(0x)?[0-9a-fA-F]{64}$/;
@@ -150,5 +217,29 @@ export function parseConfig(raw: RelayerConfig): RelayerConfig {
   }
   if (c.wantos.chainId === c.bsc.chainId) throw new Error("config: chain ids must differ");
   if (c.poll.rescanBlocks < 100) throw new Error("config: rescanBlocks must be >= 100 (DESIGN §6.4)");
+  if (!Number.isInteger(c.poll.intervalMs) || c.poll.intervalMs < 1000) throw new Error("config: poll.intervalMs must be >= 1000");
+  if (!LOOPBACK_HOSTS.includes(c.api.host)) throw new Error("config: api.host must be loopback (127.0.0.1 / ::1); public access goes through Cloudflare Tunnel");
+  if (c.wantos.writeRpcUrlEnv !== undefined) envName(c.wantos.writeRpcUrlEnv, "wantos.writeRpcUrlEnv");
+  if (c.bsc.writeRpcUrlEnv !== undefined) envName(c.bsc.writeRpcUrlEnv, "bsc.writeRpcUrlEnv");
+  for (const [k, v] of Object.entries(c.rpcNodes ?? {})) {
+    envName(k, `rpcNodes key ${k}`);
+    if (typeof v !== "string" || !/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(v)) throw new Error(`config: rpcNodes.${k} must be a node label`);
+  }
+  if (c.externalRpc) {
+    const e = c.externalRpc;
+    if (!(e.maxRequestsPerMinute >= 1 && e.maxRequestsPerMinute <= 600 && e.burst >= 1 && e.maxLogsBlockRange >= 1 && e.maxLogsBlockRange <= 2000))
+      throw new Error("config: externalRpc limits out of range (1..600 req/min, burst >= 1, 1..2000 blocks)");
+  }
+  const refs = keyRefs(c);
+  const addrs = [refs.wantos.address, refs.bsc.address, refs.submitter.address].map((a) => a.toLowerCase());
+  if (new Set(addrs).size !== 3) throw new Error("config: wantos payout, bsc payout and submitter keys must be three different addresses");
+  const paths = [refs.wantos, refs.bsc, refs.submitter].filter((r) => r.kind === "local-keystore").map((r) => (r as KeystoreRef).keystorePath);
+  if (new Set(paths).size !== paths.length) throw new Error("config: keystore paths must be distinct");
+  if (c.alerts?.telegram) {
+    credName(c.alerts.telegram.botTokenCredential, "alerts.telegram.botTokenCredential");
+    credName(c.alerts.telegram.chatIdCredential, "alerts.telegram.chatIdCredential");
+  } else if (c.alerts?.requireTelegram) throw new Error("config: alerts.requireTelegram is set but alerts.telegram is missing");
+  if (c.alerts?.logFile !== undefined && !c.alerts.logFile.startsWith("/")) throw new Error("config: alerts.logFile must be absolute");
+  if (c.heartbeat.urlCredential !== undefined) credName(c.heartbeat.urlCredential, "heartbeat.urlCredential");
   return c;
 }

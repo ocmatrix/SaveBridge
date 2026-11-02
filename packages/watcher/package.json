@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@bridge/abi": "workspace:*",
+    "@bridge/ops": "workspace:*",
     "viem": "^2.57.14"
   },
   "devDependencies": {
