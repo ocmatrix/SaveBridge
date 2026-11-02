@@ -8,7 +8,10 @@ import { localSigner, startWorld, type World } from "../support/world";
 import { renderApp } from "./render";
 import { render } from "@testing-library/react";
 import { App } from "../../src/App";
-import { invalidateNonce } from "../../src/lib/whitelist";
+import { invalidateNonce, readNonce } from "../../src/lib/whitelist";
+import { BSC_ID, WANTOS_ID } from "../support/world";
+import { getAddress } from "viem";
+import { vi } from "vitest";
 
 let w: World;
 beforeAll(async () => {
@@ -188,5 +191,80 @@ describe("whitelist page", () => {
     fireEvent.click(prepareBtn());
     await waitFor(() => expect(screen.queryByTestId("hashes")).toBeNull());
     expect(await screen.findByText(/rpc down/)).toBeInTheDocument();
+  });
+
+  describe("round-2 small items", () => {
+    const two = [keccak256(toBytes("s2a")).slice(0, 42), keccak256(toBytes("s2b")).slice(0, 42)];
+    const prepared = async () => {
+      renderApp(w, localSigner(w, w.act.wl));
+      paste(two.join("\n"));
+      await waitFor(() => expect(prepareBtn()).toBeEnabled());
+      fireEvent.click(prepareBtn());
+      await screen.findByTestId("listHash");
+    };
+
+    it("M06: unticking a row after preparing voids the prepared batch", async () => {
+      await prepared();
+      fireEvent.click(screen.getByLabelText(`选择 ${two[0]}`));
+      expect(screen.queryByTestId("hashes")).toBeNull();
+      expect(screen.queryByRole("button", { name: /签名并写入|重试/ })).toBeNull();
+    });
+
+    it("M07: editing the list after preparing voids the prepared batch", async () => {
+      await prepared();
+      paste(two[0]!);
+      await waitFor(() => expect(screen.queryByTestId("hashes")).toBeNull());
+      expect(screen.queryByRole("button", { name: /签名并写入|重试/ })).toBeNull();
+    });
+
+    it("M04/M08: each chain's line shows its own nonce, domain hash and message hash", async () => {
+      await invalidateNonce(w.chains.bsc, localSigner(w, w.act.wl)); // make the nonces differ
+      await prepared();
+      const sorted = parseAddressList(two.join("\n")).addresses;
+      const deadline = BigInt(/--deadline (\d+)/.exec(screen.getByTestId("offline-cmd").textContent!)![1]!);
+      for (const [side, name, chainId] of [["bsc", "BscVaultV2", BSC_ID], ["wantos", "WantosBridgeV2", WANTOS_ID]] as const) {
+        const nonce = await readNonce(w.chains[side]);
+        expect(screen.getByTestId(`nonce-${side}`)).toHaveTextContent(new RegExp(`^${nonce}$`));
+        expect(screen.getByTestId(`domain-${side}`)).toHaveTextContent(tool.domainHash({ name, chainId, verifyingContract: w.bridge }));
+        expect(screen.getByTestId(`msg-${side}`)).toHaveTextContent(tool.messageHash({ listHash: tool.listHash(sorted), count: 2, allowed: true, nonce, deadline }));
+        expect(screen.getByTestId(`chain-${side}`)).toHaveTextContent(`chainId ${chainId}`);
+      }
+      expect(await readNonce(w.chains.bsc)).not.toBe(await readNonce(w.chains.wantos));
+    });
+
+    it("export: only after preparing; file name and contents come from the prepared batch", async () => {
+      const blobs: Blob[] = [];
+      const names: string[] = [];
+      const u = URL as unknown as { createObjectURL?: unknown; revokeObjectURL?: unknown };
+      const saved = { c: u.createObjectURL, r: u.revokeObjectURL };
+      u.createObjectURL = (b: Blob) => (blobs.push(b), "blob:x");
+      u.revokeObjectURL = () => {};
+      const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+        names.push(this.download);
+      });
+      try {
+        renderApp(w, localSigner(w, w.act.wl));
+        paste(two.join("\n"));
+        const exp = await screen.findByRole("button", { name: /导出已准备批次的清单/ });
+        expect(exp).toBeDisabled();
+        expect(screen.getByText(/离线核对请用你自己的原始文件/)).toBeInTheDocument();
+        fireEvent.click(screen.getByLabelText("移除", { selector: "input" }));
+        await waitFor(() => expect(prepareBtn()).toBeEnabled());
+        fireEvent.click(prepareBtn());
+        await screen.findByTestId("listHash");
+        fireEvent.click(exp);
+        expect(names).toEqual(["whitelist-remove-batch1.txt"]);
+        const text = await new Promise<string>((r) => {
+          const fr = new FileReader();
+          fr.onload = () => r(String(fr.result));
+          fr.readAsText(blobs[0]!);
+        });
+        expect(text).toBe(parseAddressList(two.join("\n")).addresses.map((a) => getAddress(a)).join("\n") + "\n");
+      } finally {
+        click.mockRestore();
+        u.createObjectURL = saved.c;
+        u.revokeObjectURL = saved.r;
+      }
+    });
   });
 });

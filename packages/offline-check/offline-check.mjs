@@ -10,7 +10,7 @@
 // 用法：
 //   node offline-check.mjs <地址文件|-> --action add|remove --contract 0x… \
 //        --bsc-nonce N --wantos-nonce M --deadline <unix 秒> \
-//        [--batch K] [--bsc-chain-id 56] [--wantos-chain-id 13555] [--batch-size 500] \
+//        [--batch K] [--bsc-chain-id 56] [--wantos-chain-id 13555] \
 //        [--expect-list-hash 0x…] [--list] [--json]
 //   node offline-check.mjs --decode <calldata 0x…> [--json]   # 解码时间锁提议 / 管理交易的 calldata
 //
@@ -18,7 +18,7 @@
 //   不给 --batch 时算全部批次，第 i 批（从 0 起）nonce = 给定 nonce + i；此时多批不能用 --expect-list-hash。
 //   --expect-list-hash：与屏幕上的 listHash 比对，不一致退出码 2。
 //   参数严格校验（fail-closed）：未知选项、--x=y 写法、重复选项、多余的文件参数、空值、缺少 nonce/deadline、
-//   chainId / batch-size / batch 不是正整数、expect-list-hash 不是 0x+64 位十六进制 —— 一律退出码 64。
+//   chainId / batch 不是正整数、expect-list-hash 不是 0x+64 位十六进制 —— 一律退出码 64。
 //
 // 地址文件规则（rules v1，与管理后台完全相同，测试向量见 vectors.json）：
 //   R1 去掉 UTF-8 BOM；按 \r\n、\n、\r 分行（行号从 1 起）。
@@ -28,7 +28,7 @@
 //   R5 字段必须是 0x + 40 位十六进制；大小写混写时必须是正确的 EIP-55 校验和；零地址拒绝。
 //   R6 转小写后去重（保留第一次出现，重复记为提示）。
 //   R7 按数值升序排序。
-//   R8 按批大小（默认 500，最大 500）顺序切批。
+//   R8 每 500 个顺序切批（命令行固定 500，与管理后台相同）。
 //   R9 有任何错误就拒绝输出哈希。
 //
 // 哈希（与合约 BridgeBase / PR1-NOTES §5.4 相同）：
@@ -397,7 +397,7 @@ export function decodeCalldata(hex) {
 
 // ---------------------------------------------------------------- 命令行
 
-const VALUE_OPTS = new Set(["action", "contract", "bsc-nonce", "wantos-nonce", "deadline", "bsc-chain-id", "wantos-chain-id", "batch-size", "batch", "expect-list-hash", "decode"]);
+const VALUE_OPTS = new Set(["action", "contract", "bsc-nonce", "wantos-nonce", "deadline", "bsc-chain-id", "wantos-chain-id", "batch", "expect-list-hash", "decode"]);
 const FLAG_OPTS = new Set(["list", "json"]);
 
 /** 严格解析：返回 { o } 或 { error }（fail-closed）。 */
@@ -460,10 +460,9 @@ export function runCli(argv, readFile) {
     if (a[k] === undefined) return usage(`缺少 --${k}（核对必须给出与屏幕相同的 nonce 和 deadline）`);
     if (!DEC.test(a[k])) return usage(`--${k} 必须是十进制整数`);
   }
-  for (const k of ["bsc-chain-id", "wantos-chain-id", "batch-size", "batch"]) if (a[k] !== undefined && !POS_INT.test(a[k])) return usage(`--${k} 必须是正整数`);
+  for (const k of ["bsc-chain-id", "wantos-chain-id", "batch"]) if (a[k] !== undefined && !POS_INT.test(a[k])) return usage(`--${k} 必须是正整数`);
   if (a["expect-list-hash"] !== undefined && !HASH32.test(a["expect-list-hash"])) return usage("--expect-list-hash 必须是 0x + 64 位十六进制");
-  const batchSize = a["batch-size"] ? Number(a["batch-size"]) : MAX_BATCH;
-  if (batchSize > MAX_BATCH) return usage(`--batch-size 不得超过 ${MAX_BATCH}`);
+  const batchSize = MAX_BATCH; // fixed, same as the admin page (no option: it could only create mismatches)
   const opts = {
     allowed: a.action === "add",
     contract,

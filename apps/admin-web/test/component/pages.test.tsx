@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { keccak256, recoverMessageAddress, toBytes, type Hex } from "viem";
+import { getAddress, keccak256, recoverMessageAddress, toBytes, type Hex } from "viem";
 import { reviewMessage as relayerReviewMessage } from "../../../../packages/relayer/src/review";
 import { readChainState } from "../../src/lib/state";
 import { readParams, applyParams } from "../../src/lib/params";
@@ -97,6 +97,21 @@ describe("timelock page: targets", () => {
     expect(tag).toHaveClass("err");
     expect(call).toHaveTextContent("目标不是本系统合约");
     expect(call).not.toHaveTextContent("pause(");
+  });
+});
+
+describe("timelock page: look-alike target and value", () => {
+  it("M36/M34: a target sharing the bridge's prefix is 【其他】 with its full address; attached value is shown", async () => {
+    const st = await readChainState(w.chains.bsc);
+    const b = w.bridge.toLowerCase();
+    const lookalike = getAddress(b.slice(0, -1) + (b.endsWith("0") ? "1" : "0"));
+    const r = await propose(w.chains.bsc, localSigner(w, w.act.admin), st.timelock, [{ target: lookalike, data: "0x8456cb59", value: 5n }]);
+    renderApp(w, localSigner(w, w.act.wl), "/timelock");
+    const call = within(await screen.findByTestId(`proposal-${r.id}`)).getByTestId("call");
+    expect(call).toHaveTextContent(lookalike);
+    expect(call).not.toHaveTextContent(w.bridge);
+    expect(within(call).getByText(/【其他/)).toHaveClass("err");
+    expect(call).toHaveTextContent("附带 5 wei");
   });
 });
 

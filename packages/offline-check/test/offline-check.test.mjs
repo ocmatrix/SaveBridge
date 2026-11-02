@@ -169,8 +169,7 @@ describe("CLI", () => {
       [...base, "--expect-list-hash", "--json"],
       [...base, "--bsc-chain-id", "0"],
       [...base, "--wantos-chain-id", "-1"],
-      [...base, "--batch-size", "0"],
-      [...base, "--batch-size", "501"],
+      [...base, "--batch-size", "500"], // option removed: the batch size is fixed at 500
       [...base, "--batch", "0"],
       [...base, "--batch", "1.5"],
       [...base, "--batch", "9"], // out of range
@@ -204,33 +203,51 @@ describe("CLI", () => {
   });
 
   it("--batch K: only batch K, with the given nonce (no +i); multi-batch --expect requires --batch; text and --json agree", () => {
-    const text = vectors.cases[3].text; // 5 addresses, batch size 2 → 3 batches
-    const v3 = vectors.cases[3].batches;
-    const args = (extra) => [file, "--action", "add", "--contract", P.contract, "--bsc-chain-id", "31338", "--wantos-chain-id", "31337", "--bsc-nonce", "3", "--wantos-nonce", "7", "--deadline", "1800000000", "--batch-size", "2", ...extra];
-    // without --batch: batch 2 uses nonce 3+1 (vectors)
+    const addrs = Array.from({ length: 1001 }, (_, i) => viemKeccak(enc.encode(`bk${i}`)).slice(0, 42));
+    const text = addrs.join("\n");
+    const sorted = oc.parseAddressList(text).addresses;
+    const lh = [0, 1, 2].map((k) => oc.listHash(sorted.slice(k * 500, k * 500 + 500)));
+    const msg = (k, nonce, chainId) => oc.messageHash({ listHash: lh[k], count: k === 2 ? 1 : 500, allowed: true, nonce, deadline: 1800000000 });
+    const args = (extra, bn = "3", wn = "7") => [file, "--action", "add", "--contract", P.contract, "--bsc-chain-id", "31338", "--wantos-chain-id", "31337", "--bsc-nonce", bn, "--wantos-nonce", wn, "--deadline", "1800000000", ...extra];
+    // without --batch: batch 2 uses nonce 3+1 / 7+1
     const all = JSON.parse(oc.runCli(args(["--json"]), () => text).out);
-    expect(all.batches[1].bsc.messageHash).toBe(v3[1].bsc.messageHash);
-    // with --batch 2 and nonce 4/8 → identical to the vector for batch 2
-    const one = oc.runCli([file, "--action", "add", "--contract", P.contract, "--bsc-chain-id", "31338", "--wantos-chain-id", "31337", "--bsc-nonce", "4", "--wantos-nonce", "8", "--deadline", "1800000000", "--batch-size", "2", "--batch", "2", "--json"], () => text);
-    expect(one.code).toBe(0);
-    const ob = JSON.parse(one.out);
+    expect(all.batches.map((b) => b.count)).toEqual([500, 500, 1]);
+    expect(all.batches[1].bsc.messageHash).toBe(msg(1, 4));
+    expect(all.batches[1].wantos.messageHash).toBe(msg(1, 8));
+    // with --batch 2: nonce used as given (3 / 7), only that batch
+    const ob = JSON.parse(oc.runCli(args(["--batch", "2", "--json"]), () => text).out);
     expect(ob.batches.length).toBe(1);
     expect(ob.batches[0].index).toBe(1);
-    expect(ob.batches[0].bsc.messageHash).toBe(v3[1].bsc.messageHash);
-    expect(ob.batches[0].wantos.messageHash).toBe(v3[1].wantos.messageHash);
-    // --batch 2 with nonce 3 → nonce used as-is (NOT 3+1)
-    const raw = JSON.parse(oc.runCli(args(["--batch", "2", "--json"]), () => text).out);
-    expect(raw.batches[0].bsc.nonce).toBe("3");
-    expect(raw.batches[0].bsc.messageHash).not.toBe(v3[1].bsc.messageHash);
-    // multi-batch + expect without --batch → 64
-    expect(oc.runCli(args(["--expect-list-hash", v3[1].listHash]), () => text).code).toBe(64);
-    expect(oc.runCli(args(["--expect-list-hash", v3[1].listHash, "--json"]), () => text).code).toBe(64);
-    // with --batch: hit → 0 in both modes, other batch's hash → 2 in both modes
+    expect(ob.batches[0].bsc.nonce).toBe("3");
+    expect(ob.batches[0].bsc.messageHash).toBe(msg(1, 3));
+    expect(ob.batches[0].wantos.messageHash).toBe(msg(1, 7));
+    // --batch equal to the last batch is accepted; one past it is not
+    const last = JSON.parse(oc.runCli(args(["--batch", "3", "--json"]), () => text).out);
+    expect(last.batches[0].count).toBe(1);
+    expect(last.batches[0].listHash).toBe(lh[2]);
+    expect(oc.runCli(args(["--batch", "3"]), () => text).code).toBe(0);
+    expect(oc.runCli(args(["--batch", "4"]), () => text).code).toBe(64);
+    // multi-batch + expect without --batch → 64 (text and json)
+    expect(oc.runCli(args(["--expect-list-hash", lh[1]]), () => text).code).toBe(64);
+    expect(oc.runCli(args(["--expect-list-hash", lh[1], "--json"]), () => text).code).toBe(64);
+    // with --batch: hit → 0 in both modes, another batch's hash → 2 in both modes
     for (const json of [[], ["--json"]]) {
-      expect(oc.runCli(args(["--batch", "2", "--expect-list-hash", v3[1].listHash, ...json]), () => text).code).toBe(0);
-      expect(oc.runCli(args(["--batch", "2", "--expect-list-hash", v3[0].listHash, ...json]), () => text).code).toBe(2);
+      expect(oc.runCli(args(["--batch", "2", "--expect-list-hash", lh[1], ...json]), () => text).code).toBe(0);
+      expect(oc.runCli(args(["--batch", "2", "--expect-list-hash", lh[0], ...json]), () => text).code).toBe(2);
     }
-    expect(oc.runCli(args(["--batch", "2", "--expect-list-hash", v3[1].listHash]), () => text).out).toContain("只核对第 2/3 批");
-    expect(oc.computeBatches(text, { allowed: true, contract: P.contract, batchSize: 2, batch: 4 }).ok).toBe(false);
+    expect(oc.runCli(args(["--batch", "2", "--expect-list-hash", lh[1]]), () => text).out).toContain("只核对第 2/3 批");
+    expect(oc.computeBatches(text, { allowed: true, contract: P.contract, batch: 4 }).ok).toBe(false);
+  });
+
+  it("exactly two batches: --expect-list-hash without --batch → 64; single batch without --batch is fine", () => {
+    const two = Array.from({ length: 501 }, (_, i) => viemKeccak(enc.encode(`tw${i}`)).slice(0, 42)).join("\n");
+    const one = Array.from({ length: 500 }, (_, i) => viemKeccak(enc.encode(`tw${i}`)).slice(0, 42)).join("\n");
+    const args = (h) => [file, "--action", "add", "--contract", P.contract, "--bsc-nonce", "1", "--wantos-nonce", "1", "--deadline", "9", "--expect-list-hash", h];
+    const lh2 = oc.listHash(oc.parseAddressList(two).addresses.slice(0, 500));
+    expect(oc.runCli(args(lh2), () => two).code).toBe(64);
+    expect(oc.runCli([...args(lh2), "--json"], () => two).code).toBe(64);
+    expect(oc.runCli([...args(lh2), "--batch", "1"], () => two).code).toBe(0);
+    const lh1 = oc.listHash(oc.parseAddressList(one).addresses);
+    expect(oc.runCli(args(lh1), () => one).code).toBe(0);
   });
 });
