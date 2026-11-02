@@ -1,0 +1,101 @@
+{
+ "namespace": "wantos.bridge.v2.BridgeBase",
+ "base": "0x79137872e54e4a642e840f1b8680e7d27de6c15649eda752b94eb42353c3e000",
+ "fields": {
+  "timelock": {
+   "slot": 0,
+   "offset": 0,
+   "bytes": 20
+  },
+  "token": {
+   "slot": 1,
+   "offset": 0,
+   "bytes": 20
+  },
+  "unit": {
+   "slot": 2,
+   "offset": 0,
+   "bytes": 32
+  },
+  "peerChainId": {
+   "slot": 3,
+   "offset": 0,
+   "bytes": 32
+  },
+  "peerBridge": {
+   "slot": 4,
+   "offset": 0,
+   "bytes": 20
+  },
+  "whitelistManager": {
+   "slot": 5,
+   "offset": 0,
+   "bytes": 20
+  },
+  "whitelisted": {
+   "slot": 6,
+   "offset": 0,
+   "bytes": 32
+  },
+  "whitelistNonce": {
+   "slot": 7,
+   "offset": 0,
+   "bytes": 32
+  },
+  "whitelistFrozen": {
+   "slot": 8,
+   "offset": 0,
+   "bytes": 1
+  },
+  "pendingWl": {
+   "slot": 8,
+   "offset": 1,
+   "bytes": 20
+  },
+  "pendingWlAvailableAt": {
+   "slot": 8,
+   "offset": 21,
+   "bytes": 8
+  },
+  "pendingWlExpiresAt": {
+   "slot": 9,
+   "offset": 0,
+   "bytes": 8
+  },
+  "recoveryActive": {
+   "slot": 9,
+   "offset": 8,
+   "bytes": 1
+  },
+  "recoveryCandidate": {
+   "slot": 9,
+   "offset": 9,
+   "bytes": 20
+  },
+  "recoveryReadyAt": {
+   "slot": 10,
+   "offset": 0,
+   "bytes": 8
+  },
+  "recoveryCooldownUntil": {
+   "slot": 10,
+   "offset": 8,
+   "bytes": 8
+  },
+  "payouts": {
+   "slot": 11,
+   "offset": 0,
+   "bytes": 32
+  },
+  "dailyUsed": {
+   "slot": 12,
+   "offset": 0,
+   "bytes": 32
+  },
+  "addrDailyUsed": {
+   "slot": 13,
+   "offset": 0,
+   "bytes": 32
+  }
+ }
+}

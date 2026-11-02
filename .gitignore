@@ -5,3 +5,8 @@ node_modules/
 .env
 *.key
 *.keystore
+node_modules/
+dist/
+.env
+*.key
+.vite/
