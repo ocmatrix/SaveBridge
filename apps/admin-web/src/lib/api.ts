@@ -14,21 +14,14 @@ export interface ReviewOrder {
   to: string;
   amount: string; // wei, decimal string
   level: "audit" | "freeze";
+  /** relayer reason code, e.g. onchain_mismatch (source-order check), amount_limit, whitelist_removed */
   reason: string | null;
-  rules?: string[];
-  sourcePath?: string[];
   createdAt: string;
-}
-export interface ControlledItem {
-  addr: string;
-  label: string;
-  addedAt: string;
 }
 export interface AddressInfo {
   inNetwork: boolean | null;
   parent: string | null;
   bridgedOut: string | null;
-  suspicious: boolean;
 }
 export interface ReportLine {
   at: string;
@@ -70,8 +63,6 @@ export class AdminApi {
 
   reviewOrders = () => this.req<{ orders: ReviewOrder[] }>("/admin/orders?status=REVIEW").then((r) => r.orders);
   decide = (d: { eventKey: Hex; decision: ReviewDecision; expires: bigint; signature: Hex }) => this.req<unknown>("/admin/review", { method: "POST", body: d });
-  controlled = () => this.req<{ items: ControlledItem[] }>("/admin/controlled").then((r) => r.items);
-  changeControlled = (c: { action: "add" | "remove"; addr: string; label?: string }) => this.req<unknown>("/admin/controlled", { method: "POST", body: c });
   addressInfo = (addrs: string[]) => this.req<Record<string, AddressInfo>>("/admin/address-info", { method: "POST", body: { addrs } });
   report = () => this.req<Report>("/admin/report");
 }

@@ -6,7 +6,7 @@ import { ConfigError, isPlaceholder, parseConfig } from "../../src/lib/config";
 import { decodeRevert, describeError, type Signer } from "../../src/lib/chain";
 import { createSession, sessionValid, siweMessage, SESSION_TTL_MS } from "../../src/lib/siwe";
 import { AdminApi, ApiError } from "../../src/lib/api";
-import { APPENDIX_A, defaultChecked, flagsFor, needsConfirm } from "../../src/lib/risk";
+import { flagsFor } from "../../src/lib/risk";
 import { gate, gateWith } from "../../src/lib/perm";
 import { executeErrorText, randomSalt } from "../../src/lib/timelock";
 import { countdown, makeProof, proofMessage, verifyProof, PROOF_MAX_AGE_MS } from "../../src/lib/handover";
@@ -130,16 +130,12 @@ describe("admin API client + Worker", () => {
   });
 });
 
-describe("risk flags", () => {
-  it("🔴 starts unchecked; others checked", () => {
-    const controlled = new Set(APPENDIX_A);
-    expect(flagsFor(APPENDIX_A[0]!.toUpperCase().replace("0X", "0x"), { controlled, isContract: false })).toEqual(["red"]);
-    expect(flagsFor("0x01", { controlled, info: { inNetwork: false, parent: null, bridgedOut: null, suspicious: true }, isContract: true })).toEqual(["orange", "yellow", "white"]);
-    expect(flagsFor("0x01", { controlled, info: { inNetwork: null, parent: null, bridgedOut: null, suspicious: false }, isContract: false })).toEqual([]);
-    expect(defaultChecked(["red", "white"])).toBe(false);
-    expect(defaultChecked(["orange", "yellow", "white"])).toBe(true);
-    expect(needsConfirm(["red"])).toBe(false);
-    expect(APPENDIX_A.every((a) => a === a.toLowerCase() && getAddress(a))).toBe(true);
+describe("reference hints (v0.9.5: whitelist-only risk control)", () => {
+  it("only 🟡 not-in-network and ⚪ contract; unknown network → no flag", () => {
+    expect(flagsFor({ info: { inNetwork: false, parent: null, bridgedOut: null }, isContract: true })).toEqual(["yellow", "white"]);
+    expect(flagsFor({ info: { inNetwork: null, parent: null, bridgedOut: null }, isContract: false })).toEqual([]);
+    expect(flagsFor({ info: { inNetwork: true, parent: "0x1", bridgedOut: "0" }, isContract: false })).toEqual([]);
+    expect(flagsFor({ isContract: false })).toEqual([]);
   });
 });
 

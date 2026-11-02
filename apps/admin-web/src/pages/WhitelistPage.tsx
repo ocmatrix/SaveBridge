@@ -4,7 +4,7 @@ import { chainNow, erc20Abi } from "../lib/chain";
 import { SIDE_NAME, SIDES, type Side } from "../lib/config";
 import { chunk, MAX_BATCH, parseAddressList, REASON_TEXT } from "../lib/normalize";
 import { gate, gateWith, type Gate } from "../lib/perm";
-import { APPENDIX_A, defaultChecked, FLAG_ICON, FLAG_TEXT, flagsFor, type Flag } from "../lib/risk";
+import { FLAG_ICON, FLAG_TEXT, flagsFor, type Flag } from "../lib/risk";
 import type { AddressInfo } from "../lib/api";
 import {
   DEADLINE_AHEAD_S,
@@ -36,10 +36,8 @@ export function WhitelistPage() {
   const [allowed, setAllowed] = useState(true);
   const parsed = useMemo(() => parseAddressList(text), [text]);
   const [unchecked, setUnchecked] = useState<Set<string>>(new Set());
-  const [confirmRed, setConfirmRed] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [info, setInfo] = useState<Record<string, RowInfo>>({});
-  const [controlled, setControlled] = useState<Set<string>>(new Set(APPENDIX_A));
   const [apiNote, setApiNote] = useState<string | null>(null);
   const [batchIdx, setBatchIdx] = useState(0);
   const [job, setJob] = useState<BatchJob | null>(null);
@@ -56,23 +54,14 @@ export function WhitelistPage() {
   const pages = useMemo(() => chunk(parsed.addresses), [parsed]);
   const pageAddrs = pages[page] ?? [];
 
-  // red rows start unchecked whenever a new list is loaded
-  const flagsOf = (a: string): Flag[] => flagsFor(a, { controlled, info: info[a]?.api, isContract: !!info[a] && (info[a]!.isContract.bsc || info[a]!.isContract.wantos) });
+  const flagsOf = (a: string): Flag[] => flagsFor({ info: info[a]?.api, isContract: !!info[a] && (info[a]!.isContract.bsc || info[a]!.isContract.wantos) });
+  // a new list starts fully selected (hints never pre-select or block anything)
   useEffect(() => {
-    setUnchecked(new Set(parsed.addresses.filter((a) => !defaultChecked(flagsFor(a, { controlled, isContract: false })))));
+    setUnchecked(new Set());
     setPage(0);
     resetJob();
     setBatchIdx(0);
-  }, [parsed, controlled]);
-
-  // live controlled set from the relayer (merged with the built-in appendix A)
-  useEffect(() => {
-    if (!api) return;
-    api.controlled().then(
-      (items) => setControlled(new Set([...APPENDIX_A, ...items.map((i) => i.addr.toLowerCase())])),
-      (e: Error) => setApiNote(`受控集合只用内置附录 A（${e.message}）`),
-    );
-  }, [api]);
+  }, [parsed]);
 
   // reference info for the visible page only (≤ 500 rows)
   useEffect(() => {
@@ -116,10 +105,6 @@ export function WhitelistPage() {
   const removedByHand = parsed.addresses.length - selected.length;
 
   const toggle = (a: string, on: boolean) => {
-    if (on && flagsOf(a).includes("red")) {
-      setConfirmRed(a);
-      return;
-    }
     setUnchecked((s) => {
       const n = new Set(s);
       if (on) n.delete(a);
@@ -229,7 +214,7 @@ export function WhitelistPage() {
         <Section title="2. 逐行参考信息（只作提示）">
           {apiNote && <p className="hint">{apiNote}</p>}
           <p className="hint">
-            🔴 受控来源（默认不勾选，需二次确认）　🟠 可疑名单或来源命中　🟡 不在网体内　⚪ 合约地址
+            🟡 不在网体内　⚪ 合约地址（只作提示；风控只靠白名单本身）
           </p>
           {pages.length > 1 && (
             <p>
@@ -241,29 +226,6 @@ export function WhitelistPage() {
                 下一页
               </button>
             </p>
-          )}
-          {confirmRed && (
-            <div className="confirm" role="alertdialog">
-              <Addr a={confirmRed} /> 是 🔴 受控来源地址。确定要勾选它吗？
-              <button
-                type="button"
-                className="danger"
-                onClick={() => {
-                  setUnchecked((s) => {
-                    const n = new Set(s);
-                    n.delete(confirmRed);
-                    return n;
-                  });
-                  setConfirmRed(null);
-                  resetJob();
-                }}
-              >
-                确认勾选
-              </button>
-              <button type="button" onClick={() => setConfirmRed(null)}>
-                不勾选
-              </button>
-            </div>
           )}
           <table>
             <thead>

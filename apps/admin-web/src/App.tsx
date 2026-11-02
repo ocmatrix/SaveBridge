@@ -10,7 +10,6 @@ import { TimelockPage } from "./pages/TimelockPage";
 import { ParamsPage } from "./pages/ParamsPage";
 import { HandoverPage } from "./pages/HandoverPage";
 import { ReviewPage } from "./pages/ReviewPage";
-import { ControlledPage } from "./pages/ControlledPage";
 import { ReservesPage } from "./pages/ReservesPage";
 
 export const ROUTES: { path: string; title: string; page: () => ReactNode }[] = [
@@ -20,7 +19,6 @@ export const ROUTES: { path: string; title: string; page: () => ReactNode }[] = 
   { path: "/params", title: "参数", page: () => <ParamsPage /> },
   { path: "/handover", title: "交接与恢复", page: () => <HandoverPage /> },
   { path: "/review", title: "订单审核与退款", page: () => <ReviewPage /> },
-  { path: "/controlled", title: "受控集合", page: () => <ControlledPage /> },
   { path: "/reserves", title: "储备与对账", page: () => <ReservesPage /> },
 ];
 

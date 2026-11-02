@@ -147,7 +147,7 @@ describe("/handover page", () => {
   });
 });
 
-describe("review / controlled / reserves (Worker API placeholder, fake fetch)", () => {
+describe("review / reserves (Worker API placeholder, fake fetch)", () => {
   const eventKey = keccak256(toBytes("order-1")) as Hex;
   function fakeApi() {
     const calls: { url: string; method: string; auth: string | null; body: unknown }[] = [];
@@ -156,10 +156,8 @@ describe("review / controlled / reserves (Worker API placeholder, fake fetch)", 
       calls.push({ url, method: init.method ?? "GET", auth, body: init.body ? JSON.parse(init.body as string) : null });
       const json = (x: unknown) => new Response(JSON.stringify(x), { status: 200, headers: { "content-type": "application/json" } });
       if (url.endsWith("/admin/orders?status=REVIEW"))
-        return json({ orders: [{ eventKey, direction: "W2B", srcEventNonce: "7", user: w.act.stranger.address, to: w.act.stranger.address, amount: (1500n * U).toString(), level: "audit", reason: "source_5_20", rules: ["来源占比 8%"], sourcePath: ["0xf974…", "0xe49d…"], createdAt: "2026-11-02" }] });
+        return json({ orders: [{ eventKey, direction: "W2B", srcEventNonce: "7", user: w.act.stranger.address, to: w.act.stranger.address, amount: (1500n * U).toString(), level: "freeze", reason: "onchain_mismatch", createdAt: "2026-11-02" }] });
       if (url.endsWith("/admin/review")) return json({ ok: true });
-      if (url.endsWith("/admin/controlled") && (init.method ?? "GET") === "GET") return json({ items: [{ addr: "0x0000000000000000000000000000000000000abc", label: "测试", addedAt: "2026-11-02" }] });
-      if (url.endsWith("/admin/controlled")) return json({ ok: true });
       if (url.endsWith("/admin/report")) return json({ reconciliation: [{ at: "t", text: "WANTOS 无短缺" }], alerts: [], whitelistDaily: [] });
       if (url.endsWith("/admin/address-info")) return json({});
       return new Response("{}", { status: 501 });
@@ -172,8 +170,9 @@ describe("review / controlled / reserves (Worker API placeholder, fake fetch)", 
     const admin = localSigner(w, w.act.admin);
     renderApp(w, admin, "/review", { adminApi: "https://admin.wanto.pro/api", fetchFn });
     fireEvent.click(await screen.findByRole("button", { name: /读取（需要管理钱包签名登录）/ }));
-    expect(await screen.findByText(/命中规则：来源占比 8%/)).toBeInTheDocument();
-    expect(screen.getByText(/资金来源路径/)).toBeInTheDocument();
+    expect(await screen.findByTestId("reason")).toHaveTextContent("来源检查冻结：源链订单与本单不一致（onchain_mismatch）");
+    expect(screen.getByText(/冻结级/)).toBeInTheDocument();
+    expect(screen.queryByText(/命中规则|资金来源路径/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "通过" }));
     await waitFor(() => expect(calls.some((c) => c.url.endsWith("/admin/review"))).toBe(true), { timeout: 10_000 });
     const post = calls.find((c) => c.url.endsWith("/admin/review"))!;
@@ -190,38 +189,15 @@ describe("review / controlled / reserves (Worker API placeholder, fake fetch)", 
     const { fetchFn } = fakeApi();
     renderApp(w, localSigner(w, w.act.wl), "/review", { adminApi: "https://admin.wanto.pro/api", fetchFn });
     fireEvent.click(await screen.findByRole("button", { name: /读取/ }));
-    await screen.findByText(/命中规则/);
+    await screen.findByTestId("reason");
     expect(screen.getByRole("button", { name: "通过" })).toBeDisabled();
     expect(screen.getAllByText(/不是 BSC 的管理钱包/).length).toBeGreaterThan(0);
-  });
-
-  it("controlled set from the API never replaces the built-in appendix A (🔴 stays, unchecked)", async () => {
-    const { fetchFn } = fakeApi(); // returns a controlled list WITHOUT appendix-A addresses
-    renderApp(w, localSigner(w, w.act.wl), "/", { adminApi: "https://admin.wanto.pro/api", fetchFn });
-    const RED = "0x9272f360b98160c1662abb6d2df9e4f313b39502";
-    const API_ONLY = "0x0000000000000000000000000000000000000abc";
-    fireEvent.change(screen.getByLabelText("地址列表"), { target: { value: `${RED}\n${API_ONLY}\n${keccak256(toBytes("ok1")).slice(0, 42)}` } });
-    await waitFor(() => expect(within(screen.getByTestId(`row-${API_ONLY}`)).getByText(/🔴/)).toBeInTheDocument());
-    expect(within(screen.getByTestId(`row-${RED}`)).getByText(/🔴/)).toBeInTheDocument();
-    expect(screen.getByLabelText(`选择 ${RED}`)).not.toBeChecked();
-    await waitFor(() => expect(screen.getByLabelText(`选择 ${API_ONLY}`)).not.toBeChecked());
   });
 
   it("no admin API configured → placeholder message", async () => {
     renderApp(w, localSigner(w, w.act.admin), "/review");
     fireEvent.click(await screen.findByRole("button", { name: /读取/ }));
     expect(await screen.findByText(/未配置管理接口/)).toBeInTheDocument();
-  });
-
-  it("controlled set: list and add go through the API", async () => {
-    const { calls, fetchFn } = fakeApi();
-    renderApp(w, localSigner(w, w.act.admin), "/controlled", { adminApi: "https://admin.wanto.pro/api", fetchFn });
-    fireEvent.click(await screen.findByRole("button", { name: "读取" }));
-    expect(await screen.findByText(/测试/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("受控地址"), { target: { value: "0x0000000000000000000000000000000000000def" } });
-    await waitFor(() => expect(screen.getByRole("button", { name: "添加" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "添加" }));
-    await waitFor(() => expect(calls.some((c) => c.method === "POST" && (c.body as { action: string }).action === "add")).toBe(true));
   });
 
   it("reserves: chain reads + report", async () => {

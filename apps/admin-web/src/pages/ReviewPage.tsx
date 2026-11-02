@@ -6,6 +6,14 @@ import { gate, gateWith } from "../lib/perm";
 import { parseIds, payoutSide, requestRefundBatch, signDecision, voidSourceBatch } from "../lib/review";
 import { ActionButton, Addr, me, Section, useApp } from "../ui";
 
+/** Relayer reason codes (PR-3) → text. Only order facts and the relayer's own checks; no source-of-funds rules (v0.9.5). */
+const REASON: Record<string, string> = {
+  onchain_mismatch: "来源检查冻结：源链订单与本单不一致（onchain_mismatch）",
+  amount_limit: "金额超过单笔上限（amount_limit）",
+  whitelist_removed: "地址已被移出白名单（whitelist_removed）",
+};
+export const reasonText = (r: string | null) => (r === null ? "—" : (REASON[r] ?? r));
+
 export function ReviewPage() {
   const { chains, signer, both, api } = useApp();
   const [orders, setOrders] = useState<ReviewOrder[] | null>(null);
@@ -53,13 +61,11 @@ export function ReviewPage() {
           return (
             <div key={o.eventKey} className="proposal">
               <p>
-                {o.direction} #{o.srcEventNonce}　{o.level === "freeze" ? "冻结级" : "审核级"}　原因 {o.reason ?? "—"}　金额 {formatUnits(BigInt(o.amount), 18)}
+                {o.direction} #{o.srcEventNonce}　{o.level === "freeze" ? "冻结级" : "审核级"}　原因 <span data-testid="reason">{reasonText(o.reason)}</span>　金额 {formatUnits(BigInt(o.amount), 18)}
               </p>
               <p>
                 用户 <Addr a={o.user} /> → <Addr a={o.to} />　eventKey <code>{o.eventKey}</code>
               </p>
-              {o.rules && <p>命中规则：{o.rules.join("、")}</p>}
-              {o.sourcePath && <p>资金来源路径：{o.sourcePath.join(" → ")}</p>}
               <ActionButton label="通过" gate={g} run={() => decide(o, "approve")} />
               <ActionButton label="拒绝（走退款）" danger gate={g} confirmText="拒绝后订单进入退款流程。确定？" run={() => decide(o, "reject")} />
             </div>

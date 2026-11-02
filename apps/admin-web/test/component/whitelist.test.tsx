@@ -17,7 +17,6 @@ beforeAll(async () => {
 afterEach(() => cleanup());
 afterAll(async () => w?.stop());
 
-const RED = "0x9272f360b98160c1662abb6d2df9e4f313b39502"; // appendix A (controlled)
 const plain = [keccak256(toBytes("c1")).slice(0, 42), keccak256(toBytes("c2")).slice(0, 42)];
 
 const paste = (text: string) => fireEvent.change(screen.getByLabelText("地址列表"), { target: { value: text } });
@@ -45,22 +44,13 @@ describe("whitelist page", () => {
     cleanup();
   });
 
-  it("🔴 row starts unchecked and needs a second confirmation; listHash on screen == offline tool; write both chains", async () => {
+  it("all rows start selected (no source-of-funds flags, v0.9.5); listHash on screen == offline tool; write both chains", async () => {
     const wl = localSigner(w, w.act.wl);
     renderApp(w, wl);
-    const text = ["address", ...plain, RED].join("\n");
-    paste(text);
-    const redBox = await screen.findByLabelText(`选择 ${RED}`);
-    expect(redBox).not.toBeChecked();
-    expect(screen.getByLabelText(`选择 ${plain[0]}`)).toBeChecked();
-    expect(within(screen.getByTestId(`row-${RED}`)).getByText(/🔴/)).toBeInTheDocument();
-    // the deselected red row is reported
-    expect(screen.getByText(/你在页面上取消了 1 个地址/)).toBeInTheDocument();
-    fireEvent.click(redBox);
-    const dlg = screen.getByRole("alertdialog");
-    expect(dlg).toHaveTextContent("受控来源地址");
-    fireEvent.click(within(dlg).getByRole("button", { name: "不勾选" }));
-    expect(redBox).not.toBeChecked();
+    paste(["address", ...plain].join("\n"));
+    for (const a of plain) expect(await screen.findByLabelText(`选择 ${a}`)).toBeChecked();
+    expect(screen.queryByText(/🔴|🟠|受控/)).toBeNull();
+    expect(screen.queryByText(/你在页面上取消了/)).toBeNull();
 
     // prepare: hashes shown == tool over the same (selected) list
     await waitFor(() => expect(prepareBtn()).toBeEnabled());
@@ -76,22 +66,10 @@ describe("whitelist page", () => {
     fireEvent.click(screen.getByRole("button", { name: "签名并写入两条链" }));
     await waitFor(() => expect(screen.getByTestId("progress")).toHaveTextContent(/BSC：已写入.*WANTOS：已写入/s), { timeout: 20_000 });
     expect(await readWhitelisted(w.chains.wantos, selected)).toEqual([true, true]);
-    expect(await readWhitelisted(w.chains.bsc, [RED])).toEqual([false]);
 
     // history shows both chains consistent
     fireEvent.click(screen.getByRole("button", { name: "读取链上记录" }));
     expect(await screen.findByTestId("history")).toHaveTextContent("两链一致");
-    cleanup();
-  });
-
-  it("confirming a 🔴 row includes it", async () => {
-    renderApp(w, localSigner(w, w.act.wl));
-    paste([plain[0], RED].join("\n"));
-    const redBox = await screen.findByLabelText(`选择 ${RED}`);
-    fireEvent.click(redBox);
-    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "确认勾选" }));
-    expect(redBox).toBeChecked();
-    expect(screen.queryByText(/你在页面上取消了/)).toBeNull();
     cleanup();
   });
 
