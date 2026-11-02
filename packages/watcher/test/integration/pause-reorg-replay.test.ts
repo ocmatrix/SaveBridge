@@ -276,12 +276,16 @@ describe("pause semantics, rollback, replay", () => {
     const w = t.w as unknown as { onBridge: (c: string, l: { name: string }) => Promise<void> };
     const orig = w.onBridge.bind(t.w);
     let n = 0;
+    let failing = true;
+    // every attempt (the tick retries a failed range in place) processes the first BridgeOut, then dies on the second
     w.onBridge = async (c, l) => {
-      if (l.name === "BridgeOut" && n++ === 1) throw new Error("boom after the first BridgeOut");
+      if (failing && l.name === "BridgeOut" && n++ % 2 === 1) throw new Error("boom after the first BridgeOut");
       return orig(c, l);
     };
     await t.w.tick();
+    expect(n).toBeGreaterThanOrEqual(4); // it really was retried, and each attempt started from a clean slate
     expect(t.w.state.derived.wantos.sums["bridgeOut"] ?? "0").toBe("0");
+    failing = false;
     w.onBridge = orig;
     await t.w.tick();
     expect(t.w.state.derived.wantos.sums["bridgeOut"]).toBe(E(300).toString());

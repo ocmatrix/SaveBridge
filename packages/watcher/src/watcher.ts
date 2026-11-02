@@ -20,6 +20,10 @@ import {
 } from "./types.js";
 import { SOURCE_CHAIN, Verifier } from "./verifier.js";
 
+const INGEST_ATTEMPTS = 3;
+const INGEST_RETRY_MS = 400;
+const INGEST_ALERT_AFTER_S = 300;
+
 export interface WatcherDeps {
   config: WatcherConfig;
   rpc: Record<ChainName, MultiRpc>;
@@ -339,6 +343,9 @@ export class Watcher {
     return safe < 0n ? null : safe;
   }
 
+  /** First failed ingest tick per chain (seconds, in-memory); cleared by the next successful range. */
+  private readonly ingestFailSince = new Map<ChainName, number>();
+
   private async advance(c: ChainName): Promise<void> {
     const cfg = this.cfg.chains[c];
     const head = await this.safeHead(c);
@@ -351,12 +358,31 @@ export class Watcher {
     let from = der.cursor ? BigInt(der.cursor.number) + 1n : cfg.startBlock;
     for (let i = 0; i < this.cfg.maxRangesPerTick && from <= head; i++) {
       const to = from + BigInt(cfg.maxBlockRange) - 1n < head ? from + BigInt(cfg.maxBlockRange) - 1n : head;
-      try {
-        await this.ingestRange(c, from, to);
-      } catch (e) {
-        await this.raise("RPC_UNREACHABLE", `${c} 拉取区块 ${from}-${to} 失败，下轮按游标重试`, { chain: c, detail: { error: errMsg(e) }, key: `ingest:${c}:${from}` });
+      // Public RPC providers sit behind load balancers whose backends disagree on the chain head by a block or two,
+      // so an occasional getLogs range error is normal and heals by itself. Retry in the same tick, and only tell the
+      // owner when the failure lasts (ingestAlertAfterSeconds of consecutive failed ticks). The cursor never moves on
+      // failure, and CURSOR_STUCK (level 1) still covers a long outage.
+      let failure: unknown = null;
+      for (let attempt = 0; attempt < INGEST_ATTEMPTS; attempt++) {
+        try {
+          await this.ingestRange(c, from, to);
+          failure = null;
+          break;
+        } catch (e) {
+          failure = e;
+          if (attempt < INGEST_ATTEMPTS - 1) await new Promise((r) => setTimeout(r, INGEST_RETRY_MS * (attempt + 1)));
+        }
+      }
+      if (failure !== null) {
+        const since = this.ingestFailSince.get(c) ?? this.now();
+        this.ingestFailSince.set(c, since);
+        if (this.now() - since >= INGEST_ALERT_AFTER_S) {
+          await this.raise("RPC_UNREACHABLE", `${c} 持续 ${Math.round((this.now() - since) / 60)} 分钟拉取区块失败（${from}-${to}），按游标重试`, { chain: c, detail: { error: errMsg(failure) }, key: `ingest:${c}` });
+        }
         break;
       }
+      this.ingestFailSince.delete(c);
+      this.alerts.clearKey(`ingest:${c}`);
       from = to + 1n;
     }
     const curC = this.state.derived[c].cursor;
