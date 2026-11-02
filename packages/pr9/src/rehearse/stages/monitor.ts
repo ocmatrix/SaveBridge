@@ -115,7 +115,8 @@ export async function stageLegacy(ctx: Ctx): Promise<void> {
     ctx.note("PR-8 提议工具固定 48h 延迟（与主网一致，verifyScheduledCall 拒绝 <48h），测试网上执行需真等 48h —— 列入背景项，不占 2 小时主线");
     return;
   }
-  await ctx.advance(48 * 3600 + 5, "PR-8 48h legacy delay");
+  const readyAt = Math.max(...(await Promise.all(ps.map(async (p) => Number(await c.read<bigint>(d.timelock, TL_ABI, "getTimestamp", [p.operationId]))))));
+  await ctx.waitUntil(readyAt, "PR-8 48h legacy delay");
   const isPaid = legacyPaidReader(c.pub, d.proxy);
   for (const p of ps) {
     const pf = await preflightBatch(p.entries, { isLegacyPaid: isPaid, oldPayouts: [] });
@@ -130,7 +131,7 @@ export async function stageLegacy(ctx: Ctx): Promise<void> {
   // same oldKey again (new salt) → preflight flags it and the contract rejects the whole batch
   const dup = buildProposals(m, { timelock: d.timelock }, 1)[0]!;
   await c.send(ctx.acct("admin"), d.timelock, dup.scheduleCalldata);
-  await ctx.advance(48 * 3600 + 5, "dup legacy delay");
+  await ctx.waitUntil(Number(await c.read<bigint>(d.timelock, TL_ABI, "getTimestamp", [dup.operationId])), "dup legacy delay");
   const pf = await preflightBatch(dup.entries, { isLegacyPaid: isPaid, oldPayouts: [] });
   const rev = await c.simulateRevert(keys.role("submitter"), d.timelock, TL_ABI, "execute", [dup.target, 0n, dup.payCalldata, dup.predecessor, dup.salt]);
   ctx.check("L5", "同一 oldKey 再付一次：预检拦下，合约整批回滚", !pf.ok && rev !== "", rev);

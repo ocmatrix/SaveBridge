@@ -36,4 +36,7 @@ export function restoreOffchain(runDir: string, stage: string): void {
 /** Loads the chain part into freshly spawned (empty) anvils. */
 export async function restoreChains(runDir: string, stage: string, chains: Record<Side, Chain>): Promise<void> {
   for (const s of ["wantos", "bsc"] as Side[]) await chains[s].rpc("anvil_loadState", [readFileSync(join(checkpointDir(runDir, stage), `${s}.hex`), "utf8").trim()]);
+  // anvil resumes from the wall clock after a load (time would run backwards): continue from the saved head, both chains aligned
+  const t = Math.max(...(await Promise.all((["wantos", "bsc"] as Side[]).map(async (s) => (await chains[s].latest()).timestamp)))) + 1;
+  for (const s of ["wantos", "bsc"] as Side[]) await chains[s].setNextTimestamp(t);
 }
