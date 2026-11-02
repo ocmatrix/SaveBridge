@@ -70,7 +70,7 @@ step_release() {
     run tar -xzf "$tarball" -C "$rel" --strip-components=1 --no-same-owner
   fi
   # dependencies of the one package this host runs (+ its workspace deps); no install scripts.
-  run env -C "$rel" COREPACK_HOME=/opt/corepack PATH="/opt/node/bin:$PATH" corepack pnpm install --frozen-lockfile --ignore-scripts --filter "${SB_PKG}..."
+  run env -C "$rel" COREPACK_HOME=/opt/corepack npm_config_registry=https://registry.npmjs.org/ PATH="/opt/node/bin:$PATH" corepack pnpm install --frozen-lockfile --ignore-scripts --filter "${SB_PKG}..."
   run chown -R root:root "$rel"
   run chmod -R go-w "$rel"
   if [[ -L "$SB_OPT/current" ]]; then sb_log "previous release: $(readlink "$SB_OPT/current") (kept for rollback: ln -sfn <it> $SB_OPT/current)"; fi
