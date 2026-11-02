@@ -1,0 +1,39 @@
+# Cloudflare Tunnel for the relayer read-only API: outbound-only connection to Cloudflare, origin =
+# http://127.0.0.1:8080. No inbound port is opened on ss02. Separate user from the relayer.
+[Unit]
+Description=SaveBridge Cloudflare Tunnel (relayer API)
+After=network-online.target savebridge-relayer.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=savebridge-tunnel
+Group=savebridge-tunnel
+LoadCredentialEncrypted=cf-tunnel-token:/etc/credstore.encrypted/cf-tunnel-token
+# the token is passed via a file (newer cloudflared) or the TUNNEL_TOKEN environment variable, never argv
+ExecStart=/usr/local/lib/savebridge/cloudflared-run.sh
+Restart=on-failure
+RestartSec=10
+MemoryMax=200M
+MemorySwapMax=0
+CPUQuota=25%
+CPUWeight=20
+Nice=10
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+InaccessiblePaths=-/etc/nginx -/etc/letsencrypt -/etc/turnserver.conf -/etc/coturn -/root -/var/lib/savebridge -/etc/savebridge
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,80 @@
+# SaveBridge payout service (relayer v2) on ss02. Installed by deploy/ss02-payout/deploy.sh systemd.
+# Shares the host with nginx + coturn (SynStar traffic node): low CPU weight / nice, hard memory cap,
+# no swap for this cgroup (keys stay out of swap), read-only code, writable state/log dirs only.
+[Unit]
+Description=SaveBridge payout service (relayer)
+Documentation=file:///opt/savebridge/current/deploy/README.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+StartLimitIntervalSec=900
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=savebridge
+Group=savebridge
+WorkingDirectory=/opt/savebridge/current/packages/relayer
+Environment=NODE_ENV=production
+Environment=RELAYER_CONFIG=/etc/savebridge/relayer.json
+Environment=RELAYER_DATABASE_URL=postgresql:///savebridge?host=/var/run/postgresql
+# RPC URLs (may embed provider API keys): root-owned 0600 file, read by systemd before dropping privileges
+EnvironmentFile=/etc/savebridge/rpc.env
+ExecStart=/opt/node/bin/node --max-old-space-size=320 --import tsx src/main.ts
+# secrets: decrypted by systemd into a private ramfs ($CREDENTIALS_DIRECTORY), mode 0400, this unit only
+LoadCredentialEncrypted=relayer-wantos-pass:/etc/credstore.encrypted/relayer-wantos-pass
+LoadCredentialEncrypted=relayer-bsc-pass:/etc/credstore.encrypted/relayer-bsc-pass
+LoadCredentialEncrypted=submitter-pass:/etc/credstore.encrypted/submitter-pass
+LoadCredentialEncrypted=telegram-bot-token:/etc/credstore.encrypted/telegram-bot-token
+LoadCredentialEncrypted=telegram-chat-id:/etc/credstore.encrypted/telegram-chat-id
+LoadCredentialEncrypted=heartbeat-url:/etc/credstore.encrypted/heartbeat-url
+Restart=on-failure
+RestartSec=15
+# 78 = EX_CONFIG: bad config / keystore / RPC policy → stay down, a level-1 alert was attempted
+RestartPreventExitStatus=78
+TimeoutStopSec=30
+
+# resources (1 vCPU / 2 GB host shared with nginx + coturn)
+MemoryHigh=450M
+MemoryMax=600M
+MemorySwapMax=0
+CPUQuota=60%
+CPUWeight=30
+IOWeight=30
+Nice=10
+TasksMax=128
+LimitCORE=0
+LimitNOFILE=4096
+
+# hardening
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @mount @debug @cpu-emulation @obsolete
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/var/lib/savebridge /var/log/savebridge
+ReadOnlyPaths=/opt/savebridge /opt/node /etc/savebridge
+# other tenants' configuration is invisible to this service
+InaccessiblePaths=-/etc/nginx -/etc/letsencrypt -/etc/turnserver.conf -/etc/coturn -/root
+
+[Install]
+WantedBy=multi-user.target

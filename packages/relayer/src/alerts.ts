@@ -11,6 +11,8 @@ export const ALERT_LEVEL = {
   PAYOUT_ALREADY_RELEASED: 1,
   /** A signed payout tx was about to be (re)broadcast or fee-bumped but its source order is no longer intact. */
   SIGNED_TX_SOURCE_MISMATCH: 1,
+  /** deploy-prep: the process could not start (config / keystore / RPC policy); it exits fail-closed. */
+  STARTUP_FAILED: 1,
   WAIT_TIMEOUT: 2,
   STATE_TIMEOUT: 2,
   NONCE_MISMATCH: 2,

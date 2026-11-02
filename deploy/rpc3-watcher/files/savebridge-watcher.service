@@ -1,0 +1,70 @@
+# SaveBridge independent watcher on rpc3 (Tencent HK). Shares the host with the 41 GB archive node,
+# Blockscout, its database and the write shim: strictly capped memory / CPU / IO, lowest priority,
+# own system user (never shared with existing services), read-only code, writable state dir only.
+[Unit]
+Description=SaveBridge watcher (independent monitor + PAUSER)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=900
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=savebridge-watcher
+Group=savebridge-watcher
+WorkingDirectory=/opt/savebridge-watcher/current/packages/watcher
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/savebridge-watcher/rpc.env
+ExecStart=/opt/node/bin/node --max-old-space-size=256 --import tsx src/main.ts --config /etc/savebridge-watcher/watcher.json
+LoadCredentialEncrypted=pauser-bsc-pass:/etc/credstore.encrypted/pauser-bsc-pass
+LoadCredentialEncrypted=pauser-wantos-pass:/etc/credstore.encrypted/pauser-wantos-pass
+LoadCredentialEncrypted=telegram-bot-token:/etc/credstore.encrypted/telegram-bot-token
+LoadCredentialEncrypted=telegram-chat-id:/etc/credstore.encrypted/telegram-chat-id
+LoadCredentialEncrypted=heartbeat-url:/etc/credstore.encrypted/heartbeat-url
+Restart=on-failure
+RestartSec=15
+RestartPreventExitStatus=78
+TimeoutStopSec=30
+
+MemoryHigh=300M
+MemoryMax=400M
+MemorySwapMax=0
+CPUQuota=50%
+CPUWeight=20
+IOWeight=10
+Nice=15
+TasksMax=64
+LimitCORE=0
+LimitNOFILE=2048
+
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @mount @debug @cpu-emulation @obsolete
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/var/lib/savebridge-watcher
+ReadOnlyPaths=/opt/savebridge-watcher /opt/node /etc/savebridge-watcher
+# the node's data, Blockscout, the shim and their configs are invisible to the watcher
+InaccessiblePaths=-/root -/data -/opt/wantos -/etc/nginx -/var/lib/postgresql -/var/lib/docker
+
+[Install]
+WantedBy=multi-user.target

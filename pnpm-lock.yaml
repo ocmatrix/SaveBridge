@@ -178,11 +178,36 @@ importers:
         specifier: ^4.1.12
         version: 4.1.12(@types/node@26.6.6)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0)(vite@7.3.7(@types/node@26.6.6)(tsx@4.23.15))
 
+  packages/ops:
+    dependencies:
+      viem:
+        specifier: ^2.57.14
+        version: 2.57.14(typescript@7.0.2)(zod@3.25.76)
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.6
+        version: 26.6.6
+      '@vitest/coverage-v8':
+        specifier: ^5.0.5
+        version: 5.0.5(vitest@5.0.5)
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@types/node@26.6.6)(@vitest/coverage-v8@5.0.5)(jsdom@26.1.0)(vite@7.3.7(@types/node@26.6.6)(tsx@4.23.15))
+
   packages/relayer:
     dependencies:
       '@bridge/abi':
         specifier: workspace:*
         version: link:../abi
+      '@bridge/ops':
+        specifier: workspace:*
+        version: link:../ops
       pg:
         specifier: ^8.23.1
         version: 8.23.1
@@ -217,6 +242,9 @@ importers:
       '@bridge/abi':
         specifier: workspace:*
         version: link:../abi
+      '@bridge/ops':
+        specifier: workspace:*
+        version: link:../ops
       viem:
         specifier: ^2.57.14
         version: 2.57.14(typescript@7.0.2)(zod@3.25.76)
