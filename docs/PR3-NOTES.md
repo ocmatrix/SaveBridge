@@ -63,6 +63,9 @@
 - DETECTED/WAITING：①最终块上 payout 已非 None → 直接按分类结算（例如崩溃后 DB 丢了更新）；②该订单有在途交易 → 跳过（绝不重复发）；③最新块上已是 Queued（崩溃后丢状态）→ **直接重放 `queueRelease`**，合约返回成功且不重复扣额度（PR1 D3 / §5.6 #13）；④否则调用风控钩子：AUTO→`release`（B2W 一律 `queueRelease`）、DELAY→`queueRelease`、WAIT→WAITING、REVIEW→REVIEW。
 - **源订单硬前置条件（Gate2 A1/A2，处理器执行，风控与审核批准都不能覆盖）**：每次发任何付款交易之前（`release`、`queueRelease`、崩溃后重放的 `queueRelease`、**到期的 `executeRelease`**），以及每次调用风控之前：W2B 重读 WANTOS `orders[id]`，必须 Locked 且用户/金额与事件一致；B2W 重读 BSC `deposits(nonce)`，存款人/金额一致且**未申请入账退款**。不满足 → 不发交易，发 `ORDER_ONCHAIN_MISMATCH`；未排队的订单进 REVIEW(freeze, `onchain_mismatch`)，已 QUEUED 的保持 QUEUED(reason=`onchain_mismatch`) 等负责人 `cancelRelease`。B2W 也做的理由：入账退款与 WANTOS 入账是同一类「两边都付」风险，对称检查成本只有一次读。
 - **审核批准的范围**：批准时记录当时的 `review_level` 与 `reason`（`approved_level/approved_reason`）；只有风控再次返回**同一** level+reason 的 REVIEW 才按 DELAY 放行；以别的 level 或 reason 重新进入 REVIEW 时批准自动作废（`approved_at` 清空），需重新签。
+- **审核签名一次性（Gate2 r2 A-2）**：每个决定按「签名消息的哈希」登记在 `review_signatures`（迁移 v8，主键唯一），同一消息再提交一律拒绝（`review signature already used`），因为按消息而非签名字节去重，同一消息的另一种签名编码（如 high-s）也被拒绝。approve 的 UPDATE 必须恰好命中一行（订单仍为 REVIEW 且 level/reason 与读到的一致），否则整笔回滚，不写 `audit_log`、也不消耗该签名。
+- **已签名交易的广播前复核（Gate2 r2 A-1）**：`TxSender` 在三个时点调用 `Processor.broadcastGuard`（即上面的源订单硬前置条件）：广播 `signed` 行之前、启动时原样重播之前、同 nonce 加价之前。§6.4「原样重播」不变，只是先过前置条件。结果：ok → 照常；读不到（RPC 错）→ 本轮什么都不发，下轮重试；不一致 → 一级告警 `SIGNED_TX_SOURCE_MISMATCH`，订单进 REVIEW(freeze, onchain_mismatch)，该 nonce 的付款 attempt 标 `abandoned`，并用同 nonce、gas 价高于所有 attempt 的 0 值自转账（`action=cancel`）占掉这个 nonce。被 abandoned 的行仍参与 receipt 判定：若原交易已进过某个内存池并抢先上链，结果不会丢，由下一条兜底告警。若节点不支持同 nonce 替换（Q1），已进内存池的原交易可能仍上链，此时只能靠兜底告警由负责人处理。
+- **放款后兜底（Gate2 r2 A-1 #2）**：`release` / `executeRelease` 已上链（未最终）或订单进入 RELEASED 时，再读一次源订单；W2B 不再 Locked 或 B2W 存款出现入账退款申请 → 一级 `PAYOUT_ALREADY_RELEASED`（文案：立即 `cancelRefund` / `cancelDepositRefund`），每个订单每个进程只发一次。`queueRelease` 上链不触发（资金未动，`executeRelease` 前仍有硬前置条件）。
 - 默认风控（`DefaultRiskEngine`，W2B 顺序）：BSC `paused()` → 两链白名单 → `amount > perAddrDailyCap` → 剩余全局/地址日额度 → 储备（金库余额 ≥ 本单 + 已排队/在途） → `amount > largeThreshold` ? DELAY : AUTO。B2W：WANTOS `paused()` → `b2wDailyCap` 剩余 → 储备 → DELAY。
 - 合约没有 `remainingDailyCap()/remainingAddrCap()` 视图（见 §3.1 D1），剩余额度 = `params` 上限 − `dailyUsed(currentDay())` / `addrDailyUsed(currentDay(), addr)`。
 - 发交易时 `onSigned` 回调与 `tx_attempts` 插入在**同一个 DB 事务**里把订单置为 SUBMITTED（带交易哈希），然后才广播。
@@ -110,6 +113,7 @@
 | D15 | 负责人「拒绝」前先读付款链 `payouts[eventKey]`，已 Released → 拒绝该签名并发一级 `PAYOUT_ALREADY_RELEASED`；REJECTED 阶段读到最终 Released → 告警且永不推进到 REFUNDING（Gate2 B1） | §6.3 REJECTED | 防止「已放款又退款」 |
 | D16 | 模拟失败但**没有 revert 数据**（传输/节点错误或空 revert）不做分类：订单保持原状态并告警 `RPC_UNAVAILABLE`；读 receipt 出错（不是「确认不存在」）中止本轮，不会判为 dropped（Gate2 B2） | §6.3 | 网络抖动不应把订单送进只能人工处理的 FAILED |
 | D17 | RPC URL 只从环境变量读取（配置里只写变量名，配置中出现 `://` 直接拒绝，`api.corsOrigins` 除外）；所有拼进告警的异常文本先脱敏（URL 的 userinfo/路径/查询、Authorization/Bearer、64 位十六进制），结构化字段（`data` 里的 eventKey 等）不经过脱敏（Gate2 B3） | §6.1 | RPC URL 常带 API key |
+| D19 | 已签名付款交易在源订单失效时用 0 值自转账作废其 nonce（`action=cancel`，记入 `tx_attempts`），而不是留空 nonce（Gate2 r2 A-1） | §6.4 | 保证不再发出，同时 nonce 不断档 |
 | D18 | 启动自检：两侧合约 `eventKeyOf(1)` 必须等于 relayer 自算的 W2B/B2W key，`peerChainId/peerBridge` 必须与配置的另一侧一致，两把付款钥匙与提交服务钥匙两两不同，否则拒绝启动（Gate2 B6） | §5.1、§6.1 | 配置错配时不发任何交易 |
 | D14 | 链上回滚原因在"该交易所在块之后"的状态上重放调用获取（不依赖 `debug_traceTransaction`） | §6.3 | 同块先上链的暂停/作废能被正确识别；节点不必开 debug API |
 
@@ -126,6 +130,7 @@
 | Q7 | 外部心跳服务、短信/电话第二通道：只有 `HeartbeatSink` / `AlertSink` 接口与内存/日志实现 | §6.5、§9.3 | 选型见 DESIGN §14 待决 3 |
 | Q8 | 仓库根 `package.json` 的 `"packageManager": "pnpm@10"` 不是完整版本号，corepack 直接报错，`pnpm` 命令在仓库内无法运行。本 PR 未改根文件，验证时直接调用 pnpm 10.34.5（`node ~/.cache/node/corepack/v1/pnpm/10.34.5/bin/pnpm.cjs -r test`） | — | 总控在 ts-workspace 上改成 `pnpm@10.34.5` 之类完整版本 |
 | Q9 | QUEUED 订单在 SUBMITTED 后若交易所在块被 WANTOS 回滚（>6 块重组），只靠游标 hash 检测与 SUBMITTED 30 分钟超时告警，不自动重发 | §6.2 | 发生重组时 relayer 已停机，需人工处理 |
+| Q12 | Gate2 r2 backlog（按总控指示本轮不做，留待后续）：①WANTOS 主节点落后于交叉核对节点时的告警/处理（aligner B1）；②时间锁执行器只扫 finalized 区块并做重叠回扫，防重组丢提议（aligner B4）；③限流按来源区分、脱敏覆盖更多异常字段等补漏（aligner B6） | §6.2、§4.1 | — |
 | Q11 | 审核签名改 EIP-712：按总控指示**不在 PR-3 做**，交 PR-6 定稿后再改（避免来回改） | §6.1 | 现为 personal_sign 文本 |
 | Q10 | `index` 等待原因之外，数据源整体不可用不会产生订单，因此"索引 > 10 分钟"告警目前由 `RPC_UNAVAILABLE/RPC_MISMATCH`（去重后）承担 | §6.3 | PR-4 接入索引后由风控返回 WAIT(index) |
 
@@ -218,6 +223,21 @@ interface RiskEngine { evaluate(order: Order, ctx: { outstandingWei: bigint }): 
 
 - **PR-10 上线前必须**：接入真实告警通道（负责人电话/短信 + 即时消息，§9.3）替换 `main.ts` 中的 `LogAlertSink`，并接入外部心跳服务（`HeartbeatSink`）；否则一级告警（重组、`PAYOUT_ALREADY_RELEASED`、心跳中断）不会到达负责人，**不得上线**。
 - 同时必须完成 Q1（PR-0 ⑥ 同 nonce 替换实测）与 Q2（KMS 签名器实现）。
+
+### 5.3 Gate2 第 2 轮回归（`test/gate2r2.test.ts`）
+
+| 项 | 回归测试 | 修复前（红证据，`scratchpad/r2red.txt`） |
+|---|---|---|
+| A-1 / 探针 P4 | `A-1/P4: signed-not-broadcast release + WANTOS refund requested before restart → never broadcast, nonce cancelled, next order still pays` | BSC payouts=Released，订单 RELEASED，0 条告警 |
+| A-1 B2W 对称 | `A-1 (B2W): signed-not-broadcast WANTOS queueRelease + BSC deposit refund requested` | 照常入队 |
+| A-1 加价 | `A-1: a stuck release is NOT fee-bumped once the WANTOS refund was requested` | 发出第二笔 release（加价） |
+| A-1 读不到 | `A-1: guard read failure (RPC error) → nothing broadcast this tick` | 照常广播 |
+| A-1 兜底 | `A-1 safety net: …mined but not final`、`…reaching RELEASED…`、`(B2W) …executeRelease is mined…`；反例 `safety net is silent on a normal release` | 无告警 |
+| A-2 / 探针 P5 | `P5: replaying an approval after the REVIEW scope changed is refused`（含 high-s 变形签名）、`same-scope approval replay and reject replay are refused too`、`approve that updates no row … throws and writes no audit` | 重放成功并把批准改成 freeze/r2；并发改状态后仍写 audit_log |
+| N03/N04/N06/N07 | `source check: each field matters on its own`（W2B/B2W × user/amount） | （变异存活项，代码本身正确） |
+| N08–N11 | `approval scope: level and reason each void it on their own` | （同上） |
+| B3/N13 lastAttempt | `lastAttempt picks the latest (signer, nonce) group, resolved row first` | `lastAttemptFor` 不存在 / 跨钥匙按 nonce 选错行 |
+| B5 revert 原因读失败 | `B5: an RPC error while reading a mined revert's reason keeps SUBMITTED` | 被分类成 FAILED |
 
 ## 7. 自查发现但未修的风险
 
