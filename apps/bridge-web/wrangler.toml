@@ -1,0 +1,13 @@
+# Cloudflare Workers Static Assets site for bridge.wanto.pro (Qbit account, Worker "savebridge-bridge").
+# The custom domain bridge.wanto.pro is already attached to this Worker in the dashboard (placeholder page), so no
+# `routes` here: a deploy keeps it. workers.dev and preview URLs stay closed.
+# Deploy (owner-authorised): pnpm -C apps/bridge-web build:prod && pnpm -C apps/bridge-web exec wrangler deploy
+# The app uses client-side routing: single-page-application fallback is required. Security headers come from dist/_headers.
+name = "savebridge-bridge"
+compatibility_date = "2026-10-01"
+workers_dev = false
+preview_urls = false
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"

@@ -79,10 +79,10 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     const btn = within(b2w).getByRole("button", { name: "存入" });
     await waitFor(() => expect(btn).toBeEnabled(), T);
     await user.click(btn);
-    await within(b2w).findByText("已存入，存入编号 #1，约 15 分钟到账 WANTOS", {}, T);
+    await within(b2w).findByText("已存入，存入编号 #1，等待到账 WANTOS", {}, T);
     const orders = await screen.findByRole("region", { name: "我的订单" }, T);
     await within(orders).findByText("BSC → WANTOS 存入 #1", {}, T);
-    expect(within(orders).getByText("BSC 已存入，等待 WANTOS 到账（约 15 分钟）")).toBeInTheDocument();
+    expect(within(orders).getByText("BSC 已存入，等待 WANTOS 到账")).toBeInTheDocument();
   });
 
   it("B2W to another recipient: confirm line shows bob's checksum address and the chain records bob (A1)", async () => {
@@ -100,7 +100,7 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     const btn = within(b2w).getByRole("button", { name: "存入" });
     await waitFor(() => expect(btn).toBeEnabled(), T);
     await user.click(btn);
-    await within(b2w).findByText("已存入，存入编号 #1，约 15 分钟到账 WANTOS", {}, T);
+    await within(b2w).findByText("已存入，存入编号 #1，等待到账 WANTOS", {}, T);
     const logs = await env.bsc.anvil.pc.getContractEvents({ address: env.bsc.bridge, abi: bscVaultV2Abi, eventName: "Deposited", fromBlock: 0n });
     expect(logs).toHaveLength(1);
     expect(logs[0]!.args.from).toBe(KEYS.alice.address);
