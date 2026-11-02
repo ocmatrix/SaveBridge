@@ -20,6 +20,7 @@ const USER = acct(5);
 const OLD_BSC = acct(6); // stands in for the old BSC vault 0xec6e
 const OLD_WANTOS = acct(7); // stands in for the old WANTOS vault 0x8dFd
 const OTHER = acct(8);
+const USER2 = acct(3);
 const WANTOS_ID = 13500;
 const tok = parseAbi(["function mint(address to, uint256 amount)", "function transfer(address to, uint256 amount) returns (bool)"]);
 const TRANSFER = "event Transfer(address indexed from, address indexed to, uint256 value)";
@@ -50,6 +51,8 @@ describe("scan / preflight CLI on two anvils", () => {
     await transfer(wantos, OLD_WANTOS, OTHER.address, "1");
     await mint(bsc, USER.address, "100");
     await transfer(bsc, USER, OLD_BSC.address, "10"); // the stuck B2W deposit
+    await mint(bsc, USER2.address, "100");
+    await transfer(bsc, USER2, OLD_BSC.address, "20"); // a second stuck deposit
     const T = Math.floor(Date.now() / 1000) + 10_000_000;
     const dir = mkdtempSync(join(tmpdir(), "pr8-pf-"));
     const orderTo = (await head(bsc)).toString();
@@ -97,8 +100,11 @@ describe("scan / preflight CLI on two anvils", () => {
 
     const ok = pf(cfg("good"));
     expect(ok.status, ok.stderr + ok.stdout).toBe(0);
-    expect(JSON.parse(ok.stdout)).toMatchObject({ ok: true, checked: 1 });
-    expect(run("propose", csvPath, "--hash", hash, "--timelock", bsc.timelock, "--out", join(dir, "p")).status).toBe(0);
+    expect(JSON.parse(ok.stdout)).toMatchObject({ ok: true, checked: 2 });
+    // B1: --data checks exactly the scheduled rows (here a batch proposed without USER2's row)
+    const user2Key = csv.split("\n").find((l) => l.includes(USER2.address))!.split(",")[0]!;
+    writeFileSync(join(dir, "ex.txt"), `${user2Key}\n`);
+    expect(run("propose", csvPath, "--hash", hash, "--timelock", bsc.timelock, "--exclude", join(dir, "ex.txt"), "--round", "1", "--out", join(dir, "p")).status).toBe(0);
     const ps = JSON.parse(readFileSync(join(dir, "p", "proposals.json"), "utf8")) as { payCalldata: string }[];
     const okData = pf(cfg("good"), "--data", ps[0]!.payCalldata);
     expect(okData.status, okData.stdout + okData.stderr).toBe(0);
