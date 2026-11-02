@@ -281,7 +281,7 @@ contract BscVaultV2 is BridgeBase {
         if (p.perAddrDailyCap < 100 * u || p.perAddrDailyCap > 20_000 * u) revert ParamOutOfRange(1);
         if (p.releaseDelay < 6 hours || p.releaseDelay > 7 days) revert ParamOutOfRange(3);
         if (p.minDeposit == 0 || p.minDeposit > 20_000 * u) revert ParamOutOfRange(4);
-        if (p.maxDepositPerTx == 0 || p.maxDepositPerTx > 20_000 * u) revert ParamOutOfRange(5);
+        if (p.maxDepositPerTx == 0 || p.maxDepositPerTx > 10_000_000 * u) revert ParamOutOfRange(5);
         if (p.largeThreshold > p.perAddrDailyCap || p.perAddrDailyCap > p.dailyCap) revert ParamConstraint();
     }
 }
