@@ -15,6 +15,8 @@ export interface EventSpec {
   toBlock: bigint;
   /** Token decimals of the amount argument. */
   decimals: number;
+  /** When set, `decimals()` of this token must equal `decimals` (checked once per spec). */
+  token?: Address;
   /** Optional indexed-argument filter, e.g. { from: "0xeC6E…" } for transfers out of the old vault. */
   args?: Record<string, string>;
 }
@@ -35,17 +37,25 @@ export interface RpcSourceConfig {
   chunk?: bigint;
 }
 
-export type SourceClient = Pick<PublicClient, "getLogs" | "getBlock">;
+export type SourceClient = Pick<PublicClient, "getLogs" | "getBlock" | "readContract">;
 
 interface RawLog {
+  address: Address;
   args: Record<string, unknown>;
   transactionHash: Hex;
   logIndex: number;
   blockNumber: bigint;
+  removed?: boolean;
 }
+
+const decimalsAbi = [{ type: "function", name: "decimals", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] }] as const;
 
 async function fetchLogs(client: SourceClient, s: EventSpec, chunk: bigint): Promise<RawLog[]> {
   if (s.toBlock < s.fromBlock) throw new Error(`toBlock < fromBlock for ${s.event}`);
+  if (s.token) {
+    const d = Number(await client.readContract({ address: s.token, abi: decimalsAbi, functionName: "decimals" }));
+    if (d !== s.decimals) throw new Error(`token ${s.token} has ${d} decimals, config says ${s.decimals}`);
+  }
   if (chunk < 1n) throw new Error("chunk must be ≥ 1");
   const event = parseAbiItem(s.event) as AbiEvent;
   if (event.type !== "event") throw new Error(`not an event: ${s.event}`);
@@ -55,6 +65,9 @@ async function fetchLogs(client: SourceClient, s: EventSpec, chunk: bigint): Pro
     const logs = (await client.getLogs({ address: s.address, event, ...(s.args ? { args: s.args } : {}), fromBlock: from, toBlock: to, strict: true } as Parameters<SourceClient["getLogs"]>[0])) as unknown as RawLog[];
     for (const l of logs) {
       if (l.transactionHash == null || l.logIndex == null || l.blockNumber == null) throw new Error("pending log returned");
+      if (l.removed === true) throw new Error(`removed (re-orged) log ${l.transactionHash}#${l.logIndex}`);
+      if (typeof l.address !== "string" || l.address.toLowerCase() !== s.address.toLowerCase()) throw new Error(`log from ${String(l.address)}, expected ${s.address}`);
+      if (l.blockNumber < from || l.blockNumber > to) throw new Error(`log at block ${l.blockNumber} outside ${from}..${to}`);
       out.push(l);
     }
   }
@@ -89,9 +102,15 @@ export async function loadFromRpc(cfg: RpcSourceConfig, clients: Record<number, 
     }
     return t;
   };
+  const warnings: string[] = [];
   const orders: SourceOrder[] = [];
-  for (const s of cfg.orders) {
+  const txSpec = new Map<string, number>();
+  for (const [si, s] of cfg.orders.entries()) {
     for (const l of await fetchLogs(client(s.chainId), s, chunk)) {
+      const tk = `${s.chainId}|${l.transactionHash.toLowerCase()}`;
+      const prev = txSpec.get(tk);
+      if (prev !== undefined && prev !== si) warnings.push(`tx ${l.transactionHash} was captured by order specs #${prev} and #${si} (two oldKeys) — confirm manually`);
+      txSpec.set(tk, si);
       orders.push({
         srcChainId: s.chainId,
         txHash: l.transactionHash,
@@ -105,13 +124,15 @@ export async function loadFromRpc(cfg: RpcSourceConfig, clients: Record<number, 
     }
   }
   const payouts: OldPayout[] = [];
-  for (const s of cfg.payouts) {
-    for (const l of await fetchLogs(client(s.chainId), s, chunk)) {
+  for (const [si, s] of cfg.payouts.entries()) {
+    const logs = await fetchLogs(client(s.chainId), s, chunk);
+    if (logs.length === 0) warnings.push(`payout spec #${si} (${s.event} @ ${s.address}) returned no logs — check address/range`);
+    for (const l of logs) {
       const p: OldPayout = { chainId: s.chainId, txHash: l.transactionHash, logIndex: l.logIndex, to: getAddress(field(l, s.fields.to) as string), amount: amountOf(l, s.fields.amount, s.decimals) };
       if (s.fields.srcTxHash) p.srcTxHash = field(l, s.fields.srcTxHash) as Hex;
       if (s.fields.srcLogIndex) p.srcLogIndex = Number(field(l, s.fields.srcLogIndex));
       payouts.push(p);
     }
   }
-  return { orders, payouts };
+  return { orders, payouts, warnings };
 }

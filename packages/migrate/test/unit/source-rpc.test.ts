@@ -10,11 +10,14 @@ interface Call {
   args?: Record<string, string>;
 }
 
-function fakeClient(logs: { block: bigint; tx: string; li: number; args: Record<string, unknown>; addr?: string }[], calls: Call[]): SourceClient {
+type FakeLog = { block: bigint; tx: string; li: number; args: Record<string, unknown>; addr?: string; emitter?: string; removed?: boolean };
+
+function fakeClient(logs: FakeLog[], calls: Call[], decimals: Record<string, number> = {}): SourceClient {
   return {
+    readContract: (async ({ address }: { address: string }) => decimals[address] ?? 18) as unknown as SourceClient["readContract"],
     getLogs: (async (p: Call) => {
       calls.push({ address: p.address, fromBlock: p.fromBlock, toBlock: p.toBlock, ...(p.args ? { args: p.args } : {}) });
-      return logs.filter((l) => l.block >= p.fromBlock && l.block <= p.toBlock && (l.addr === undefined || l.addr === p.address)).map((l) => ({ args: l.args, transactionHash: l.tx, logIndex: l.li, blockNumber: l.block }));
+      return logs.filter((l) => l.block >= p.fromBlock && l.block <= p.toBlock && (l.addr === undefined || l.addr === p.address)).map((l) => ({ address: l.emitter ?? p.address, removed: l.removed, args: l.args, transactionHash: l.tx, logIndex: l.li, blockNumber: l.block }));
     }) as unknown as SourceClient["getLogs"],
     getBlock: (async ({ blockNumber }: { blockNumber: bigint }) => ({ timestamp: BigInt(T - 1000) + blockNumber })) as unknown as SourceClient["getBlock"],
   };
@@ -80,5 +83,26 @@ describe("loadFromRpc", () => {
     const pending = fakeClient([], []);
     pending.getLogs = (async () => [{ args: {}, transactionHash: null, logIndex: null, blockNumber: null }]) as unknown as SourceClient["getLogs"];
     await expect(loadFromRpc({ orders: [spec], payouts: [] }, { 56: pending })).rejects.toThrow(/pending/);
+  });
+  it("rejects removed logs, logs from another contract, logs outside the asked range, and a decimals mismatch", async () => {
+    const spec = { chainId: 56, address: OLD_VAULT, event: "event Deposit(address indexed user, uint256 amount)", fromBlock: 0n, toBlock: 1n, decimals: 6, direction: "B2W" as const, fields: { from: "user", amount: "amount" } };
+    const one = (l: Partial<FakeLog>) => ({ 56: fakeClient([{ block: 1n, tx: tx("a"), li: 0, args: { user: R(1), amount: 5n }, ...l }], [], { [R(800)]: 18 }) });
+    await expect(loadFromRpc({ orders: [spec], payouts: [] }, one({ removed: true }))).rejects.toThrow(/removed/);
+    await expect(loadFromRpc({ orders: [spec], payouts: [] }, one({ emitter: R(1) }))).rejects.toThrow(/log from/);
+    const wide = { 56: fakeClient([{ block: 1n, tx: tx("a"), li: 0, args: { user: R(1), amount: 5n } }], []) };
+    wide[56].getLogs = (async (p: { address: string }) => [{ address: p.address, args: { user: R(1), amount: 5n }, transactionHash: tx("a"), logIndex: 0, blockNumber: 9n }]) as unknown as SourceClient["getLogs"];
+    await expect(loadFromRpc({ orders: [spec], payouts: [] }, wide)).rejects.toThrow(/outside 0\.\.1/);
+    await expect(loadFromRpc({ orders: [{ ...spec, token: R(800) }], payouts: [] }, one({}))).rejects.toThrow(/has 18 decimals, config says 6/);
+    expect((await loadFromRpc({ orders: [{ ...spec, decimals: 18, token: R(800) }], payouts: [] }, one({}))).orders).toHaveLength(1);
+  });
+  it("warns on a payout spec with no logs and on a tx captured by two order specs", async () => {
+    const spec = { chainId: 56, address: OLD_VAULT, event: "event Deposit(address indexed user, uint256 amount)", fromBlock: 0n, toBlock: 1n, decimals: 0, direction: "B2W" as const, fields: { from: "user", amount: "amount" } };
+    const c = fakeClient([{ block: 1n, tx: tx("a"), li: 0, args: { user: R(1), amount: 5n } }, { block: 1n, tx: tx("a"), li: 1, args: { user: R(1), amount: 6n } }], []);
+    const pay = { chainId: 56, address: R(801), event: "event Transfer(address indexed from, address indexed to, uint256 value)", fromBlock: 0n, toBlock: 1n, decimals: 18, fields: { to: "to", amount: "value" } };
+    const empty = fakeClient([], []);
+    const d = await loadFromRpc({ orders: [spec, { ...spec, direction: "W2B" }], payouts: [pay] }, { 56: { ...c, getLogs: ((p: { address: string; fromBlock: bigint; toBlock: bigint }) => (p.address === R(801) ? empty.getLogs(p as never) : c.getLogs(p as never))) as SourceClient["getLogs"] } });
+    expect(d.warnings).toEqual([expect.stringMatching(/captured by order specs #0 and #1/), expect.stringMatching(/payout spec #0 .* returned no logs/)]);
+    // two logs of one tx in the same spec is normal: no warning
+    expect((await loadFromRpc({ orders: [spec], payouts: [] }, { 56: c })).warnings).toEqual([]);
   });
 });
