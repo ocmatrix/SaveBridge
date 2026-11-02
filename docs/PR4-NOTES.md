@@ -1,5 +1,16 @@
 # PR-4 风控引擎与自建交易索引：实现说明、对齐点、参数、偏差与待定
 
+> **状态：已取消（用户决定 2026-11-02：只靠白名单风控）。** PR-4 不进入 main。跨链桥只依赖链上白名单（加上 PR-3 `DefaultRiskEngine` 的暂停、额度、储备检查），不叠加资金来源规则、行为规则，也不用自建交易索引。分支 `pr-4-risk` 保留在本地，供将来需要时恢复。
+>
+> **已完成、可复用的部分**（都在 `packages/risk`，没有改 relayer，接线一直没做）：
+> - **自建交易索引** `src/indexer.ts` + `src/migrations.ts`（v401）+ `src/store.ts`：记录 USDT/MG/TIDE 的 Transfer（跳过 0 金额）、顶层原生币转账和交易对 Swap。游标同时记块号和 hash，配检查点做重组回退，回退不了就标 broken，再用 `rewindTo` 人工恢复。错误文本已脱敏。
+> - **受控占比** `src/engine.ts` `controlledRatio`：30 天窗口，第 1 跳（含池子换币时取 tx_from 作来源），第 2 跳按比例折算，5%/20% 两档。
+> - **同源资助** `src/engine.ts` `commonFunder`：按资产金额下限 `funderMinAmount` 过滤，有 exempt 名单，前后各看 24h。
+> - `SourceRiskEngine` 包住 `DefaultRiskEngine`，合并 REVIEW 原因；索引不可用时返回 WAIT(index)。工厂交易对读取 `loadPairsFromFactory`（`expectCount` 必传）。
+> - 测试：105 条（夹具 + anvil e2e），第 1 轮严格 RED（`07940bd`）→ GREEN（`6c149f4`）。变异脚本 `scripts/mutate.mjs`：第 0 轮 37/40 被杀死；第 1 轮的变异运行因 PR 取消中止，没有结果。
+> - 下面的正文是取消前的设计记录，未定事项（P14、精简建议 §7A 等）随取消一并失效。
+
+
 > 依据：`docs/DESIGN.md` v0.9.4（§6.2 自建交易索引、§7 风控、§9.3 告警、§13 PR-4 验收、附录 A）、`docs/PR3-NOTES.md`（§4.1 风控接口、Q3、Q10、D3）。分支 `pr-4-risk`（叠在 `pr-3-relayer` 之上）。
 > 范围：只写代码与本地测试。**未连接任何生产节点或 Blockscout 库，未发任何真实交易，未读写任何私钥。** 测试只用 PGlite、内存假链和本机 anvil（127.0.0.1）。17 条已拍板决定未改动。
 > 原则：简洁、安全、壮硕；不过度封控——三条规则都只把单子送进 REVIEW，不自动拒绝、不加新的冻结路径；所有阈值可配置，默认值即 §7 目标值，以 10 月回放校准（§6）。
@@ -37,12 +48,15 @@ alter table controlled_set add column effective_from timestamptz   -- NULL = 一
 ```
 
 - `src`（有效来源）：代币从 8 个交易对之一转出时（换币输出、撤流动性）= **该交易的发起人 `tx_from`**（§7「同一笔交易的发起人属于受控集合时，该笔转出视为受控」）；否则 = `from_addr`。摄取时算好，查询只按 `src` 分组。
-- `value_usdt`（计入占比的价值）：只有 USDT 行有值，**不做价格折算**；交易对转出的 USDT 取同一交易里该交易对、收款人相同、紧随其后的 `Swap` 事件的 USDT 输出额（§7「按 Swap 事件里实际收到的 USDT 数额计」）；找不到 Swap（例如撤流动性）用转账额。MG/TIDE/原生币 `value_usdt = 0`。
+- `value_usdt`（计入占比的价值）：只有 USDT 行有值，**不做价格折算**，等于该笔 USDT 转账金额，也就是实际收到的数额。对标准交易对，这个金额与 Swap 的输出额相等。MG/TIDE/原生币的 `value_usdt = 0`。**Swap 事件只存下来做核对，不参与定价**。第 1 轮 B2 修正：原先把 Transfer 和 Swap 配对，会把「先 skim 10000 再做一笔 1 wei 的 swap」误估成 1。
+- **0 金额的 Transfer 不索引**（第 1 轮 A1）：任何人都能 `transferFrom(x, u, 0)`。
 - 原生币：只索引**成功的顶层交易**的 value（逐笔读 receipt 状态，只针对 value>0 的交易）；合约内部转原生币不索引（见待定 P3）。
+- `indexNative=true` 时，区间内每个块都要逐块核对 `parentHash` 链，断链就放弃本轮、不写入（第 1 轮）。
 - 增量：只索引到 `head − confirmations`（≥ 6，与 relayer WANTOS 扫描器一致）；每轮最多 `maxBlockRange` 个块；同一区间先删后插，**重跑幂等**；游标、行、检查点同一事务提交。
 - 重组：每轮先比对游标块 hash，以及新区间首块的 `parentHash`、每条日志的 `blockHash` 与块 hash。游标 hash 变了 → 从新到旧找第一个仍在主链上的检查点，删除其后的全部行，游标回退（`INDEX_REORG` 告警）。检查点全部失效 → `broken`（`INDEX_BROKEN` 告警，每轮重复），**引擎随即对所有 W2B 返回 WAIT(index)**，直到运维 `rewindTo(block)`。日志/块 hash 不一致 → 本轮放弃、不写入、下轮重试。
 - `runTick()` 永不抛出：失败发 `INDEX_ERROR`，下轮重试。
-- 交易对：`loadPairsFromFactory(client, 0x31580F9B…, usdt, 8)` 从工厂读取，不手抄。
+- 交易对：`loadPairsFromFactory(client, 0x31580F9B…, usdt, 8)` 从工厂读取，不手抄。`expectCount` 必须传（生产值 8）。
+- 告警和日志里的异常文本统一经过 relayer 的 `errText/redact()` 脱敏（与 PR-3 D17 对齐，只引用，不修改 relayer）。
 
 ### 2.2 追溯与占比（§7）
 
@@ -57,8 +71,9 @@ alter table controlled_set add column effective_from timestamptz   -- NULL = 一
 
 ### 2.3 行为规则（§7）
 
-- **10 分钟规则**（`fresh_funds`，audit）：本单金额 ≥ 500 USDT，且 X 首次收到任意资产（USDT/MG/TIDE/原生币，含 B2W 放款）的时间距 t ≤ 10 分钟。
-- **同源资助**（`common_funder`，audit + `COMMON_FUNDER` 告警）：X 在 `(t−24h, t]` 内的任一来源 S（不含 X 自己、零地址、桥、`exempt`），在同一 24h 内资助过（任意资产、任意金额）的不同地址中，有 ≥ 3 个在 `(t−24h, t+24h]` 内有 W2B 订单（`orders` 表 + 其 bridgeOut 的块时间）→ REVIEW。向后多看 24h，使第 3 个出现后，前两个**尚未放款**的单子在下次评估时也进 REVIEW（"全部 REVIEW"）；已排队/已放款的兄弟单只能靠告警里的地址清单由负责人 `cancelRelease`（待定 P5）。
+- **按资产的下限 `funderMinAmount`**（第 1 轮 A1）：下面两条规则都只认金额 ≥ 该资产下限的转账，**没配下限的资产一律不算**。默认 USDT 为 1 个（按精度换算），原生币为 1 个（保守占位值），MG/TIDE 不计入。这样防住了用 0 金额或粉尘转账把一批单子推进 REVIEW 的 DoS，也防住了用它把「首次收资」提前、让 10 分钟规则失效。
+- **10 分钟规则**（`fresh_funds`，audit）：本单金额 ≥ 500 USDT，且 X 第一笔达到下限的入账（含 B2W 放款，不含自转账）距 t ≤ 10 分钟。
+- **同源资助**（`common_funder`，audit + `COMMON_FUNDER` 告警）：X 在 `(t−24h, t]` 内达到下限的入账的任一来源 S（不含 X 自己、零地址、桥、`exempt`），在同一 24h 内资助过（达到下限）的不同地址中（同一地址被资助多次只算 1 个），有 ≥ 3 个在 `(t−24h, t+24h]` 内有 W2B 订单（`orders` 表 + 其 bridgeOut 的块时间）→ REVIEW。向后多看 24h，使第 3 个出现后，前两个**尚未放款**的单子在下次评估时也进 REVIEW（"全部 REVIEW"）；已排队/已放款的兄弟单只能靠告警里的地址清单由负责人 `cancelRelease`（待定 P5）。
 
 ### 2.4 与 PR-3 引擎的组合、降级、幂等
 
@@ -98,6 +113,7 @@ alter table controlled_set add column effective_from timestamptz   -- NULL = 一
 | `freezeBps` / `auditBps` | 2000 / 500 | §7（≥20% 冻结级、5%～20% 审核级） |
 | `freshWindowMs` / `freshMinAmount` | 10 分钟 / 500 × 10^decimals | §7 |
 | `funderWindowMs` / `funderMinAddrs` | 24h / 3 | §7 |
+| `funderMinAmount` | `{ USDT: 1 × 10^decimals, NATIVE: 10^18 }`；没列出的资产不计 | 第 1 轮 A1（同源资助和首次收资共用这组下限）；**以 10 月回放校准** |
 | `indexStaleMs` | 2 分钟 | 本 PR（索引 tick 间隔应远小于此） |
 | `indexMaxLagBlocks` | 600 | 本 PR（约几分钟出块量；PR-3 对 WAITING(index) 10 分钟告警） |
 | indexer `confirmations` / `maxBlockRange` / `keepCheckpoints` | ≥6 / 配置 / 500 | §6.2 |
@@ -111,18 +127,18 @@ alter table controlled_set add column effective_from timestamptz   -- NULL = 一
 2. 受控集合：附录 A 由负责人逐条确认后导入；`0x8dFd` 的 `effective_from` = 切换时刻 T（回放时用 10 月实际事件时间做假设 T）。
 3. 回放：对每笔 10 月跨出按其块时间评估（内层引擎替换为常 AUTO），记录 decision。
 4. 验收（§13 PR-4）：`0x2835`、`0x0b74`、`0xbdc4` 被拦；"受控地址发起的池子换币再转给白名单用户"被拦；**误报数不高于现行人工审核量**。
-5. 调参：只在 `freezeBps/auditBps/freshMinAmount/funderMinAddrs/exempt` 上调；若有绕过者是"受控方转 MG/TIDE → 用户自己换成 USDT 跨出"，启用待定 P1 的按资产占比扩展。结论与最终参数写回本文件与 DESIGN §7。
+5. 调参：只在 `freezeBps/auditBps/freshMinAmount/funderMinAddrs/exempt` 上调；用户已决定 P1（经 MG/TIDE 绕过）暂不补，回放中如果出现，只记录数量，供用户复议。结论与最终参数写回本文件与 DESIGN §7。
 6. 同时量出：慢查询（枢纽地址的第 2 跳）、索引追平耗时；必要时给第 2 跳来源数加上限。
 
 ## 7. 偏差与待定项（均取最保守且最简单的做法，均不改 17 条决定）
 
 | # | 事项 | 当前做法 | 理由 / 后续 |
 |---|---|---|---|
-| P1 | MG/TIDE/原生币不计价 | 不计入占比（§7 不做价格折算）；只参与 10 分钟规则和同源资助 | 受控方转 MG 给用户、用户自己换成 USDT 跨出，不会被占比捕获（行为规则仍可能命中）。回放若见此类，扩展为"按资产占比折算 Swap 输入"（不需价格） |
+| P1（原） | MG/TIDE/原生币不计价 | 不计入占比（§7 不做价格折算） | **用户已决：暂不补**，见下面的 P1 行 |
 | P2 | 第 2 跳窗口 | 中间地址 S 的占比也用 `(t−30d, t]`，不截止到 S→X 那笔的时间 | 更简单；会把 S 之后收到的受控资金也算进来，偏保守（多拦不少拦） |
 | P3 | 合约内部原生币转账 | 不索引（无 trace 假设） | WANTOS 是否支持 `debug_trace*` 未验证；USDT 是主资产，影响有限 |
 | P4 | "首次收到资金"受索引起点限制 | 起点之前的入账看不到 | 生产 `startBlock` 须早于上线 ≥ 30 天（回填），写进上线门槛 |
-| P5 | 同源资助"全部 REVIEW" | 未放款的兄弟单在下次评估时进 REVIEW；已 QUEUED/RELEASED 的只在告警数据里列出 | 引擎只评估 DETECTED/WAITING/已批准 REVIEW 的单；撤销排队由负责人操作。资助判定不设金额下限，`exempt` 排除合法分发方，回放校准 |
+| P5 | 同源资助"全部 REVIEW" | 未放款的兄弟单在下次评估时进 REVIEW；已 QUEUED/RELEASED 的只在告警数据里列出 | 引擎只评估 DETECTED/WAITING/已批准 REVIEW 的单；撤销排队由负责人操作。资助判定按资产下限 `funderMinAmount` 过滤（第 1 轮 A1），`exempt` 排除合法分发方，回放校准 |
 | P6 | 合并 reason 的格式 | `a+b+c`（排序去重） | 让审批范围精确覆盖全部原因；PR-6 后台展示时按 `+` 拆分 |
 | P7 | 已批准 REVIEW 遇到索引不可用 | 返回 WAIT(index) → 订单回 WAITING(index)，批准保留；索引恢复后仍同 level+reason 才按 DELAY 继续 | 降级不放松 |
 | P8 | 数据库异常 | WAIT(index) + `INDEX_ERROR` | 代码缺陷也会表现为等待；PR-3 的 WAITING(index) 10 分钟超时告警兜底 |
@@ -130,11 +146,29 @@ alter table controlled_set add column effective_from timestamptz   -- NULL = 一
 | P10 | 生产数据源 | 索引器走 RPC（自建节点）；Blockscout 只用于回填与交叉核对 | §6.2；回填工具随 PR-9 |
 | P11 | `controlled_set.effective_from` | 由本包迁移加列 | 不改 relayer 文件；PR-6 后台需支持编辑此字段 |
 | P12 | 告警种类与接线 | 见 §4 | 范围外 |
+| P14 | **来回转账稀释占比：待用户确认是否仍要做（未实现）** | 现状：C→X 1000，X↔Y 来回 20 次各 1000，X 跨出 1000 → 占比 1000/21000 = 4.76% → AUTO；X 在池子里自己来回换也一样。已写成两条刻画测试（`KNOWN LIMITATION (P14…)`），锁住当前行为 | 用户先选了「净入账作分母」（分母 = 30 天 USDT 入账 − 转给非桥地址的出账，下限取受控价值；第 2 跳同口径）。随后用户补充「白名单是主防线、PR-4 只是补充层、不叠加复杂规则」，总控据此**暂停实现**。暂停前已做的分析：①净入账会抬高高频交易用户的占比，入账和出账都大时，很小的受控入账也可能越过 5%，需要用回放量化误报；②第 2 跳如果照搬口径，纯转手的中间地址净额≈0，会把 10% 的受控份额放大成 100%；需要把「转给目标 X 的那笔」排除在扣减之外。这两点在决定是否继续做时一并考虑 |
+| P1 | **MG/TIDE/原生币不折价、LP 代币路径：用户已决，暂不补，已知局限** | 不计入占比；靠 10 分钟规则、同源资助规则和每地址额度兜底 | 建议写进 DESIGN §7「局限」的文字（只写在这里，不改 DESIGN）：「资金来源占比只按 USDT 计价，不做价格折算。受控方先转 MG/TIDE/原生币或 LP 代币，再由收款人自己换成 USDT 跨出，这种情况不计入占比，由行为规则、每地址额度和白名单准入兜底。」 |
+| B1 | **skim / LP 路径：用户已决，暂不补，已知局限** | 受控地址直接把 USDT 转给交易对，再由任何人 `skim`；或受控地址转出 LP 代币、由别人撤流动性。这两种情况下 USDT 的有效来源是 skim/撤流动性交易的发起人，不是受控地址 | 同上。建议由 PR-7 对「受控地址直接转账给交易对」「受控地址转出 LP 代币」发二级告警，本 PR 不做 |
 | P13 | 受控地址有资金动作（§9.3 二级）、增发接收地址告警 | 不在本 PR | 属 PR-7 监控；索引表可直接复用 |
+
+## 7A. 精简建议（第 1 轮，按用户原则「白名单是主防线，PR-4 只是补充层」；**只是建议，没有删任何代码，等用户决定**）
+
+前提：非白名单地址无论如何出不了金；白名单地址基本都提前报备、做过实名。所以 PR-4 的价值只在于发现「白名单用户替受控方代跨」。凡是只给运营增加 REVIEW、却抓不到这一类的规则，都应该降级。
+
+| 规则 | 现状 | 误报与运营压力 | 建议 |
+|---|---|---|---|
+| 受控来源**直接**占比（第 1 跳，含「受控地址发起的池子换币」） | ≥20% REVIEW(freeze)，5%～20% REVIEW(audit) | 低：只有直接收过受控地址的钱才会触发；正对 §13 验收的三个地址和池子换币场景 | **保留**。可选再精简：5%～20% 改为只告警，只有 ≥20% 拦单 |
+| 第 2 跳追溯 | 按中间地址的受控份额折算后计入占比 | 中高：交易所、做市、热门中转地址会把份额传给大量普通用户；计算量随中间地址的流水增长；还会带出 P14 一类的稀释和口径争议 | **降为只告警**（不计入拦单的占比，单独发告警）或删除 |
+| 10 分钟规则 | 首笔入账后 10 分钟内跨出 ≥500 → REVIEW(audit) | 中：刚从交易所或 B2W 进来就跨出，对实名白名单用户是正常行为 | **降为只告警** |
+| 同源资助 | 一个来源 24h 内资助 ≥3 个地址跨出 → REVIEW(audit) + 告警 | 低到中：第 1 轮 A1 加了金额下限，又有 `exempt` 名单后，主要剩真实的「一个人资助多个代跨号」 | **保留**（上线前必须填好 `exempt` 名单） |
+| 索引不可用 → WAIT(index) | 所有 W2B 停止自动放行 | 只在索引故障时出现；有 10 分钟超时告警 | **保留**。这是降级的安全闸，不是规则 |
+
+推荐组合：只保留「受控来源直接占比」和「同源资助」两条拦单规则，第 2 跳和 10 分钟规则只告警。实现代价很小：给每条规则加一个 `mode: "review" | "alert" | "off"` 参数，告警走 `RiskAlertSink`；不改占比公式，也不动 PR-3 接口。用户拍板后另起一轮做。
 
 ## 8. PR-9 / PR-10 上线门槛
 
-- PR-9 前：§6 回放完成并定稿阈值；接线（§4）完成，relayer 实际用 `SourceRiskEngine`；告警映射完成；附录 A 负责人确认并录入（含 `0x8dFd` 的 `effective_from = T`）；`loadPairsFromFactory(..., 8)` 通过；索引从上线前 ≥ 30 天回填完毕并与 Blockscout 抽样核对一致。
+- **回放之前必须填好 `exempt` 名单**：Magellan 网体合约 `0x082b…`，以及其他批量发奖励或发 gas 的地址。不填的话，同源资助规则在回放和上线时都会大量误报（第 1 轮）。
+- PR-9 前：§6 回放完成并定稿阈值，包括 `funderMinAmount`；接线（§4）完成，relayer 实际用 `SourceRiskEngine`；告警映射完成；附录 A 负责人确认并录入（含 `0x8dFd` 的 `effective_from = T`）；`loadPairsFromFactory(..., 8)` 通过；索引从上线前 ≥ 30 天回填完毕并与 Blockscout 抽样核对一致。
 - PR-9 联调：WANTON 1345 上演练受控直转、经池换币、2 跳、10 分钟、同源资助、索引停摆（WAIT(index) 与 10 分钟告警）、WANTOS 回滚（INDEX_REORG / INDEX_BROKEN + `rewindTo`）。
 - PR-10：灰度期每日核对 REVIEW 数量与人工审核量；索引 lag 纳入监控面板。
 
