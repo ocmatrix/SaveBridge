@@ -85,11 +85,13 @@ step_system() {
   fi
   printf 'vm.swappiness = 10\n' | put_file /etc/sysctl.d/90-savebridge-swappiness.conf 0644 root:root
   run sysctl -q -p /etc/sysctl.d/90-savebridge-swappiness.conf
+  run apt-get update
   run apt-get install -y --no-install-recommends age curl gnupg xz-utils ca-certificates
 }
 
 step_postgres() {
   require_root
+  run apt-get update
   run apt-get install -y --no-install-recommends postgresql
   local ver conf
   ver="$(probe sh -c "ls /etc/postgresql 2>/dev/null | sort -V | tail -1")"
