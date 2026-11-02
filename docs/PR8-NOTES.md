@@ -208,12 +208,12 @@ oldKey,srcChainId,srcTxHash,srcLogIndex,direction,to,srcRecipient,amountWei,amou
 | T05 | A-R3-1 | chunk 不校验 | 同上 |
 | T06 | A-R3-1 | loader 不调用配置校验 | source-rpc › A-R3-1 等 |
 | T07 | A-R3-1 | CLI 入口不调用配置校验 | **存活（等价）**：loader 第一行做同一校验，两层是用户要求的纵深防御，任一层单独去掉另一层仍拦住；两层同时去掉即 T06+T07，被 source-rpc 与 preflight-rpc 杀死 |
-| T08 | A-R3-1 |  不区分大小写 / 空格 | source-rpc（、）；preflight-rpc |
+| T08 | A-R3-1 | `latest` 不区分大小写 / 空格 | source-rpc（`"Latest"`、`"latest "`）；preflight-rpc |
 | T09–T13 | 随修 1 | 预检不核金额 / 方向 / to / srcRecipient / 源链 | round3 › fix 1 各用例 |
 | T14 | 随修 1 | 不一致不阻断 | round3 › fix 1 |
-| T15 | 随修 2 | preflight 不强制  | cli、preflight-rpc（退出 64） |
+| T15 | 随修 2 | preflight 不强制 `--hash` | cli、preflight-rpc（退出 64） |
 | T16 | 随修 2 | 用法错误不返回 64 | cli、preflight-rpc |
-| T17 | 随修 2 |  部分解出仍继续 | preflight-rpc（部分正确 calldata） |
+| T17 | 随修 2 | `--data` 部分解出仍继续 | preflight-rpc（部分正确 calldata） |
 | T18 | 随修 3 | CLI 只传 BSC 放款 | preflight-rpc（WANTOS 侧退款阻断） |
 | T19 | 随修 4 | 没有时钟偏差容忍 | round2 › B7（−599 s） |
 | T20 | 随修 4 | 偏差 6000 秒 | round2 › B7（常量、−601 s） |
@@ -224,7 +224,7 @@ oldKey,srcChainId,srcTxHash,srcLogIndex,direction,to,srcRecipient,amountWei,amou
 | T25 | 随修 6 | 不替换 URL | redact |
 | T26 | 随修 6 | 打印完整 viem 错误 | redact |
 | T27 | 随修 6 | 完全不脱敏 | redact、preflight-rpc |
-| T29 | 随修 6 | 不删  行 | redact |
+| T29 | 随修 6 | 不删 `URL:` 行 | redact |
 | T28 | 随修 7 | 不核新金库 RPC chainId | preflight-rpc |
 
 ### 第 2 轮（HEAD 之上，30 个，全部杀死）
