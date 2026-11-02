@@ -1,0 +1,19 @@
+{
+  "profile": "local",
+  "waitMode": "real",
+  "localBlockTimeSec": 1,
+  "chains": {
+    "wantos": { "chainId": 31337, "rpcUrlEnvs": [], "token": null, "confirmations": 6 },
+    "bsc": { "chainId": 31338, "rpcUrlEnvs": [], "token": null, "confirmations": 6 }
+  },
+  "params": {
+    "bsc": { "dailyCap": 8000, "perAddrDailyCap": 300, "largeThreshold": 150, "releaseDelaySec": 120, "minDeposit": 10, "maxDepositPerTx": 1000 },
+    "wantos": { "w2bMinAmount": 10, "w2bPerAddrDailyCap": 2000, "b2wDailyCap": 3000, "b2wDelaySec": 90 },
+    "supplyHeadroom": 10000
+  },
+  "reserves": { "bsc": 20000, "wantos": 20000 },
+  "watcherGrace": { "w2bSeconds": 60, "b2wBeforeEtaSeconds": 30, "refundBeforeExecSeconds": 60, "depositRefundBeforeExecSeconds": 60 },
+  "gasWei": { "role": "100000000000000000000", "user": "100000000000000000000" },
+  "e2e": { "smallW2B": 40, "largeW2B": 15, "b2w": 25, "quota": 5, "review": 5, "refund": 5, "negative": 5 },
+  "tickSeconds": 3
+}
