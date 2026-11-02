@@ -10,6 +10,11 @@ import {BscVaultV2} from "../src/BscVaultV2.sol";
 import {WantosBridgeV2} from "../src/WantosBridgeV2.sol";
 import {MockToken} from "./mocks/MockToken.sol";
 
+/// Production Deploy with its pre-broadcast probe bypassed: the post-deploy MIN_DELAY re-check must still refuse.
+contract DeployProbeBypassed is Deploy {
+    function _requireBuildWindows() internal override {}
+}
+
 /// PR-9 testnet-fast only (generated tree). Mainnet guards in both directions:
 ///  - the fast bytecode cannot be created on any chain other than 1345 / 97 / 31337 / 31338;
 ///  - DeployFast refuses other chains before creating anything;
@@ -130,6 +135,13 @@ contract FastGuardsTest is Test {
         uint256 ceiling = token.totalSupply() + 10_000 * U;
         vm.expectRevert(bytes("Deploy: testnet-fast bytecode refused (timelock)"));
         prod.deployWantos(_common(56), _wParams(), ceiling);
+    }
+
+    function test_productionDeployPostCheckRefusesFastTimelockEvenIfProbeBypassed() public {
+        vm.chainId(97);
+        DeployProbeBypassed bypass = new DeployProbeBypassed();
+        vm.expectRevert(bytes("Deploy: timelock MIN_DELAY mismatch"));
+        bypass.deployBsc(_common(1345), _bscParams());
     }
 
     function test_productionDeployOnMainnetChainIdFailsAtTheBytecodeGuard() public {
