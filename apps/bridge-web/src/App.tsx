@@ -14,6 +14,7 @@ import { W2BPanel } from "./components/W2BPanel";
 import { B2WPanel } from "./components/B2WPanel";
 import { Orders } from "./components/Orders";
 import { Footer } from "./components/Footer";
+import { WalletPicker } from "./components/WalletPicker";
 import { browserStorage, loadKnown, saveKnown, type Known } from "./lib/knownOrders";
 
 export interface AppProps {
@@ -81,6 +82,7 @@ function Page() {
           ) : (
             <B2WPanel state={state.data} onDeposit={addB2w} wallet={wallet} onFlip={flip} />
           )}
+          {!address && <WalletPicker wallet={wallet} />}
           {/* amounts are formatted with chain decimals: no state (e.g. decimals mismatch) → no order list */}
           {address && state.data && <Orders orders={orders.data} decimals={{ wantos: state.data.wantos.decimals, bsc: state.data.bsc.decimals }} />}
         </div>

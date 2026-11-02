@@ -1,5 +1,5 @@
 import { createConfig, http, type CreateConnectorFn, type Storage } from "wagmi";
-import { injected } from "wagmi/connectors";
+import { injected, walletConnect } from "wagmi/connectors";
 import type { AppConfig } from "../config";
 import { toViemChain } from "../lib/clients";
 
@@ -11,8 +11,8 @@ export interface WagmiOptions {
 }
 
 /**
- * The page runs inside the host app's browser: only the injected wallet (EIP-1193 + EIP-6963 discovery).
- * No WalletConnect / QR: there is no connect screen (see useAutoConnect).
+ * Any EVM wallet: injected ones (EIP-1193 + EIP-6963 discovery: the host app's, TP / MetaMask / OKX, extensions) and,
+ * when a project id is configured, WalletConnect v2 with our own QR (no hosted modal → strict CSP).
  */
 export function createWagmiConfig(cfg: AppConfig, opts: WagmiOptions = {}) {
   const wantos = toViemChain(cfg.wantos);
@@ -21,6 +21,20 @@ export function createWagmiConfig(cfg: AppConfig, opts: WagmiOptions = {}) {
     opts.connectors ??
     [
       injected({ shimDisconnect: true }),
+      ...(cfg.walletConnectProjectId
+        ? [
+            walletConnect({
+              projectId: cfg.walletConnectProjectId,
+              showQrModal: false,
+              metadata: {
+                name: cfg.appName,
+                description: "WANTOS ⇄ BSC USDT bridge",
+                url: typeof location !== "undefined" ? location.origin : "https://bridge.wanto.pro",
+                icons: [],
+              },
+            }),
+          ]
+        : []),
     ];
   return createConfig({
     chains: [wantos, bsc],

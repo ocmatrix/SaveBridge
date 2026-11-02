@@ -157,7 +157,7 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     await waitFor(() => expect(within(w2b).queryByText("当前网络不是 WANTOS，请切换")).toBeNull(), T);
   });
 
-  it("no wallet in the browser (page opened outside the app) → tells to open it in the app, button stays disabled", async () => {
+  it("no wallet in the browser → note + the big button reads 连接钱包 and opens the wallet list (EVM wallets: BSC, WANTOS)", async () => {
     const clients = makeClients(env.cfg);
     render(
       <App
@@ -169,10 +169,18 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
         initialLang="zh"
       />,
     );
-    expect(await screen.findByText(/未检测到钱包。请在 app 内打开本页。/, {}, T)).toBeInTheDocument();
+    expect(await screen.findByText(/未检测到钱包。请点「连接钱包」,或在 SafeBridge 内打开本页。/, {}, T)).toBeInTheDocument();
     const w2b = panel("WANTOS → BSC");
-    expect(submit(w2b)).toBeDisabled();
-    expect(submit(w2b)).toHaveTextContent("请在 app 内打开");
+    expect(submit(w2b)).toBeEnabled();
+    expect(submit(w2b)).toHaveTextContent("连接钱包");
+    expect(screen.queryByRole("dialog", { name: "选择钱包" })).toBeNull();
+    await userEvent.click(submit(w2b));
+    const list = await screen.findByRole("dialog", { name: "选择钱包" });
+    // no extension in jsdom: the generic injected wallet is offered as 浏览器钱包; choosing it explains there is no wallet
+    await userEvent.click(within(list).getByRole("button", { name: "浏览器钱包" }));
+    expect(await within(list).findByText(/未检测到钱包/, {}, T)).toBeInTheDocument();
+    await userEvent.click(within(list).getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("dialog", { name: "选择钱包" })).toBeNull();
   });
 
   it("footer shows the bridge address from config (the same on both chains)", async () => {

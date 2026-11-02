@@ -71,7 +71,7 @@ export function B2WPanel({ state, onDeposit, wallet, onFlip }: { state: BridgeSt
   const label = !address
     ? wallet.connecting
       ? t("wallet.connecting")
-      : t("cta.noWallet", { app: cfg.appName })
+      : t("wallet.connect")
     : canSubmit
       ? t("cta.b2w", { amount: amountText })
       : parsed?.ok && !problem
@@ -146,7 +146,7 @@ export function B2WPanel({ state, onDeposit, wallet, onFlip }: { state: BridgeSt
       <PendingTx flow={flow} chain={cfg.bsc} />
       {flow.done && <p className="ok">{flow.done}</p>}
       {flow.error && <p className="error">{flow.error}</p>}
-      <button type="button" className="cta" data-testid="submit" disabled={!canSubmit} onClick={() => void submit()}>
+      <button type="button" className="cta" data-testid="submit" disabled={address ? !canSubmit : wallet.connecting} onClick={() => (address ? void submit() : wallet.setOpen(true))}>
         {label}
       </button>
     </section>

@@ -65,7 +65,7 @@ export function W2BPanel({ state, onOrder, wallet, onFlip }: { state: BridgeStat
   const label = !address
     ? wallet.connecting
       ? t("wallet.connecting")
-      : t("cta.noWallet", { app: cfg.appName })
+      : t("wallet.connect")
     : blocker === "wl.closed"
       ? t("cta.closed")
       : canSubmit
@@ -121,7 +121,7 @@ export function W2BPanel({ state, onOrder, wallet, onFlip }: { state: BridgeStat
       <PendingTx flow={flow} chain={cfg.wantos} />
       {flow.done && <p className="ok">{flow.done}</p>}
       {flow.error && <p className="error">{flow.error}</p>}
-      <button type="button" className="cta" data-testid="submit" disabled={!canSubmit} onClick={() => void submit()}>
+      <button type="button" className="cta" data-testid="submit" disabled={address ? !canSubmit : wallet.connecting} onClick={() => (address ? void submit() : wallet.setOpen(true))}>
         {label}
       </button>
     </section>
