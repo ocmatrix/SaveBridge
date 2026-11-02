@@ -15,10 +15,11 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { BaseError, createPublicClient, getAddress, http, zeroHash, type Hex, type PublicClient } from "viem";
+import { createPublicClient, getAddress, http, zeroHash, type Hex, type PublicClient } from "viem";
 import { runDrill, startLocalVault } from "./drill.js";
 import { parseSourceJson } from "./io.js";
 import { buildManifest, loadManifest, validateManifest } from "./manifest.js";
+import { safeMessage } from "./redact.js";
 import { MIN_DELAY, buildProposals, renderProposals, verifyScheduledCall } from "./proposal.js";
 import { legacyPaidReader, preflightBatch, readLegacyPaid, reconcileLegacy } from "./reconcile.js";
 import { scanLegacy } from "./scan.js";
@@ -33,15 +34,6 @@ const need = (v: string | undefined, name: string): string => {
   return v;
 };
 
-/** Error text for stderr: never the RPC URL (its path / query may carry an API key). */
-export function safeMessage(e: unknown): string {
-  const msg = e instanceof BaseError ? e.shortMessage : e instanceof Error ? e.message : String(e);
-  return msg
-    .split("\n")
-    .filter((l) => !/^\s*URL:/i.test(l))
-    .join("\n")
-    .replace(/\b(?:https?|wss?):\/\/[^\s"'<>]+/gi, "<rpc-url>");
-}
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
