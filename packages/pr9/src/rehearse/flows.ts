@@ -102,3 +102,24 @@ export function pct(xs: number[], p: number): number {
   const s = [...xs].sort((a, b) => a - b);
   return s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))]!;
 }
+
+export interface AlertLike {
+  chain?: string;
+  detail?: Record<string, unknown>;
+}
+
+/**
+ * True unless the alert is about a chain event older than this stage. The watcher keeps catching up on
+ * earlier stages' blocks (bounded ranges per tick in real time), so e.g. the role drills' KEY_CHANGE can
+ * arrive during e2e. Alerts without a block (AUTO_PAUSE, state alerts…) always count — fail-closed.
+ */
+export function raisedForBlocksSince(a: AlertLike, start: Record<"bsc" | "wantos", bigint>): boolean {
+  const b = a.detail?.["block"];
+  const c = a.chain === "bsc" || a.chain === "wantos" ? a.chain : null;
+  if (b === undefined || c === null) return true;
+  try {
+    return BigInt(String(b)) >= start[c];
+  } catch {
+    return true;
+  }
+}

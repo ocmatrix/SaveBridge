@@ -157,7 +157,8 @@ export class Ctx {
 
   async syncClock(): Promise<number> {
     const [w, b] = await Promise.all([this.chains.wantos.latest(), this.chains.bsc.latest()]);
-    this.clockSec = this.cfg.waitMode === "warp" ? Math.max(w.timestamp, b.timestamp) : Math.floor(Date.now() / 1000);
+    // chain time drives relayer / watcher clocks (≈ wall clock on a live testnet; correct after a local checkpoint restore)
+    this.clockSec = Math.max(w.timestamp, b.timestamp);
     return this.clockSec;
   }
 

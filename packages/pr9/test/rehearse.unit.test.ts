@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { loadConfig, rpcUrls, validateConfig, type RehearsalConfig } from "../src/rehearse/config";
 import { assertChainAllowed, assertTestnetAuthorized, assertUrlAllowed } from "../src/rehearse/guard";
 import { loadOrCreateKeys } from "../src/rehearse/keys";
-import { pct, reconcileOne, type ChainView, type Tracked } from "../src/rehearse/flows";
+import { pct, raisedForBlocksSince, reconcileOne, type ChainView, type Tracked } from "../src/rehearse/flows";
 import { barrier } from "../src/rehearse/stages/roles";
 
 const CFG = join(import.meta.dirname, "../config");
@@ -118,6 +118,21 @@ describe("rehearsal helpers", () => {
     expect(reconcileOne(t("B2W", "REFUNDED"), v({ wantosPayout: 2, bscDeposit: 2 }), "REFUNDED")).toMatch(/BOTH/);
     expect(reconcileOne(t("B2W", "REFUNDED"), v({ wantosPayout: 3, bscDeposit: 2 }), "REFUNDED")).toBeNull();
   });
+  it("e2e alert window: earlier-stage events (role drills' KEY_CHANGE backlog) are excluded, everything else stays red", () => {
+    const start = { bsc: 2000n, wantos: 3000n };
+    // backlog from the role drills (real case: AdminTransferred @1715, RoleGranted @1963 on BSC)
+    expect(raisedForBlocksSince({ chain: "bsc", detail: { event: "AdminTransferred", block: "1715" } }, start)).toBe(false);
+    expect(raisedForBlocksSince({ chain: "wantos", detail: { block: "1963" } }, start)).toBe(false);
+    // a key change DURING e2e must still fail the check
+    expect(raisedForBlocksSince({ chain: "bsc", detail: { event: "RoleGranted", block: "2000" } }, start)).toBe(true);
+    expect(raisedForBlocksSince({ chain: "wantos", detail: { block: "3001" } }, start)).toBe(true);
+    // fail-closed: no block / no chain / garbage → counts
+    expect(raisedForBlocksSince({ chain: "bsc", detail: { reason: "no BridgeOut", check: { block: "10" } } }, start)).toBe(true); // AUTO_PAUSE shape
+    expect(raisedForBlocksSince({ detail: { block: "1" } }, start)).toBe(true);
+    expect(raisedForBlocksSince({ chain: "bsc", detail: { block: "not-a-number" } }, start)).toBe(true);
+    expect(raisedForBlocksSince({ chain: "bsc" }, start)).toBe(true);
+  });
+
   it("percentiles", () => {
     expect(pct([], 50)).toBe(0);
     expect(pct([5, 1, 3], 50)).toBe(3);

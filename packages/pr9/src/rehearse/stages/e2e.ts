@@ -2,7 +2,7 @@ import type { Account } from "viem";
 import { OrderRepo } from "@bridge/relayer/src/orders";
 import { tokenAbi } from "../chain";
 import { tok, type Ctx } from "../ctx";
-import { b2wKey, bridgeOut, chainView, decide, deposit, pct, reconcileOne, w2bKey, type Tracked } from "../flows";
+import { raisedForBlocksSince, type AlertLike, b2wKey, bridgeOut, chainView, decide, deposit, pct, reconcileOne, w2bKey, type Tracked } from "../flows";
 import { pump, startRelayer, startWatcher, type RelayerSys, type WatcherSys } from "../services";
 import { signBatch, submitBatch } from "../whitelist";
 
@@ -16,6 +16,9 @@ export async function stageE2E(ctx: Ctx): Promise<void> {
   const tracked: Tracked[] = [];
   const now = () => ctx.clockSec;
   const t0Alerts = w.sink.alerts.length;
+  // the watcher may still be catching up on earlier stages (real time: bounded ranges per tick); judge only this stage's blocks
+  const startBlock = { bsc: (await ctx.chains.bsc.latest()).number, wantos: (await ctx.chains.wantos.latest()).number };
+  const ofThisStage = (a: AlertLike) => raisedForBlocksSince(a, startBlock);
   const add = (t: Omit<Tracked, "sentAt">) => tracked.push({ ...t, sentAt: Date.now() });
 
   // ---- 5 negative cases: the chain must refuse them (simulated: nothing broadcast; approvals are exact)
@@ -168,9 +171,9 @@ export async function stageE2E(ctx: Ctx): Promise<void> {
   const active = (await repo.listActive()).filter((o) => !(cfg.waitMode === "real" && o.status === "WAITING" && o.reason === "quota"));
   ctx.check("E2E-nofail", "无遗留 FAILED / WAITING", active.length === 0, active.map((o) => `${o.status}/${o.reason}`).join(","));
   const pauses = await Promise.all((["bsc", "wantos"] as const).map((s) => ctx.view<boolean>(s, "paused")));
-  const lvl1 = w.sink.alerts.slice(t0Alerts).filter((a) => a.level === 1);
+  const lvl1 = w.sink.alerts.slice(t0Alerts).filter((a) => a.level === 1 && ofThisStage(a as never));
   ctx.check("E2E-nopause", "监控零误暂停、零一级告警", pauses.every((p) => !p) && lvl1.length === 0, lvl1.map((a) => a.code).join(","));
-  const shortfall = w.sink.alerts.slice(t0Alerts).filter((a) => a.code === "RECONCILE_SHORTFALL");
+  const shortfall = w.sink.alerts.slice(t0Alerts).filter((a) => a.code === "RECONCILE_SHORTFALL" && ofThisStage(a as never));
   ctx.check("E2E-reconcile", "余额对账全程无 RECONCILE_SHORTFALL", shortfall.length === 0);
   const allowances = await Promise.all(tracked.filter((t) => t.dir === "W2B").slice(0, 10).map((t) => ctx.chains.wantos.read<bigint>(ctx.d.token.wantos, tokenAllowanceAbi as never, "allowance", [t.user, ctx.d.proxy])));
   ctx.check("E2E-approve", "授权用精确金额（bridgeOut 后剩余授权为 0，无 MaxUint256）", allowances.every((a) => a === 0n));

@@ -37,6 +37,14 @@ export function restoreOffchain(runDir: string, stage: string): void {
 export async function restoreChains(runDir: string, stage: string, chains: Record<Side, Chain>): Promise<void> {
   for (const s of ["wantos", "bsc"] as Side[]) await chains[s].rpc("anvil_loadState", [readFileSync(join(checkpointDir(runDir, stage), `${s}.hex`), "utf8").trim()]);
   // anvil resumes from the wall clock after a load (time would run backwards): continue from the saved head, both chains aligned
-  const t = Math.max(...(await Promise.all((["wantos", "bsc"] as Side[]).map(async (s) => (await chains[s].latest()).timestamp)))) + 1;
-  for (const s of ["wantos", "bsc"] as Side[]) await chains[s].setNextTimestamp(t);
+  // (interval-mining anvils may mine in between: retry with a fresh head)
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const t = Math.max(Math.floor(Date.now() / 1000) * (attempt > 0 ? 1 : 0), ...(await Promise.all((["wantos", "bsc"] as Side[]).map(async (s) => (await chains[s].latest()).timestamp)))) + 2 + attempt * 5;
+      for (const s of ["wantos", "bsc"] as Side[]) await chains[s].setNextTimestamp(t);
+      return;
+    } catch (e) {
+      if (attempt >= 5) throw e;
+    }
+  }
 }
