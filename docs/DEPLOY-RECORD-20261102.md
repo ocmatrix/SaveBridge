@@ -23,7 +23,7 @@
 ## 部署参数（负责人 2026-11-02 回复「冻结」）
 
 - 部署者 `0x480CDAe459876000Cbe16CBd28a96F9416001d1A`（本机加密钥匙文件 `~/.savebridge-deployer/deployer`；两链 nonce 0）。
-- 参数文件 `docs/deploy-params/bsc.env`（sha256 `884f5f2b8a82ce30311cb4b4813883b0691800da69237723789ab1e788df29ef`）、`docs/deploy-params/wantos.env`（sha256 `2f4630a9c80f7f5a6adb1e0e52c75b576dbdcea2b79edc118f6f302784f9a0ee`）；冻结后不得原地修改，要改须重新冻结、重算哈希。
+- 参数文件 `docs/deploy-params/bsc.env`（sha256 `884f5f2b8a82ce30311cb4b4813883b0691800da69237723789ab1e788df29ef`）、`docs/deploy-params/wantos.env`（sha256 `15da2930c354c61266d08b4813f25eda666a417509c5bcd3f8c7a21a933e3a50`）；冻结后不得原地修改，要改须重新冻结、重算哈希。
 - 预测地址（两链相同）：时间锁 `0xf60D6D98E1878c7f499788c19efcD671d00d8aC4`、实现 `0x31BC1C89D0cB80C8f0e1b3d190cf8d096465d765`、桥代理 `0xe2fD0F2Ee8041Ff1bDA023e6Fca65ba889114AD5`。
 - 主网模拟（不广播）两链均成功，地址与预测一致：BSC 约 1078 万 gas、需 0.00054 BNB（余额 0.00306）；WANTOS 约 1052 万 gas、需 0.67 WANT（余额 2）。
 - WANTOS `supplyCeiling` 在 2026-11-02 读取时 totalSupply = 3000 万，上限 = 3001 万；部署前一刻须重读。
@@ -40,3 +40,7 @@ BSC `largeThreshold` 1,000 → 10,000；BSC `maxDepositPerTx` 2,000 → 20,000�
 ### 参数修改（第四版，负责人 2026-11-02：取消入金限制）
 
 入金（BSC 到 WANTOS）上限取消：合约里的范围上限是源码常量，已改源码——BSC `maxDepositPerTx` 上限 2 万 → **1000 万**，WANTOS `b2wDailyCap` 上限 20 万 → **1000 万**（`contracts/src`、`apps/admin-web/src/lib/params.ts`、DESIGN §5.5 同步）；部署初值均取 1000 万。新增 2 个边界测试（1000 万通过、多 1 wei 回滚；改回旧上限时会红）；合约测试 242 个全过，admin-web 85 个全过。出金限制不变（BSC 日额 5 万、单地址 2 万、大额阈值 2,000、延迟 12h）。`w2bPerAddrDailyCap` 2 万不变。哈希更新为第四版；预测地址不变（地址只取决于部署者和 nonce）。**合约字节码有改动，部署前须重新编译；未做外部审计。**
+
+### 参数修改（第五版，负责人 2026-11-02）
+
+WANTOS `b2wDailyCap`（每个 UTC 日的额度，非总额）上限 1000 万 → **1 亿**，部署初值取 1 亿（源码常量、admin-web 范围、DESIGN 表同步）。BSC `maxDepositPerTx` 仍 1000 万。合约测试 242 个全过、admin-web 85 个全过；新边界测试在旧上限下会红。`wantos.env` 哈希更新为第五版，`bsc.env` 不变；主网模拟 WANTOS 通过，地址与预测一致。
