@@ -11,6 +11,8 @@ export const stableStringify = (v: unknown): string =>
     return x;
   });
 
+const DISSENT_WINDOW = 20;
+
 export interface RpcEndpoint {
   label: string;
   client: PublicClient;
@@ -33,21 +35,28 @@ export class MultiRpc {
   ) {}
 
   /**
-   * r3 compromise: consecutive-dissent counter per RPC (no automatic eviction). A label whose answer
-   * differs from the largest group bumps its count; an answer agreeing with the outcome resets it.
+   * r3 compromise / r4: per-RPC dissent tracked over a sliding window of the last DISSENT_WINDOW
+   * recorded outcomes (no automatic eviction). Errors, null / empty answers are NEUTRAL (not recorded),
+   * so a stalled node that keeps "agreeing" on nothing cannot hide its dissent. `count` = dissents in window.
    */
   readonly dissent = new Map<string, { count: number; last: string }>();
+  private readonly history = new Map<string, boolean[]>();
+
+  private record(label: string, dissent: boolean, what?: string): void {
+    const h = this.history.get(label) ?? [];
+    h.push(dissent);
+    if (h.length > DISSENT_WINDOW) h.splice(0, h.length - DISSENT_WINDOW);
+    this.history.set(label, h);
+    const prev = this.dissent.get(label);
+    this.dissent.set(label, { count: h.filter(Boolean).length, last: dissent && what ? what : (prev?.last ?? "") });
+  }
 
   noteDissent(label: string, what: string): void {
-    const d = this.dissent.get(label) ?? { count: 0, last: "" };
-    d.count++;
-    d.last = what;
-    this.dissent.set(label, d);
+    this.record(label, true, what);
   }
 
   noteAgree(label: string): void {
-    const d = this.dissent.get(label);
-    if (d) d.count = 0;
+    this.record(label, false);
   }
 
   /** B5: remove a misconfigured endpoint (wrong chain / disagreeing static data). */
@@ -101,10 +110,14 @@ export class MultiRpc {
       const top = Math.max(...[...groups.values()].map((g) => g.n));
       const winners = [...groups.entries()].filter(([, g]) => g.n === top);
       const majority = winners.length === 1 ? winners[0]![0] : null; // a tie has no majority: everyone dissents
-      for (const a of answers) if (a.value !== undefined) (a.value === majority ? this.noteAgree(a.label) : this.noteDissent(a.label, what));
+      for (const a of answers) {
+        if (a.value === undefined) continue; // errors are neutral
+        if (a.value !== majority) this.noteDissent(a.label, what);
+        else if (a.value !== "null") this.noteAgree(a.label);
+      }
       return { ok: false, reason: "disagree", answers };
     }
-    for (const a of answers) if (a.value !== undefined) this.noteAgree(a.label);
+    for (const a of answers) if (a.value !== undefined && a.value !== "null") this.noteAgree(a.label);
     const only = [...groups.values()][0];
     if (only && only.n >= this.minAgree) return { ok: true, value: only.value, agree: only.n };
     return { ok: false, reason: "insufficient", answers };

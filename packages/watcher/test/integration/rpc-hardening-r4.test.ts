@@ -76,6 +76,27 @@ describe("round-4 hardening", () => {
     expect(again).toHaveLength(2);
   });
 
+  it("item 2: a stalled node is named by RPC_DISSENTING within 10 ticks; honest nodes are not", async () => {
+    let frozen: bigint | null = null;
+    const t = await makeWatcher(H, { endpoints: { bsc: three(stalledNode(H.bsc, () => frozen), "stalled") }, config: (c) => void (c.chains.bsc.maxLagBlocks = 5) });
+    await H.settle();
+    await t.w.tick();
+    frozen = (await H.bsc.pub.getBlock({ blockTag: "finalized" })).number;
+    const r = await forge(71n);
+    await H.settle();
+    t.clock.now = r.timestamp + 400;
+    await t.w.tick();
+    for (let i = 0; i < 10; i++) {
+      await H.bsc.mine(2);
+      t.clock.now += 300;
+      await t.w.tick();
+    }
+    const named = t.sink.alerts.filter((a) => a.code === "RPC_DISSENTING").map((a) => (a.detail["rpc"] as string));
+    expect(named).toContain("stalled");
+    expect(named).not.toContain("a");
+    expect(named).not.toContain("b");
+  });
+
   it("M5: a range that fails is retried from the same cursor and its Released still gets a check", async () => {
     let fail = false;
     const mk = () => tamperedClient(H.bsc, (m) => (fail && m === "eth_getLogs" ? { handled: true, result: new Error("down") } : { handled: false }));

@@ -514,7 +514,7 @@ export class Watcher {
       const missed = [...confirmedKeys].some((k) => !mine.has(k));
       const odd = [...union.entries()].some(([k, u]) => u.labels.has(label) && !confirmedKeys.has(k)) || dupes.some((d) => d["duplicatedBy"] === label);
       if (missed || odd) rpc.noteDissent(label, `getLogs ${from}-${to}`);
-      else rpc.noteAgree(label);
+      else if (value.length > 0) rpc.noteAgree(label); // r4: an empty answer agreeing on "nothing" is neutral
     }
     logs.sort((a, b) => (a.log.blockNumber! === b.log.blockNumber! ? a.log.logIndex! - b.log.logIndex! : a.log.blockNumber! < b.log.blockNumber! ? -1 : 1));
     // B2: apply the whole range atomically — on any error restore the pre-range state, so a retry

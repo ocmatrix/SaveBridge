@@ -67,6 +67,17 @@
 
 **Backlog（本 PR 不做）**：Verifier 存在性检查对落后节点改为「弃权」而非「不存在」（建议 6，见 POC-E2：一个只在回执上落后的 RPC 会让核对暂缓，由 `CHECK_OVERDUE` / `RPC_DISSENTING` 一级兜底）；`checkFutureVoid` / `checkLegacyNonces` / `checkGas` / `checkParams` / `checkClockSkew` 仍走单 RPC（只影响二级，噪声级，建议 8）。
 
+## 0d. GATE2 第 4 轮（有限复审）修复
+
+| 项 | 修复 | 回归测试（`test/integration/rpc-hardening-r4.test.ts`） |
+|---|---|---|
+| A-α | 区分两种未确认日志：(a) 上报的 RPC 少于 minAgree（单个说谎者可伪造）→ 保持折叠进二级 `RPC_DISAGREE`、不建 op；(b) ≥ minAgree 个 RPC 上报但内容有分歧（单个说谎者伪造不出来，"attested"）→ 不改状态、不建时间锁 op，但其一级含义以**一级 `EVENT_CONTESTED`** 发出（列出各版本与上报者） | ① RoleRevoked 被改 topics → 一级；② CallScheduled 被改 data → 一级且无 op；③ POC-F/G 仍无一级 |
+| 1 | 回滚重开已判定项时同时重新武装其 `autopause:` 键，再次自动暂停会再发 `AUTO_PAUSE` | `item 1 …` |
+| 2 | 异议改为最近 20 次记录的滑动窗口（窗口内 ≥ `rpcDissentThreshold` 次异议即点名）；报错 / null / 空 getLogs 结果为中性，不算同意，停滞节点不会靠「一起看不到东西」清零 | `item 2 …`（停滞节点 10 tick 内被点名，诚实节点不被点名） |
+| M5 | 测试：区段失败后从同一游标重试，区段内的 Released 最终建核对 | `M5 …` |
+
+**Backlog（本 PR 不做）**：B-2 全部 RPC 都说谎时 pending 无上限；B-4 越界区块号的日志；B-5 配置里重复 URL（同一节点被当成两个 RPC）。
+
 下文各节已按 v2 更新。
 
 ## 1. 文件
@@ -88,7 +99,7 @@
 | `config/watcher.example.json` | 配置示例：RPC 全是 `*.example.invalid` 占位；桥 / 时间锁 / 钱包地址为占位；只出现 DESIGN 中的主网地址（USDT、旧金库、旧付款程序） |
 | `config/controlled-set.example.json` | 附录 A 受控集合（22 条），可加载 |
 | `test/helpers/harness.ts` | 两条本地 anvil（BSC 本地 chainId 5600、`--slots-in-an-epoch 1` 使 `finalized = latest − 2`；WANTOS 本地 13500）+ 用 `out/*.json` 字节码按 §5.1 nonce 0/1/2 部署两链（地址相同）+ EIP-712 白名单批次 |
-| `test/unit/*`、`test/integration/*` | 161 个测试，见 §0、§0b、§8 |
+| `test/unit/*`、`test/integration/*` | 166 个测试，见 §0、§0b、§8 |
 
 依赖：只依赖 `@bridge/abi` 与 `viem`；**不依赖 `@bridge/relayer`，不读付款程序数据库**。
 
@@ -267,7 +278,7 @@ BSC   应有 = ΣFunded + ΣDeposited − ΣReleased − ΣDepositRefunded − �
 
 ## 8. 测试（DH L2）
 
-`pnpm -r typecheck` 通过；`pnpm -r test`：**16 个文件 / 161 个测试全部通过**（约 4 秒，两条本地 anvil）。变异重跑结果见 GATE2 第 2、3 次与最终报告。
+`pnpm -r typecheck` 通过；`pnpm -r test`：**17 个文件 / 166 个测试全部通过**（约 4 秒，两条本地 anvil）。变异重跑结果见 GATE2 第 2、3 次与最终报告。
 
 覆盖率（`vitest run --coverage`，`src/main.ts`、`src/index.ts` 除外）：语句 94.98%、分支 85.6%、函数 99.41%、行 96.55%。核心逻辑：`watcher.ts` 行 95.1% / 语句 94.3%，`verifier.ts` 行 98.6% / 语句 92.4%，`pauser.ts` 行 100% / 语句 93.9%，`rpc.ts` 100%，`alerts.ts` 100%。
 

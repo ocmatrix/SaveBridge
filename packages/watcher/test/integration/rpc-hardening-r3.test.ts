@@ -123,7 +123,7 @@ describe("round-3 hardening", () => {
   });
 
   describe("consensus compromise: no automatic eviction, but a persistently dissenting RPC is named (level 1) and the alert self-closes", () => {
-    it("RPC_DISSENTING after ≥5 consecutive dissents, naming the RPC; closed (acked) once it agrees again", async () => {
+    it("RPC_DISSENTING after ≥5 dissents in the recent window, naming the RPC; closed (acked) once it agrees again", async () => {
       let lie = true;
       const liar = tamperedClient(H.bsc, (m, p) => {
         if (!lie || m !== "eth_getBlockByNumber" || typeof p[0] !== "string" || !/^0x[0-9a-f]+$/.test(p[0] as string)) return { handled: false };
@@ -141,9 +141,13 @@ describe("round-3 hardening", () => {
       expect(JSON.stringify(a.detail)).toContain("bsc-liar");
       expect(t.w.state.meta.openLevel1[a.key!]).toBeDefined();
       lie = false;
-      await H.settle();
-      t.clock.now += 5;
-      await t.w.tick();
+      for (let i = 0; i < 25; i++) {
+        // r4: dissent is a sliding window of the last 20 outcomes — it closes once agreements dominate
+        await H.bsc.mine(1);
+        await H.settle();
+        t.clock.now += 5;
+        await t.w.tick();
+      }
       expect(t.w.state.meta.openLevel1[a.key!]).toBeUndefined(); // condition cleared → closed, no 24h repeats
       expect(t.w.state.meta.alertKeys[a.key!]).toBeUndefined();
     });
