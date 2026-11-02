@@ -83,15 +83,9 @@ describe("scanLegacy edge rules", () => {
     const p = { chainId: 56, txHash: tx("b"), logIndex: 0, to: R(3), amount: "10", srcTxHash: tx("a"), srcLogIndex: 0 };
     expect(scanLegacy({ orders: [base], payouts: [p] }, { cutoverT: T }).entries[0]!.note).toContain(R(3));
   });
-  it("an unlinked payout only flags orders with the same payee AND amount", () => {
-    const p = { chainId: 56, txHash: tx("b"), logIndex: 0, to: R(2), amount: "10.5" };
-    expect(scanLegacy({ orders: [base], payouts: [p] }, { cutoverT: T }).entries[0]!.status).toBe("PAYABLE");
-    const q = { ...p, to: R(3), amount: "10" };
+  it("an unlinked payout to another address does not flag the order", () => {
+    const q = { chainId: 56, txHash: tx("b"), logIndex: 0, to: R(3), amount: "10" };
     expect(scanLegacy({ orders: [base], payouts: [q] }, { cutoverT: T }).entries[0]!.status).toBe("PAYABLE");
-  });
-  it("the payout link must name the same logIndex", () => {
-    const p = { chainId: 56, txHash: tx("b"), logIndex: 0, to: R(2), amount: "10", srcTxHash: tx("a"), srcLogIndex: 1 };
-    expect(scanLegacy({ orders: [base], payouts: [p] }, { cutoverT: T }).entries[0]!.status).toBe("PAYABLE");
   });
   it("one second before T is payable", () => {
     expect(scanLegacy({ orders: [{ ...base, timestamp: T - 1 }], payouts: [] }, { cutoverT: T }).payable).toHaveLength(1);

@@ -84,7 +84,7 @@ describe("anvil drill (PR-1 contracts deployed locally)", () => {
     await lv.send(A.tokenDeployer, lv.token, encodeFunctionData({ abi: tokenAbi, functionName: "mint", args: [A.admin.address, m.total * 2n] }));
     await lv.send(A.admin, lv.token, encodeFunctionData({ abi: tokenAbi, functionName: "approve", args: [lv.vault, m.total * 2n] }));
     await lv.send(A.admin, lv.vault, encodeFunctionData({ abi: bscVaultV2Abi, functionName: "fund", args: [m.total * 2n] }));
-    const first = buildProposals(m, { timelock: lv.timelock, batchSize: 1 })[0]!;
+    const first = buildProposals(m, { timelock: lv.timelock, exclude: new Set([m.entries[1]!.oldKey]) })[0]!;
     await lv.send(A.admin, lv.timelock, first.scheduleCalldata);
     // second op: both rows (row 0 again + row 1)
     const both = buildProposals(m, { timelock: lv.timelock }, 7)[0]!;

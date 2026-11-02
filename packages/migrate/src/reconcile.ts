@@ -1,6 +1,6 @@
 import { bscVaultV2Abi } from "@bridge/abi";
 import { getAddress, type Address, type Hex, type PublicClient } from "viem";
-import { indexOldPayouts } from "./scan.js";
+import { indexOldPayouts, looseHit } from "./scan.js";
 import type { LegacyPaidEvent, Manifest, ManifestEntry, OldPayout } from "./types.js";
 
 export interface PreflightInput {
@@ -8,6 +8,11 @@ export interface PreflightInput {
   isLegacyPaid: (oldKey: Hex) => Promise<boolean>;
   /** Old-bridge payouts re-read right before execution (DESIGN §10: "每批放款前再查一次旧 BSC 金库"). */
   oldPayouts: OldPayout[];
+  /**
+   * oldKeys of every old order known (e.g. all orders the RPC loader returned). Payouts linked to an oldKey outside
+   * this set are "loose" and block any row whose address they paid. Default: only the rows being checked (strictest).
+   */
+  knownOrders?: ReadonlySet<string>;
 }
 
 export interface PreflightResult {
@@ -18,12 +23,14 @@ export interface PreflightResult {
 /** Run before `execute`: any blocker means do not execute (cancel the operation and re-propose without that row). */
 export async function preflightBatch(entries: ManifestEntry[], input: PreflightInput): Promise<PreflightResult> {
   const blockers: string[] = [];
-  const idx = indexOldPayouts(input.oldPayouts);
+  const known = new Set([...(input.knownOrders ?? []), ...entries.map((e) => e.oldKey)].map((k) => k.toLowerCase()));
+  const idx = indexOldPayouts(input.oldPayouts, known);
   for (const e of entries) {
     if (await input.isLegacyPaid(e.oldKey)) blockers.push(`${e.oldKey}: already paid on the new vault`);
-    const l = idx.linked.get(e.oldKey);
+    const l = idx.linked.get(e.oldKey.toLowerCase() as Hex);
     if (l) blockers.push(`${e.oldKey}: old bridge paid ${l.sum} for this order since the manifest was built`);
-    else if (idx.unlinked.has(`${e.to}|${e.amount}`)) blockers.push(`${e.oldKey}: unlinked old payout to ${e.to} of the same amount`);
+    const loose = looseHit(idx, e.srcTxHash, [e.to, e.srcRecipient]);
+    if (loose) blockers.push(`${e.oldKey}: ${loose}`);
   }
   return { ok: blockers.length === 0, blockers };
 }

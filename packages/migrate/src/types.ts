@@ -33,6 +33,8 @@ export interface OldPayout {
 export interface LegacySourceData {
   orders: SourceOrder[];
   payouts: OldPayout[];
+  /** Loader findings that need a human look (e.g. a payout spec that returned nothing). */
+  warnings?: string[];
 }
 
 export type ScanStatus =
@@ -43,7 +45,8 @@ export type ScanStatus =
   | "NEW_PAID" // legacyPaid[oldKey] already true on the new vault
   | "OLD_PAID" // a linked old-bridge payout covers the full amount
   | "OLD_PARTIAL" // a linked old-bridge payout covers part of it -> manual review
-  | "SUSPECT_PAID" // an unlinked old payout to the same payee with the same amount exists -> manual review
+  | "SUSPECT_PAID" // an old payout that is not linked to this order went to one of its addresses, or names its tx with another logIndex -> manual review
+  | "CONTROLLED_RECIPIENT" // payee / depositor / named recipient is in the controlled set (DESIGN Appendix A) -> manual review
   | "AFTER_T"; // initiated at or after the cut-over time T -> separate T+14d procedure
 
 export interface ScanEntry {
@@ -54,6 +57,8 @@ export interface ScanEntry {
   direction: Direction;
   timestamp: number;
   payee: Address;
+  /** Address the old event named as recipient (B2W: the WANTOS address; W2B: = payee). Watched for old payouts too. */
+  srcRecipient: Address;
   /** Payout amount in BSC-USDT wei (18 decimals); 0n when the amount is invalid. */
   amount: bigint;
   status: ScanStatus;
@@ -68,6 +73,8 @@ export interface ManifestEntry {
   srcLogIndex: number;
   direction: Direction;
   to: Address;
+  /** See ScanEntry.srcRecipient; published so the pre-execution check can watch it. */
+  srcRecipient: Address;
   amount: bigint;
 }
 

@@ -180,7 +180,7 @@ export function revertName(e: unknown): string {
 /** Re-targets a manifest's entries at another vault (the local drill vault). */
 export function retarget(m: Manifest, vault: Address, bscChainId: number): Manifest {
   return buildManifest(
-    m.entries.map((e) => ({ oldKey: e.oldKey, srcChainId: e.srcChainId, srcTxHash: e.srcTxHash, srcLogIndex: e.srcLogIndex, direction: e.direction, timestamp: 1, payee: e.to, amount: e.amount, status: "PAYABLE" as const })),
+    m.entries.map((e) => ({ oldKey: e.oldKey, srcChainId: e.srcChainId, srcTxHash: e.srcTxHash, srcLogIndex: e.srcLogIndex, direction: e.direction, timestamp: 1, payee: e.to, srcRecipient: e.srcRecipient, amount: e.amount, status: "PAYABLE" as const })),
     { bscChainId, vault, cutoverT: m.header.cutoverT },
   );
 }
@@ -197,10 +197,10 @@ export interface DrillReport {
   earlyExecuteRejectedWith: string;
 }
 
-export async function runDrill(lv: LocalVault, source: Manifest, oldPayouts: OldPayout[] = [], batchSize?: number): Promise<DrillReport> {
+export async function runDrill(lv: LocalVault, source: Manifest, oldPayouts: OldPayout[] = []): Promise<DrillReport> {
   const A = DRILL_ACCOUNTS;
   const m = retarget(source, lv.vault, LOCAL_CHAIN_ID);
-  const startBlock = await lv.pub.getBlockNumber();
+  const startBlock = await lv.pub.getBlockNumber({ cacheTime: 0 });
   // 1. fund the vault with exactly the manifest total
   await lv.send(A.tokenDeployer, lv.token, encodeFunctionData({ abi: tokenAbi, functionName: "mint", args: [A.admin.address, m.total] }));
   await lv.send(A.admin, lv.token, encodeFunctionData({ abi: tokenAbi, functionName: "approve", args: [lv.vault, m.total] }));
@@ -211,7 +211,7 @@ export async function runDrill(lv: LocalVault, source: Manifest, oldPayouts: Old
   const before = new Map(await Promise.all(recipients.map(async (r) => [r, await balance(r)] as const)));
 
   // 2. admin wallet schedules every batch; on-chain id must equal ours
-  const ps = buildProposals(m, { timelock: lv.timelock, ...(batchSize ? { batchSize } : {}) });
+  const ps = buildProposals(m, { timelock: lv.timelock });
   for (const p of ps) {
     await lv.send(A.admin, lv.timelock, p.scheduleCalldata);
     const id = await lv.pub.readContract({ address: lv.timelock, abi: bridgeTimelockAbi, functionName: "hashOperation", args: [p.target, p.value, p.payCalldata, p.predecessor, p.salt] });
@@ -258,7 +258,7 @@ export async function runDrill(lv: LocalVault, source: Manifest, oldPayouts: Old
   const reconcile = reconcileLegacy([m], await readLegacyPaid(lv.pub, lv.vault, startBlock));
 
   // 7. a second payment of an already-paid oldKey (fresh salt so the timelock accepts the proposal) must revert
-  const dup = buildProposals(m, { timelock: lv.timelock, batchSize: 1 }, 1)[0]!;
+  const dup = buildProposals(m, { timelock: lv.timelock, exclude: new Set(m.entries.slice(1).map((e) => e.oldKey)) }, 1)[0]!;
   await lv.send(A.admin, lv.timelock, dup.scheduleCalldata);
   await lv.increaseTime(48 * 3600 + 1);
   const pf = await preflightBatch(dup.entries, { isLegacyPaid: isPaid, oldPayouts });

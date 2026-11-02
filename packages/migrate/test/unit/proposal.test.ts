@@ -27,12 +27,22 @@ describe("buildProposals batching", () => {
     expect(ps.reduce((s, p) => s + p.total, 0n)).toBe(m250.total);
     expect(ps[2]!.total).toBe(m250.entries.slice(200).reduce((s, e) => s + e.amount, 0n));
   });
-  it("custom smaller batch size; > 100 / < 1 / non-integer refused; delay < 48h refused", () => {
-    expect(buildProposals(m250, { timelock: TIMELOCK, batchSize: 30 }).map((p) => p.count)).toEqual([30, 30, 30, 30, 30, 30, 30, 30, 10]);
-    for (const b of [0, 101, 2.5]) expect(() => buildProposals(m250, { timelock: TIMELOCK, batchSize: b })).toThrow(/batchSize/);
+  it("delay < 48h refused; longer delay kept; batches are always 100", () => {
     expect(() => buildProposals(m250, { timelock: TIMELOCK, delay: MIN_DELAY - 1n })).toThrow(/48h/);
     expect(buildProposals(m250, { timelock: TIMELOCK, delay: MIN_DELAY + 5n })[0]!.delay).toBe(MIN_DELAY + 5n);
     expect(MAX_LEGACY_BATCH).toBe(100);
+  });
+  it("exclude: blocked rows are left out, the rest re-batched; unknown or all-excluded refused", () => {
+    const ex = new Set([m250.entries[0]!.oldKey, m250.entries[150]!.oldKey.toUpperCase().replace("0X", "0x")]);
+    const ps = buildProposals(m250, { timelock: TIMELOCK, exclude: ex }, 1);
+    expect(ps.map((p) => p.count)).toEqual([100, 100, 48]);
+    const keys = ps.flatMap((p) => p.entries.map((e) => e.oldKey));
+    expect(keys).toEqual(m250.entries.filter((_, i) => i !== 0 && i !== 150).map((e) => e.oldKey));
+    expect(ps.reduce((s, p) => s + p.total, 0n)).toBe(m250.total - m250.entries[0]!.amount - m250.entries[150]!.amount);
+    expect(() => buildProposals(m250, { timelock: TIMELOCK, exclude: new Set([`0x${"9".repeat(64)}`]) })).toThrow(/not in the manifest/);
+    expect(() => buildProposals(m250, { timelock: TIMELOCK, exclude: new Set(m250.entries.map((e) => e.oldKey)) })).toThrow(/nothing to propose/);
+    // every excluded-run batch still passes the whitelist-wallet check (subset of the manifest)
+    for (const p of ps) expect(verifyScheduledCall({ target: VAULT, value: 0n, data: p.payCalldata, predecessor: zeroHash, delay: MIN_DELAY }, m250).ok).toBe(true);
   });
   it("payLegacyCalldata refuses empty or > 100", () => {
     expect(() => payLegacyCalldata([])).toThrow();
@@ -105,6 +115,8 @@ describe("verifyScheduledCall (whitelist-wallet check of CallScheduled)", () => 
     ["unknown oldKey", { data: pay([`0x${"9".repeat(64)}`], [e0.to], [e0.amount]) }, /not in the published manifest/],
     ["recipient swapped", { data: pay([e0.oldKey], [R(999)], [e0.amount]) }, /recipient/],
     ["amount inflated by 1 wei", { data: pay([e0.oldKey], [e0.to], [e0.amount + 1n]) }, /amount/],
+    ["amount short by 1 wei (N03)", { data: pay([e0.oldKey], [e0.to], [e0.amount - 1n]) }, /amount/],
+    ["recipient differs only in the last byte (N04)", { data: pay([e0.oldKey], [getAddress(`${e0.to.slice(0, 40)}${((parseInt(e0.to.slice(40), 16) + 1) % 256).toString(16).padStart(2, "0")}`.toLowerCase())], [e0.amount]) }, /recipient/],
     ["same oldKey twice", { data: pay([e0.oldKey, e0.oldKey], [e0.to, e0.to], [e0.amount, e0.amount]) }, /duplicate oldKey/],
     ["length mismatch", { data: pay([e0.oldKey, e1.oldKey], [e0.to], [e0.amount, e1.amount]) }, /lengths differ/],
     ["empty batch", { data: pay([], [], []) }, /batch size 0/],

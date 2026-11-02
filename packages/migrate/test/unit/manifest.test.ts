@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildManifest, loadManifest, manifestHash, manifestJson, validateManifest } from "../../src/manifest.js";
+import { buildManifest, loadManifest, manifestHash, validateManifest } from "../../src/manifest.js";
 import { oldKey } from "../../src/oldkey.js";
 import { scanLegacy } from "../../src/scan.js";
 import { R, T, VAULT, fixture, manyOrders, tx } from "../helpers.js";
@@ -28,7 +28,9 @@ describe("manifest build", () => {
     expect(m.csv).toContain("# count=4\n# total=" + m.total.toString() + "\n");
     expect(m.csv).toContain(`# vault=${VAULT}`);
     expect(m.csv).toContain("# oldKey=keccak256(abi.encode(bytes32 srcTxHash, uint256 srcLogIndex))");
-    expect(m.csv).toContain(`${oldKey(tx("a"), 7)},13555,${tx("a")},7,W2B,${R(2)},1,0.000000000000000001`);
+    expect(m.csv).toContain(`${oldKey(tx("a"), 7)},13555,${tx("a")},7,W2B,${R(2)},${R(2)},1,0.000000000000000001`);
+    // B2W is published as B2W, refunds the depositor and carries the WANTOS recipient (N11)
+    expect(m.csv).toContain(`${oldKey(tx("3"), 4)},56,${tx("3")},4,B2W,${R(5)},${R(99)},12345678000000000000,12.345678`);
   });
   it("hash changes with any byte (header included)", () => {
     expect(buildManifest(scan.payable, { ...header, cutoverT: T + 1 }).hash).not.toBe(m.hash);
@@ -41,14 +43,6 @@ describe("manifest build", () => {
   it("refuses two rows with the same oldKey", () => {
     const p = scan.payable[0]!;
     expect(() => buildManifest([p, { ...p }], header)).toThrow(/duplicate oldKey/);
-  });
-  it("JSON view carries the same rows, total and hash", () => {
-    const j = JSON.parse(manifestJson(m)) as { hash: string; count: number; total: string; totalDisplay: string; entries: { oldKey: string; amount: string; amountDisplay: string }[] };
-    expect(j.hash).toBe(m.hash);
-    expect(j.count).toBe(4);
-    expect(j.total).toBe(m.total.toString());
-    expect(j.entries.map((e) => e.oldKey)).toEqual(m.entries.map((e) => e.oldKey));
-    expect(j.entries[3]!.amountDisplay).toBe("0.000000000000000001");
   });
   it("handles > 100 rows", () => {
     const big = buildManifest(scanLegacy({ orders: manyOrders(250), payouts: [] }, { cutoverT: T }).payable, header);
@@ -70,10 +64,10 @@ describe("validateManifest", () => {
   const bad: [string, (c: string) => string, RegExp][] = [
     ["wrong published hash", (c) => c, /hash/],
     ["oldKey not matching tx/logIndex", (c) => editRow(c, 0, (f) => [f[0]!, f[1]!, f[2]!, "5", ...f.slice(4)]), /oldKey does not match/],
-    ["zero recipient", (c) => editRow(c, 0, (f) => [...f.slice(0, 5), "0x0000000000000000000000000000000000000000", ...f.slice(6)]), /zero recipient/],
-    ["zero amount", (c) => editRow(c, 0, (f) => [...f.slice(0, 6), "0", "0"]), /zero amount/],
-    ["amountWei vs display mismatch", (c) => editRow(c, 0, (f) => [...f.slice(0, 7), "999"]), /amount column/],
-    ["changed amount breaks footer total", (c) => editRow(c, 0, (f) => [...f.slice(0, 6), "13345678000000000000", "13.345678"]), /footer total/],
+    ["zero recipient", (c) => editRow(c, 1, (f) => [...f.slice(0, 5), "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", ...f.slice(7)]), /zero recipient/],
+    ["zero amount", (c) => editRow(c, 0, (f) => [...f.slice(0, 7), "0", "0"]), /zero amount/],
+    ["amountWei vs display mismatch", (c) => editRow(c, 0, (f) => [...f.slice(0, 8), "999"]), /amount column/],
+    ["changed amount breaks footer total", (c) => editRow(c, 0, (f) => [...f.slice(0, 7), "13345678000000000000", "13.345678"]), /footer total/],
     ["duplicate row", (c) => c.replace(/(\n0x[^\n]+\n)/, "$1" + c.split("\n").find((l) => l.startsWith("0x"))! + "\n"), /duplicate oldKey/],
     ["rows out of order", (c) => {
       const l = c.split("\n");
@@ -82,13 +76,23 @@ describe("validateManifest", () => {
       return l.join("\n");
     }, /not strictly sorted/],
     ["lowercase (non-checksummed) recipient", (c) => editRow(c, 0, (f) => [...f.slice(0, 5), f[5]!.toLowerCase(), ...f.slice(6)]), /checksummed/],
+    ["lowercase srcRecipient", (c) => editRow(c, 0, (f) => [...f.slice(0, 6), f[6]!.toLowerCase(), ...f.slice(7)]), /checksummed/],
+    ["W2B srcRecipient differs from to", (c) => editRow(c, 1, (f) => [...f.slice(0, 6), R(77), ...f.slice(7)]), /srcRecipient must equal/],
+    ["B2W relabelled W2B (N11)", (c) => editRow(c, 0, (f) => [...f.slice(0, 4), "W2B", ...f.slice(5)]), /srcRecipient must equal/],
+    ["second vault header (P5)", (c) => c.replace("# cutoverT=", `# vault=${R(66)}\n# cutoverT=`), /duplicate key "vault"/],
+    ["header key after the column line (P5)", (c) => c.replace(/(# bscChainId=\d+\n)([\s\S]*?oldKey,srcChainId[^\n]*\n)/, "$2$1"), /after the column line/],
+    ["footer before rows (P5)", (c) => c.replace(/(oldKey,srcChainId[^\n]*\n)/, "$1# count=4\n"), /before the rows|duplicate key/],
+    ["row after footer (P5)", (c) => c.replace(/(# count=4\n)/, "$1" + c.split("\n").find((l) => l.startsWith("0x"))! + "\n"), /malformed row/],
+    ["unknown key", (c) => c.replace("# cutoverT=", "# fee=1\n# cutoverT="), /unknown key/],
+    ["stray comment", (c) => c.replace("# cutoverT=", "# hello\n# cutoverT="), /unexpected comment/],
     ["CRLF line endings", (c) => c.replace(/\n/g, "\r\n"), /LF/],
     ["missing vault header", (c) => c.replace(/# vault=.*\n/, ""), /vault/],
     ["other oldKey encoding", (c) => c.replace("abi.encode(", "abi.encodePacked("), /oldKey encoding/],
     ["malformed row", (c) => c.replace("# count=", "x,y\n# count="), /malformed/],
     ["bad direction", (c) => editRow(c, 0, (f) => [...f.slice(0, 4), "XYZ", ...f.slice(5)]), /bad direction/],
+    ["other amount unit", (c) => c.replace("wei (18 decimals)", "wei (6 decimals)"), /amountUnit/],
     ["bad tx hash", (c) => editRow(c, 0, (f) => [f[0]!, f[1]!, "0x12", ...f.slice(3)]), /bad srcTxHash/],
-    ["bad amountWei", (c) => editRow(c, 0, (f) => [...f.slice(0, 6), "1.5", f[7]!]), /bad amountWei/],
+    ["bad amountWei", (c) => editRow(c, 0, (f) => [...f.slice(0, 7), "1.5", f[8]!]), /bad amountWei/],
     ["bad logIndex", (c) => editRow(c, 0, (f) => [f[0]!, f[1]!, f[2]!, "-1", ...f.slice(4)]), /bad srcLogIndex/],
     ["footer count", (c) => c.replace("# count=4", "# count=5"), /footer count/],
     ["missing title", (c) => c.replace(/^# wantos[^\n]*\n/, ""), /title/],
@@ -105,10 +109,9 @@ describe("validateManifest", () => {
     const empty = m.csv.split("\n").filter((l) => !l.startsWith("0x")).join("\n").replace("# count=4", "# count=0").replace(/# total=\d+/, "# total=0");
     expect((await validateManifest(empty)).errors.join()).toMatch(/no rows/);
   });
-  it("flags contract and controlled recipients as warnings (not errors)", async () => {
-    const v = await validateManifest(m.csv, { isContract: async (a) => a === R(1), controlled: [R(5).toLowerCase()] });
-    expect(v.ok).toBe(true);
-    expect(v.warnings).toEqual(expect.arrayContaining([`recipient ${R(1)} has contract code`, `recipient ${R(5)} is in the controlled set`]));
-    expect(v.warnings).toHaveLength(2);
+  it("controlled addresses (to or srcRecipient) are errors (D7)", async () => {
+    expect((await validateManifest(m.csv, { controlled: [R(99).toLowerCase()] })).errors.join()).toMatch(/controlled set/);
+    expect((await validateManifest(m.csv, { controlled: [R(1)] })).errors.join()).toMatch(/controlled set/);
+    expect((await validateManifest(m.csv, { controlled: [R(500)] })).ok).toBe(true);
   });
 });

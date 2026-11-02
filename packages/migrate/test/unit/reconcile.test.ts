@@ -57,15 +57,15 @@ describe("preflightBatch", () => {
     expect(r.ok).toBe(false);
     expect(r.blockers).toEqual([`${k}: already paid on the new vault`]);
   });
-  it("blocks rows the old bridge paid since the manifest (linked or same payee+amount)", async () => {
+  it("blocks rows the old bridge paid since the manifest (linked, or any loose payout to the row address)", async () => {
     const e = m.entries[0]!;
     const linked = { chainId: 56, txHash: tx("7"), logIndex: 0, to: e.to, amount: "1", srcTxHash: e.srcTxHash, srcLogIndex: e.srcLogIndex };
     expect((await preflightBatch(m.entries, { isLegacyPaid: none, oldPayouts: [linked] })).blockers.join()).toMatch(/old bridge paid/);
     const f = m.entries[2]!;
     const unlinked = { chainId: 56, txHash: tx("8"), logIndex: 0, to: f.to, amount: "3.25" };
     expect(f.amount).toBe(325n * 10n ** 16n);
-    expect((await preflightBatch(m.entries, { isLegacyPaid: none, oldPayouts: [unlinked] })).blockers.join()).toMatch(/unlinked old payout/);
-    const other = { ...unlinked, amount: "3.26" };
+    expect((await preflightBatch(m.entries, { isLegacyPaid: none, oldPayouts: [unlinked] })).blockers.join()).toMatch(/not linked to this order went to/);
+    const other = { ...unlinked, to: R(4000) };
     expect((await preflightBatch(m.entries, { isLegacyPaid: none, oldPayouts: [other] })).ok).toBe(true);
   });
 });

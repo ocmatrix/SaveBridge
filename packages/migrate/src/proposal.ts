@@ -11,10 +11,10 @@ export const SALT_DOMAIN = "WANTOS-BRIDGE-V2-LEGACY";
 
 export interface ProposalOptions {
   timelock: Address;
-  /** ≤ 100 (default 100). */
-  batchSize?: number;
   /** ≥ 48h (default 48h). */
   delay?: bigint;
+  /** oldKeys left out (e.g. rows blocked by the preflight; re-propose the rest with a new round). */
+  exclude?: ReadonlySet<string>;
 }
 
 export interface LegacyProposal {
@@ -51,17 +51,21 @@ export function payLegacyCalldata(entries: ManifestEntry[]): Hex {
   return encodeFunctionData({ abi: bscVaultV2Abi, functionName: "payLegacyBatch", args: [entries.map((e) => e.oldKey), entries.map((e) => e.to), entries.map((e) => e.amount)] });
 }
 
-/** Splits the manifest in its published order into batches of ≤ batchSize and builds one timelock operation per batch. */
+/** Splits the manifest (minus `exclude`) in its published order into batches of 100 and builds one timelock operation per batch. */
 export function buildProposals(m: Manifest, opts: ProposalOptions, round = 0): LegacyProposal[] {
-  const size = opts.batchSize ?? MAX_LEGACY_BATCH;
-  if (!Number.isInteger(size) || size < 1 || size > MAX_LEGACY_BATCH) throw new Error(`batchSize must be 1..${MAX_LEGACY_BATCH}`);
+  const size = MAX_LEGACY_BATCH;
+  const exclude = new Set([...(opts.exclude ?? [])].map((k) => k.toLowerCase()));
+  const known = new Set(m.entries.map((e) => e.oldKey.toLowerCase()));
+  for (const k of exclude) if (!known.has(k)) throw new Error(`excluded oldKey ${k} is not in the manifest`);
+  const rows = m.entries.filter((e) => !exclude.has(e.oldKey.toLowerCase()));
+  if (rows.length === 0) throw new Error("nothing to propose");
   const delay = opts.delay ?? MIN_DELAY;
   if (delay < MIN_DELAY) throw new Error("delay below 48h");
   const target = getAddress(m.header.vault);
   const timelock = getAddress(opts.timelock);
   const out: LegacyProposal[] = [];
-  for (let i = 0, b = 0; i < m.entries.length; i += size, b++) {
-    const entries = m.entries.slice(i, i + size);
+  for (let i = 0, b = 0; i < rows.length; i += size, b++) {
+    const entries = rows.slice(i, i + size);
     const payCalldata = payLegacyCalldata(entries);
     const salt = legacySalt(m.hash, b, round);
     out.push({
@@ -81,7 +85,7 @@ export function buildProposals(m: Manifest, opts: ProposalOptions, round = 0): L
       executeCalldata: encodeFunctionData({ abi: bridgeTimelockAbi, functionName: "execute", args: [target, 0n, payCalldata, zeroHash, salt] }),
     });
   }
-  if (out.reduce((s, p) => s + p.total, 0n) !== m.total) throw new Error("batches do not add up to the manifest total");
+  if (out.reduce((s, p) => s + p.total, 0n) !== rows.reduce((s, e) => s + e.amount, 0n)) throw new Error("batches do not add up");
   return out;
 }
 
@@ -143,7 +147,7 @@ export function verifyScheduledCall(call: ScheduledCall, m: Manifest): CallCheck
 export function renderProposals(m: Manifest, ps: LegacyProposal[]): string {
   const lines = [
     `legacy payout proposals  manifest=${m.hash}`,
-    `vault=${m.header.vault} bscChainId=${m.header.bscChainId} entries=${m.count} total=${formatAmount(m.total)} USDT batches=${ps.length}`,
+    `vault=${m.header.vault} bscChainId=${m.header.bscChainId} manifestEntries=${m.count} manifestTotal=${formatAmount(m.total)} USDT proposedEntries=${ps.reduce((s, p) => s + p.count, 0)} batches=${ps.length}`,
   ];
   for (const p of ps) {
     lines.push("", `batch ${p.index}: ${p.count} entries, ${formatAmount(p.total)} USDT`, `  operationId=${p.operationId}`, `  salt=${p.salt}  delay=${p.delay}s  timelock=${p.timelock}`);

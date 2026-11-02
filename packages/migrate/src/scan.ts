@@ -8,6 +8,8 @@ export interface ScanOptions {
   cutoverT: number;
   /** oldKeys already paid on the new vault (`legacyPaid(oldKey) == true` or a `LegacyPaid` event). */
   alreadyPaid?: ReadonlySet<string>;
+  /** Controlled-source addresses (DESIGN Appendix A). Orders touching them are CONTROLLED_RECIPIENT. */
+  controlled?: Iterable<string>;
 }
 
 export interface ScanResult {
@@ -17,8 +19,10 @@ export interface ScanResult {
   payable: ScanEntry[];
   /** Identical duplicate events dropped (orders + payouts). */
   duplicatesDropped: number;
-  /** Linked old payouts whose source order is not in the input (reported, not used). */
+  /** Linked old payouts whose source order is not in the input (reported; they also count as unlinked payouts). */
   orphanPayouts: OldPayout[];
+  /** Loader warnings passed through. */
+  warnings: string[];
 }
 
 function addr(a: unknown, what: string): Address {
@@ -41,7 +45,10 @@ export function compareSrc(a: { srcChainId: number; srcTxHash: string; srcLogInd
 interface NormOrder {
   key: Hex;
   o: SourceOrder;
+  from: Address;
   payee: Address;
+  /** recipient named by the old event (or `from`). */
+  named: Address;
   canon: string;
 }
 
@@ -54,10 +61,11 @@ function normOrder(o: SourceOrder): NormOrder {
   const from = addr(o.from, "from");
   // W2B pays the BSC recipient the user named (or the sender when the old event has no recipient);
   // B2W refunds the BSC depositor itself.
-  const payee = o.direction === "W2B" && o.recipient !== undefined ? addr(o.recipient, "recipient") : from;
+  const named = o.recipient !== undefined ? addr(o.recipient, "recipient") : from;
+  const payee = o.direction === "W2B" ? named : from;
   const key = oldKey(o.txHash, o.logIndex);
-  const canon = JSON.stringify([o.srcChainId, o.timestamp, o.direction, from, payee, o.amount]);
-  return { key, o, payee, canon };
+  const canon = JSON.stringify([o.srcChainId, o.timestamp, o.direction, from, named, o.amount]);
+  return { key, o, from, payee, named, canon };
 }
 
 export function scanLegacy(data: LegacySourceData, opts: ScanOptions): ScanResult {
@@ -77,15 +85,14 @@ export function scanLegacy(data: LegacySourceData, opts: ScanOptions): ScanResul
     orders.set(n.key, n);
   }
 
-  // 2. old payouts: dedupe, then index linked sums and unlinked (payee|amount).
-  const idx = indexOldPayouts(data.payouts);
+  // 2. old payouts: dedupe, index linked sums; payouts not linked to a known order are "loose".
+  const idx = indexOldPayouts(data.payouts, new Set(orders.keys()));
   duplicatesDropped += idx.duplicatesDropped;
-  const { linked, unlinked } = idx;
-  const orphanPayouts = idx.linkedPayouts.filter(([k]) => !orders.has(k)).map(([, p]) => p);
+  const controlled = new Set([...(opts.controlled ?? [])].map((a) => a.toLowerCase()));
 
   // 3. classify.
   const entries: ScanEntry[] = [];
-  for (const { key, o, payee } of orders.values()) {
+  for (const { key, o, from, payee, named } of orders.values()) {
     let amount = 0n;
     let status: ScanStatus = "PAYABLE";
     let note: string | undefined;
@@ -95,40 +102,63 @@ export function scanLegacy(data: LegacySourceData, opts: ScanOptions): ScanResul
       status = "INVALID_AMOUNT";
       note = (e as Error).message;
     }
-    const l = linked.get(key);
+    const l = idx.linked.get(key);
+    const loose = looseHit(idx, o.txHash, [payee, named]);
     if (status !== "PAYABLE") {
       /* keep INVALID_AMOUNT */
     } else if (payee === zeroAddress) status = "INVALID_ZERO_ADDRESS";
     else if (amount === 0n) status = "INVALID_ZERO_AMOUNT";
     else if (opts.alreadyPaid?.has(key)) status = "NEW_PAID";
+    else if ([from, payee, named].some((a) => controlled.has(a.toLowerCase()))) status = "CONTROLLED_RECIPIENT";
     else if (l && l.sum >= amount) {
       status = "OLD_PAID";
       if (!l.to.has(payee) || l.to.size > 1) note = `old payout went to ${[...l.to].join(",")}`;
     } else if (l) {
       status = "OLD_PARTIAL";
       note = `old bridge paid ${l.sum} of ${amount}`;
-    } else if (unlinked.has(`${payee}|${amount}`)) status = "SUSPECT_PAID";
-    else if (o.timestamp >= opts.cutoverT) status = "AFTER_T";
-    entries.push({ oldKey: key, srcChainId: o.srcChainId, srcTxHash: o.txHash.toLowerCase() as Hex, srcLogIndex: o.logIndex, direction: o.direction, timestamp: o.timestamp, payee, amount, status, ...(note ? { note } : {}) });
+    } else if (loose) {
+      status = "SUSPECT_PAID";
+      note = loose;
+    } else if (o.timestamp >= opts.cutoverT) status = "AFTER_T";
+    entries.push({ oldKey: key, srcChainId: o.srcChainId, srcTxHash: o.txHash.toLowerCase() as Hex, srcLogIndex: o.logIndex, direction: o.direction, timestamp: o.timestamp, payee, srcRecipient: named, amount, status, ...(note ? { note } : {}) });
   }
   entries.sort(compareSrc);
-  return { entries, payable: entries.filter((e) => e.status === "PAYABLE"), duplicatesDropped, orphanPayouts };
+  return { entries, payable: entries.filter((e) => e.status === "PAYABLE"), duplicatesDropped, orphanPayouts: idx.orphans, warnings: [...(data.warnings ?? [])] };
+}
+
+/**
+ * A "loose" old payout (unlinked, or linked to an order we do not know) is a reason for manual review when it
+ * went to any address of this order (any amount — the old bridge may have taken a fee), or when it names this
+ * order's tx with another logIndex. Returns the reason, or null.
+ */
+export function looseHit(idx: OldPayoutIndex, txHash: string, addrs: Address[]): string | null {
+  if (idx.looseSrcTx.has(txHash.toLowerCase())) return `an old payout is linked to ${txHash.toLowerCase()} with another logIndex`;
+  const hit = addrs.find((a) => idx.looseTo.has(a));
+  return hit ? `an old payout not linked to this order went to ${hit}` : null;
 }
 
 export interface OldPayoutIndex {
+  /** Payouts linked to a known order: sum and recipients per oldKey. */
   linked: Map<Hex, { sum: bigint; to: Set<string> }>;
-  /** `${checksummedTo}|${amountWei}` of payouts without a source link. */
-  unlinked: Set<string>;
-  linkedPayouts: [Hex, OldPayout][];
+  /** Recipients (checksummed) of loose payouts: unlinked, or linked to an unknown order. */
+  looseTo: Set<string>;
+  /** Lower-case srcTxHash of payouts linked to an unknown order (same tx, other logIndex = suspect). */
+  looseSrcTx: Set<string>;
+  /** Linked payouts whose order is unknown. */
+  orphans: OldPayout[];
   duplicatesDropped: number;
 }
 
-/** Dedupes old-bridge payouts by (chainId, txHash, logIndex) — conflicting duplicates are fatal — and indexes them. */
-export function indexOldPayouts(payouts: OldPayout[]): OldPayoutIndex {
+/**
+ * Dedupes old-bridge payouts by (chainId, txHash, logIndex) — conflicting duplicates are fatal — and indexes them.
+ * A payout linked to an oldKey outside `knownOrders` is treated as loose (never silently ignored).
+ */
+export function indexOldPayouts(payouts: OldPayout[], knownOrders: ReadonlySet<string>): OldPayoutIndex {
   const seen = new Map<string, string>();
   const linked = new Map<Hex, { sum: bigint; to: Set<string> }>();
-  const unlinked = new Set<string>();
-  const linkedPayouts: [Hex, OldPayout][] = [];
+  const looseTo = new Set<string>();
+  const looseSrcTx = new Set<string>();
+  const orphans: OldPayout[] = [];
   let duplicatesDropped = 0;
   for (const p of payouts) {
     if (!isTxHash(p.txHash)) throw new Error(`bad payout txHash ${String(p.txHash)}`);
@@ -146,15 +176,18 @@ export function indexOldPayouts(payouts: OldPayout[]): OldPayoutIndex {
       continue;
     }
     seen.set(id, canon);
-    if (link) {
-      linkedPayouts.push([link, p]);
+    if (link && knownOrders.has(link)) {
       const l = linked.get(link) ?? { sum: 0n, to: new Set<string>() };
       l.sum += amount;
       l.to.add(to);
       linked.set(link, l);
-    } else {
-      unlinked.add(`${to}|${amount}`);
+      continue;
+    }
+    looseTo.add(to);
+    if (link) {
+      orphans.push(p);
+      looseSrcTx.add((p.srcTxHash as string).toLowerCase());
     }
   }
-  return { linked, unlinked, linkedPayouts, duplicatesDropped };
+  return { linked, looseTo, looseSrcTx, orphans, duplicatesDropped };
 }
