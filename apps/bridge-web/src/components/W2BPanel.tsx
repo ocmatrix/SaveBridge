@@ -11,7 +11,7 @@ import { NetworkPrompt } from "./NetworkPrompt";
 import { useFlow } from "./useFlow";
 import { PendingTx, StepLine } from "./StepLine";
 import { WalletNote } from "./WalletNote";
-import { formatUnits } from "viem";
+import { formatUnits, getAddress } from "viem";
 
 /** First reason the bridge-out button is disabled, or null. */
 export function w2bBlocker(st: BridgeState): I18nKey | null {
@@ -105,7 +105,7 @@ export function W2BPanel({ state, onOrder, wallet, onFlip }: { state: BridgeStat
         side="to"
         tone="bsc"
         chainName={cfg.bsc.name}
-        top={address ? <span>{t("swap.recipient")} {short(address)}</span> : null}
+        top={address ? <span>{t("swap.recipient")} {short(getAddress(address))}</span> : null}
         inputLabel={t("amount.receive")}
         value={amountText}
         readOnly
