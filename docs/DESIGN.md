@@ -211,7 +211,7 @@ event WhitelistUpdated(address indexed addr, bool allowed, bytes32 indexed listH
 - 负责人签名前，用**离线核对工具**（§8.3）算出 `listHash`、`count`，以及最终的 EIP-712 domain hash 和 message hash，无论硬件钱包显示什么，都能比对。
 - 每批在两条链上各签一次。**写入顺序**：添加先 BSC 后 WANTOS；移除先 WANTOS 后 BSC。
 - 每批变更实时推送给负责人，另有每日变更报告（含管理钱包的紧急移除），由负责人定期巡查。
-- **地址被移除时的在途订单**：订单创建之后出现过移除事件、且当前仍不在白名单 → REJECTED（走退款）；只是另一条链还没写入 → WAITING，30 分钟未一致告警。
+- **地址被移除时的在途订单**：订单创建之后出现过移除事件、且当前仍不在白名单 → 先进入 REVIEW（`whitelist_removed`，审核级），由负责人签名拒绝后才 REJECTED（走退款）（用户 2026-11-02 确认：以 PR-3 实现为准；多一道人工确认，防止误移除导致在途订单被自动退回）；只是另一条链还没写入 → WAITING，30 分钟未一致告警。
 
 ### 4.5 白名单钱包交接与恢复
 
