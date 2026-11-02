@@ -118,6 +118,35 @@ describe("whitelist batch write (two chains, §4.4 order)", () => {
     expect(await readWhitelisted(w.chains.bsc, list)).toEqual([false]);
   });
 
+  it("shouldStop layers: a stop that arrives before signing never opens the wallet; a stop at the start reads nothing", async () => {
+    const s = localSigner(w, w.act.wl);
+    const list = addrs("sl", 1);
+    const job0 = await prepareJob(w.chains, list, true, await deadline());
+    // count chain reads of whitelisted()
+    let reads = 0;
+    const counting = (c: typeof w.chains.bsc) => ({
+      ...c,
+      client: new Proxy(c.client, {
+        get(t, k, r) {
+          if (k === "readContract") return (a: { functionName: string }) => ((a.functionName === "whitelisted" && reads++), (t.readContract as (x: unknown) => Promise<unknown>)(a));
+          return Reflect.get(t, k, r);
+        },
+      }),
+    });
+    const chains = { bsc: counting(w.chains.bsc), wantos: counting(w.chains.wantos) } as typeof w.chains;
+    // 1) stop already set when the run starts → no chain reads at all
+    s.log.length = 0;
+    await runJob(job0, { chains, signer: s, shouldStop: () => true });
+    expect(reads).toBe(0);
+    expect(s.log).toEqual([]);
+    // 2) stop arrives after the chain reads but before signing (2nd check) → the wallet is never asked
+    let calls = 0;
+    const j = await runJob(job0, { chains, signer: s, shouldStop: () => ++calls >= 2 });
+    expect(reads).toBeGreaterThan(0);
+    expect(s.log).toEqual([]);
+    expect(j.runs.bsc.status).toBe("pending");
+  });
+
   it("a non-whitelist wallet cannot write: contract rejects the signature (InvalidSigner), nothing changes", async () => {
     for (const who of [w.act.stranger, w.act.admin]) {
       const s = localSigner(w, who);

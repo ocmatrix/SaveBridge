@@ -37,7 +37,7 @@
 ```
 node offline-check.mjs list.csv --action add --contract 0x<桥> \
      --bsc-nonce N --wantos-nonce M --deadline <unix> [--bsc-chain-id 56] [--wantos-chain-id 13555] \
-     [--batch-size 500] [--expect-list-hash 0x<屏幕上的>] [--list] [--json]
+     [--batch K] [--expect-list-hash 0x<屏幕上的>] [--list] [--json]
 node offline-check.mjs --decode 0x<calldata>
 ```
 
@@ -45,7 +45,7 @@ node offline-check.mjs --decode 0x<calldata>
 
 输出与合约完全一致（PR1-NOTES §5.4；两个 typehash 已用测试钉死）：`listHash = keccak256(abi.encode(address[]))`；domain name `BscVaultV2` / `WantosBridgeV2`、version `1`；message hash = structHash；digest = `keccak256(0x1901‖domain‖message)`。退出码：0 一致 / 1 文件错误 / 2 与屏幕 listHash 不一致 / 64 参数错误。文本与 `--json` 两种输出用同一个判定（第 1 轮 B8）。
 
-**参数严格校验（第 1 轮 A3，fail-closed）**：只接受 `--action --contract --bsc-nonce --wantos-nonce --deadline --bsc-chain-id --wantos-chain-id --batch-size --batch --expect-list-hash --decode --list --json`；未知选项（含拼错）、`--x=y` 写法、重复选项、多于一个文件参数、空值、缺 `--bsc-nonce/--wantos-nonce/--deadline`、chainId/batch-size/batch 不是正整数（`0` 不再回落 56）、`--expect-list-hash` 不是 `0x`+64 位十六进制、`--batch` 超出范围 —— 一律退出 64，不打印任何哈希。
+**参数严格校验（第 1 轮 A3，fail-closed）**：只接受 `--action --contract --bsc-nonce --wantos-nonce --deadline --bsc-chain-id --wantos-chain-id --batch --expect-list-hash --decode --list --json`；未知选项（含拼错）、`--x=y` 写法、重复选项、多于一个文件参数、空值、缺 `--bsc-nonce/--wantos-nonce/--deadline`、chainId/batch 不是正整数（`0` 不再回落 56）、`--expect-list-hash` 不是 `0x`+64 位十六进制、`--batch` 超出范围 —— 一律退出 64，不打印任何哈希。
 
 **`--batch K`（第 1 轮 A2）**：只算第 K 批（从 1 起），**直接使用给定 nonce**（= 页面「准备本批」时链上的 nonce）。不带 `--batch` 时算全部批次、第 i 批 nonce = 给定值 + i；此时若有多批，`--expect-list-hash` 被拒（64），避免"listHash 一致但 message hash 用错 nonce"。
 
@@ -57,7 +57,7 @@ node offline-check.mjs --decode 0x<calldata>
 
 | 页面 | 实现 | 门禁 |
 |---|---|---|
-| `/` 白名单 | 上传 CSV/TXT/粘贴 → rules v1 → 错误逐行列出并阻断 → 逐行参考信息（按 500 行分页加载：两链是否合约、WANTOS-USDT 余额、两链当前白名单；网体/上级/历史跨出走接口，不可用显示 —）→ 🟡⚪ 提示（不预选、不拦截；v0.9.5）→ 添加/移除 → 选批 → 「准备本批」(deadline = 链上时间 + 23h；读取并固定两链 nonce 与哈希) 显示第几批、listHash、count、两链 nonce/domain hash/message hash 和离线命令（**全部取自已准备的批次，不读表单**）→ 「签名并写入两条链」按 §4.4 顺序逐链（签名 → 提交 → 等回执），进度逐链可见；失败停在该链，「重试未完成的链」只补未完成的（复用已签签名；链上已是目标状态直接跳过）。**切换添加/移除、改清单、改勾选、换批次都会作废已准备的批次**（第 1 轮 A1）；**签名/提交前链上 nonce 与准备时不同、或 deadline 将到，立即停止并要求重新准备、重新离线核对，绝不静默重签**（第 1 轮 B2）；重新准备先清掉旧哈希。页面明示：提交服务接通前每批每条链要在钱包确认两次（签名 + 发交易），两条链共 4 次，白名单钱包两条链都要备 gas（BNB / WANT）（B4）。另有：当前白名单（事件折叠）、批次记录、紧急移除记录、两链不一致列表、每条链「作废当前批次 nonce」 | 白名单钱包（两链）；恢复中禁写；冻结时禁止添加 |
+| `/` 白名单 | 上传 CSV/TXT/粘贴 → rules v1 → 错误逐行列出并阻断 → 逐行参考信息（按 500 行分页加载：两链是否合约、WANTOS-USDT 余额、两链当前白名单；网体/上级/历史跨出走接口，不可用显示 —）→ 🟡⚪ 提示（不预选、不拦截；v0.9.5）→ 添加/移除 → 选批 → 「准备本批」(deadline = 链上时间 + 23h；读取并固定两链 nonce 与哈希) 显示第几批、listHash、count、两链 nonce/domain hash/message hash 和离线命令（**全部取自已准备的批次，不读表单**）→ 「签名并写入两条链」按 §4.4 顺序逐链（签名 → 提交 → 等回执），进度逐链可见；失败停在该链，「重试未完成的链」只补未完成的（复用已签签名；链上已是目标状态直接跳过）。**切换添加/移除、改清单、改勾选、换批次都会作废已准备的批次**（第 1 轮 A1）；**「准备本批」与「签名并写入」进行中，单选框、地址框、文件选择、勾选框、批次选择全部禁用；另有代数计数器：准备期间表单若仍被改动，读链结果丢弃并提示「准备期间表单已改动，请重新准备」；签名期间若被改动，`runJob` 在每条链开始前、签名前、签名后各检查一次，立即停止、不提交（第 2 轮 A-1）**；**签名/提交前链上 nonce 与准备时不同、或 deadline 将到，立即停止并要求重新准备、重新离线核对，绝不静默重签**（第 1 轮 B2）；重新准备先清掉旧哈希。页面明示：提交服务接通前每批每条链要在钱包确认两次（签名 + 发交易），两条链共 4 次，白名单钱包两条链都要备 gas（BNB / WANT）（B4）。另有：当前白名单（事件折叠）、批次记录、紧急移除记录、两链不一致列表、每条链「作废当前批次 nonce」 | 白名单钱包（两链）；恢复中禁写；冻结时禁止添加 |
 | `/emergency` 紧急 | 紧急移除的地址输入严格解析：第一行不是地址算错误，不当表头跳过（第 1 轮 B7）。每条链：暂停、解除暂停、冻结白名单、否决白名单钱包交接、**紧急移除（未冻结时先发 `freezeWhitelist` 再 `emergencyRemove`，PR1-NOTES §5.11a-1）**、读取现有付款/暂停钥匙并吊销 | 暂停/解除：管理或白名单钱包；其余管理钱包 |
 | `/timelock` 时间锁 | （第 1 轮 B3）每个调用显示**完整目标地址**并标【桥】【时间锁】【其他】，只按目标自己的 ABI 解码（桥 ABI 只解码目标为本链桥的调用，时间锁 ABI 只解码目标为本链时间锁的调用），【其他】与无法解码的一律红字、不解码。两链全部提议（`CallScheduled`/`CallSalt` + 实时 `getOperationState/getTimestamp/isOperationExpired/proposalEpoch`）：类别（升级/提取/参数/授予钥匙/更换管理钱包…）、逐个调用解码（未知 selector 标"无法解码，不要执行"）、等待中/可执行/已执行/已取消/已过期/已作废、倒计时与过期时间；取消、执行。执行回滚为 `BridgeCheckFailed`、空回滚或无法解码 → 显示"新实现不合格，不要重试，到期前取消换实现重提"（PR1-NOTES §5.11a-4） | 取消：管理或白名单钱包；执行：任何已连接钱包、就绪、无恢复 |
 | `/params` 参数 | 两链当前值（整币/秒）→ 编辑 → 每项标"收紧 / 放宽（需时间锁）" → 全部收紧：管理钱包一笔 `setParams` 立即生效；有任何放宽：生成时间锁提议（`schedule(bridge, setParams)`，delay = `getMinDelay()`，随机 salt）。前端按 PR1-NOTES 范围与约束预检（合约仍是权威），显示跨链一致性提示与收紧顺序；WANTOS `supplyCeiling` 降低立即、提高走时间锁 | 管理钱包；暂停期间不能提议放宽 |
@@ -89,7 +89,7 @@ node offline-check.mjs --decode 0x<calldata>
 | D2 | 两条链共用一个 deadline（准备时 = 链上时间 + 23h），离线工具只需一个 `--deadline`；剩余不足 5 分钟、或链上 nonce 与准备时不同，都停止并要求重新准备（哈希会变，须重新离线核对）；未经「准备」的批次一律拒绝签名 | 合约要求提交时 deadline ≤ now + 24h（PR1 D11） |
 | D3 | 某条链上该批地址**已全部**是目标状态 → 该链跳过、不签名；"两链不一致补齐" = 把同一清单按原操作再提交一次 | 让重试幂等，少签名 |
 | D4 | rules v1 的具体口径（只取第一列、表头只跳一次、混写大小写必须是正确校验和、任何错误都拒绝出哈希） | 规格只写"校验、去重、排序"；取最严格且最简单 |
-| D5 | 在页面上取消勾选会使清单与原始文件不同 → 页面明确提示"离线核对前先在原始文件中删掉这些地址"，并可导出本批清单 | 离线核对必须基于负责人自己的文件，页面不能替他改文件 |
+| D5 | 在页面上取消勾选会使清单与原始文件不同 → 页面明确提示"离线核对前先在原始文件中删掉这些地址"，并可导出**已准备批次**的清单（文件名与内容都取自已准备的批次；页面注明离线核对请用原始文件） | 离线核对必须基于负责人自己的文件，页面不能替他改文件 |
 | D6 | （v0.9.5 已删除：原 🔴 受控来源判定） | — |
 | D7 | 新持有人的"证明地址"为 personal_sign 固定文本的 JSON（离线传给负责人，页面本地验证），不经服务器 | /handover 只读链上数据（§8.4）；不新增后端 |
 | D8 | 历史/提议/钥匙持有人通过公共 RPC `getLogs` 从 `VITE_*_FROM_BLOCK` 起按 5 万块分段扫描；读区块高度时 `cacheTime: 0`（测试发现 viem 默认缓存会漏掉刚上链的提议） | 简单；若 RPC 限制更严，改用付款程序索引接口 |
@@ -163,7 +163,56 @@ node offline-check.mjs --decode 0x<calldata>
 
 - `pnpm-lock.yaml`：新增 `apps/admin-web`、`packages/offline-check` 的依赖条目（`pnpm install` 生成）。根 `package.json`、`pnpm-workspace.yaml` 未改（`apps/*` 已在工作区内）。
 
-## 验证结果（本地，2026-11-02，第 1 轮修复后）
+## 验证结果（本地，2026-11-02，第 2 轮修复后）
+
+| 项 | 结果 |
+|---|---|
+| typecheck | `tsc --noEmit -p apps/admin-web/tsconfig.json` 通过 |
+| admin-web 测试 | **81 通过 / 0 失败**（unit 21、integration 32、component 28；9 个文件） |
+| offline-check 测试 | **30 通过 / 0 失败** |
+| 覆盖率 admin-web（v8） | 全部 行 94.1% / 语句 92.1% / 分支 85.8% / 函数 83.4%；`src/lib` 行 98.2% / 分支 91.1%；`src/pages` 行 86.5% |
+| 覆盖率 offline-check | 行 97.5% / 分支 96.4% |
+| 构建 | `vite build --mode placeholder` 通过 |
+| `offline-check.mjs` sha256 | `c96df61116f015f035bcf9b15122db763e297302f4e19f0426504d44e829a664`（第 2 轮：删除 `--batch-size`） |
+
+## 第 2 轮审查修复
+
+| 项 | 修复 | 新增测试（对旧代码 / 变异体为红） |
+|---|---|---|
+| A-1 | ①代数计数器：任何表单改动 `gen++`；准备返回时代数不符 → 丢弃结果、不落屏，提示「准备期间表单已改动，请重新准备」。②准备或签名写入进行中，单选框、地址框、文件选择、勾选框、批次选择全部禁用。③`runJob` 新增 `shouldStop`，在每条链开始前、签名前、签名后（提交前）检查；页面在签名期间表单被改动时停止、不提交、不复活旧批次，提示「签名期间表单已改动，已停止」 | `component/race`（P1/P3 准备中全部控件禁用、点「移除」无效且批次与表单一致；P2 批次选择锁定；代数守卫：准备中仍送达的改动使结果被丢弃；签名中全部控件禁用、仍送达的改动使运行停止且 0 次提交）；`integration/whitelist` › shouldStop 两个用例（签名后停止不提交；签名前停止不打开钱包；开始即停止不读链） |
+| 随修 1 | — | 改勾选作废（M06）、改清单作废（M07）、两链逐行 nonce/domain/message（M04/M08）、恰好 2 批 + expect 无 `--batch` → 64（M20）、`--batch` 等于最后一批可用、超出 → 64（M18）、时间锁前缀相似目标显示完整地址且为【其他】、「附带 5 wei」（M36/M34） |
+| 随修 2 | 删除 `offline-check --batch-size`（固定 500，与页面相同）；传入即「未知选项」64 | `offline-check` 测试同步 |
+| 随修 3 | 导出按钮只在已准备后可用，文件名与内容取自已准备批次；注明「离线核对请用你自己的原始文件」 | `component/whitelist` › export |
+
+### 第 2 轮变异测试（目录 `scratchpad/pr6-lane6-r2`，独立副本，27 个）
+
+第一遍：杀死 23 / 存活 4（S07a、S09、S10、S19）。为 S09、S10 补 `shouldStop layers` 测试后重跑均杀死。最终 **25 杀死 / 2 存活（等价）**。
+
+| # | 针对 | 变异 | 结果 / 杀死它的测试 |
+|---|---|---|---|
+| S01 | A-1 代数 | 准备返回后不比对代数 | 杀死：component/race › generation guard |
+| S02 | A-1 代数 | resetJob 不递增代数 | 杀死：component/race › generation guard |
+| S03a–f | A-1 禁用 | 文件选择 / 地址框 / 添加 / 移除 / 勾选框 / 批次选择 各自去掉 disabled | 全部杀死：a–e 由 race › P1/P3，f 由 race › P2 |
+| S04 | A-1 禁用 | 签名期间不锁 | 杀死：race › 签名期间 |
+| S05 | A-1 禁用 | 准备期间不锁 | 杀死：race › P1/P3 |
+| S06 | A-1 runJob | 页面不传 shouldStop | 杀死：race › 签名期间（出现提交） |
+| S07a | A-1 runJob | 进度回调不检查代数 | 存活（等价：停止后 runJob 立即返回，不再回调进度） |
+| S07b | A-1 runJob | 结束后不检查代数、复活旧批次 | 杀死：race › 签名期间 |
+| S08 | A-1 runJob | 去掉签名后（提交前）检查 | 杀死：race › 签名期间；integration › shouldStop |
+| S09 | A-1 runJob | 去掉签名前检查 | 补测后杀死：integration › shouldStop layers |
+| S10 | A-1 runJob | 去掉每条链开始前检查 | 补测后杀死：integration › shouldStop layers |
+| S11 | M06 | 改勾选不作废 | 杀死：whitelist › M06 |
+| S12 | M07 | 改清单不作废 | 杀死：whitelist › M07 |
+| S13 | M20 | 多批判定改成 >2 | 杀死：offline-check › exactly two batches |
+| S14 | M18 | `--batch` 等于最后一批被拒 | 杀死：offline-check › `--batch K` |
+| S15 | M04 | 每链行显示另一条链的 nonce | 杀死：whitelist › M04/M08 |
+| S16 | M08 | 每链行显示另一条链的 domain hash | 杀死：whitelist › M04/M08 |
+| S17 | M36 | 目标地址截短 | 杀死：pages › timelock targets |
+| S18 | M34 | 不显示附带 wei | 杀死：pages › look-alike target and value |
+| S19 | 导出 | 文件名取表单 | 存活（等价：任何表单改动都作废批次，导出又只在有批次时可用，两者必然相同） |
+| S20 | 导出 | 未准备也可导出 | 杀死：whitelist › export |
+
+## 第 1 轮修复后的验证结果（历史）
 
 | 项 | 结果 |
 |---|---|
