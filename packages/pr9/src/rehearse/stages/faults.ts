@@ -93,7 +93,7 @@ export async function stageFaults(ctx: Ctx): Promise<void> {
     const u = keys.user(17);
     const bal0 = await ctx.tokenBalance("bsc", u.address);
     const id = await bridgeOut(ctx, u, tok(30));
-    await tolerantPump(ctx, { r, w }, 2);
+    for (let i = 0; i < 40 && !crashed; i++) await tolerantPump(ctx, { r, w }, 1); // until the relayer signs (6 WANTON confirmations first)
     const signed = await r.db.query<{ state: string }>("select state from tx_attempts where event_key = $1", [Buffer.from(w2bKey(ctx, id).slice(2), "hex")]);
     await r.db.close();
     r = await startRelayer(ctx, { dbDir: dbDir(ctx) }); // restart: re-broadcast the persisted raw tx as-is

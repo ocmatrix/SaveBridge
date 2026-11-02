@@ -198,7 +198,7 @@ export async function stageEmergency(ctx: Ctx): Promise<void> {
     const again = await ctx.reverts("bsc", leaked, "pause");
     await pump(ctx, { r, w }, 2);
     ctx.check("E3", "暂停钥匙泄露：其他调用被拒；两个钱包各解除一次；吊销后再暂停失败；资金无变化", other !== "" && again !== "" && (await ctx.tokenBalance("bsc", d.proxy)) === balB && newCodes(w, from).includes("PAUSER_REVOKED"), `${other}/${again}`);
-    for (const s of ["bsc", "wantos"] as Side[]) await ctx.viaTimelock(s, "grantRole", [PAUSER_ROLE, keys.role("pauser3").address]);
+    await Promise.all((["bsc", "wantos"] as Side[]).map((s) => ctx.viaTimelock(s, "grantRole", [PAUSER_ROLE, keys.role("pauser3").address]))); // one shared wait
     ctx.state.current.pauser = "pauser3";
     ctx.save();
     w = await startWatcher(ctx); // watcher re-wired to the new pause key
@@ -305,6 +305,12 @@ export async function stageEmergency(ctx: Ctx): Promise<void> {
     // thief starts a handover to himself → admin vetoes
     await ctx.call("bsc", thief, "beginWhitelistManagerTransfer", [keys.role("attacker").address]);
     await ctx.call("bsc", ctx.acct("admin"), "cancelWhitelistManagerTransfer");
+    // admin starts WL recovery now (both chains, one WL wallet); nobody cancels → 7 min. The void / refund drill
+    // below runs inside that window (it needs no whitelist write and no timelock A-class execution).
+    const [, , , coolB] = await ctx.view<[boolean, Address, bigint, bigint]>("bsc", "whitelistRecovery");
+    await ctx.waitUntil(Number(coolB), "E6 left the admin in a recovery cooldown on BSC");
+    await ctx.call("bsc", ctx.acct("admin"), "startWhitelistRecovery", [keys.role("wl4").address]);
+    await ctx.call("wantos", ctx.acct("admin"), "startWhitelistRecovery", [keys.role("wl4").address]);
     // thief voids a FUTURE orderId on BSC → that order, once created, is rejected and refunded on WANTON
     const nextId = (await ctx.view<bigint>("wantos", "orderNonce")) + 1n;
     const from = w.sink.alerts.length;
@@ -318,9 +324,7 @@ export async function stageEmergency(ctx: Ctx): Promise<void> {
     await ctx.call("wantos", keys.role("submitter"), "executeRefund", [id]);
     const ref = await until(ctx, { r, w }, async () => (await repo().get(w2bKey(ctx, id)))?.status === "REFUNDED", "E7 refund");
     ctx.check("E7-void", "被作废的未来订单：付款程序 BadPayoutStatus→REJECTED→WANTON 退款", rej && ref);
-    // admin starts WL recovery (both chains in parallel, keeps one WL wallet); nobody cancels → 7 min → new WL
-    await ctx.call("bsc", ctx.acct("admin"), "startWhitelistRecovery", [keys.role("wl4").address]);
-    await ctx.call("wantos", ctx.acct("admin"), "startWhitelistRecovery", [keys.role("wl4").address]);
+    // (WL recovery was started above; its 7-minute window overlapped the void → refund drill)
     const [, , ra1] = await ctx.view<[boolean, Address, bigint, bigint]>("bsc", "whitelistRecovery");
     const [, , ra2] = await ctx.view<[boolean, Address, bigint, bigint]>("wantos", "whitelistRecovery");
     await ctx.waitUntil(Math.max(Number(ra1), Number(ra2)), "E7 WL recovery");
