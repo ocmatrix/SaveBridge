@@ -112,3 +112,12 @@ export async function setSupplyCeiling(ctx: ChainCtx, signer: Signer, timelock: 
   const data = encodeFunctionData({ abi: ctx.bridgeAbi, functionName: "setSupplyCeiling", args: [next] });
   return { kind: "timelock", tx: (await propose(ctx, signer, timelock, [{ target: ctx.cfg.bridge, data }])).tx };
 }
+
+/** Fixed in the contracts (constants, not parameters): shown read-only on the params page (DESIGN §4.5/§4.6, BridgeBase). */
+export const FIXED_PARAMS: { label: string; value: (minDelay: bigint) => string }[] = [
+  { label: "时间锁延迟", value: (d) => `${d / 3600n} 小时` },
+  { label: "白名单钱包交接等待", value: () => "48 小时" },
+  { label: "白名单钱包恢复等待", value: () => "7 天" },
+  { label: "管理钱包恢复等待", value: () => "14 天" },
+  { label: "退款延迟", value: () => "24 小时" },
+];

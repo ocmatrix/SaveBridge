@@ -2,10 +2,18 @@ import { useEffect, useState } from "react";
 import { formatUnits, parseUnits } from "viem";
 import { describeError } from "../lib/chain";
 import { SIDE_NAME, SIDES, type Side } from "../lib/config";
-import { applyParams, classify, crossWarnings, FIELDS, planKind, readParams, setSupplyCeiling, validate, type Params } from "../lib/params";
+import { applyParams, classify, crossWarnings, FIELDS, FIXED_PARAMS, planKind, readParams, setSupplyCeiling, validate, type FieldSpec, type Params } from "../lib/params";
 import { gate, gateWith } from "../lib/perm";
 import { readReserve } from "../lib/reserves";
 import { ActionButton, me, Section, useApp } from "../ui";
+
+const secs = (v: bigint) => (v % 86400n === 0n ? `${v / 86400n} 天` : v % 3600n === 0n ? `${v / 3600n} 小时` : `${v} 秒`);
+const rangeText = (f: FieldSpec) => {
+  const [lo, hi] = [f.min ?? f.minExclusive, f.max];
+  if (lo === undefined && hi === undefined) return "";
+  const t = (v: bigint | undefined) => (v === undefined ? "" : f.kind === "seconds" ? secs(v) : v.toLocaleString("en-US"));
+  return `范围 ${f.minExclusive !== undefined ? ">" : ""}${t(lo)} – ${t(hi)}`;
+};
 
 const CHANGE_TEXT = { same: "", tighten: "收紧", loosen: "放宽（需时间锁）" } as const;
 
@@ -54,16 +62,22 @@ export function ParamsPage() {
         const changes = n ? classify(s, cur[s]!.params, n) : null;
         const errs = n ? validate(s, n, cur[s]!.decimals) : ["有无法识别的数字"];
         const kind = changes ? planKind(changes) : "none";
+        const may = gate("admin", m, both[s]); // greyed out unless this wallet is the admin wallet of this chain
         return (
           <Section key={s} title={`${SIDE_NAME[s]} 参数`}>
             <table>
               <tbody>
                 {FIELDS[s].map((f) => (
                   <tr key={f.key}>
-                    <td>{f.label}</td>
+                    <td>
+                      {f.label}
+                      <br />
+                      <span className="hint">{rangeText(f)}</span>
+                    </td>
                     <td>
                       <input
                         aria-label={`${SIDE_NAME[s]} ${f.label}`}
+                        disabled={!may.ok}
                         value={input[s]![f.key]}
                         onChange={(e) => setInput((x) => ({ ...x, [s]: { ...x[s]!, [f.key]: e.target.value } }))}
                       />
@@ -74,7 +88,8 @@ export function ParamsPage() {
                 ))}
               </tbody>
             </table>
-            {errs.length > 0 && <p className="err">{errs.join("；")}</p>}
+            {!may.ok && <p className="hint">只读：{may.reason}</p>}
+            {may.ok && errs.length > 0 && <p className="err">{errs.join("；")}</p>}
             <ActionButton
               label={kind === "timelock" ? "生成时间锁提议（48h）" : "收紧（立即，一笔）"}
               gate={gateWith(gate("admin", m, both[s]), [kind !== "none", "参数没有变化"], [errs.length === 0, "参数不合法"], [kind === "direct" || !both[s].paused, "暂停期间不能提议放宽"])}
@@ -84,10 +99,22 @@ export function ParamsPage() {
           </Section>
         );
       })}
+      <Section title="合约固定（只读，不可调整）">
+        <table data-testid="fixed-params">
+          <tbody>
+            {FIXED_PARAMS.map((x) => (
+              <tr key={x.label}>
+                <td>{x.label}</td>
+                <td>{x.value(both.bsc.minDelay)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Section>
       {ceiling && (
         <Section title="WANTOS-USDT 发行上限 supplyCeiling">
           <p>当前上限 {formatUnits(ceiling.cur, cur.wantos.decimals)}；当前总量 {formatUnits(ceiling.supply, cur.wantos.decimals)}（降低立即生效，不得低于总量；提高走时间锁）</p>
-          <input aria-label="新的发行上限" value={ceilingInput} onChange={(e) => setCeilingInput(e.target.value)} />
+          <input aria-label="新的发行上限" disabled={!gate("admin", m, both.wantos).ok} value={ceilingInput} onChange={(e) => setCeilingInput(e.target.value)} />
           <ActionButton
             label="提交新上限"
             gate={(() => {
