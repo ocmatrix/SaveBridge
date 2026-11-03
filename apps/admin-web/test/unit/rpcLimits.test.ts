@@ -276,12 +276,12 @@ describe("submit: BSC fallback endpoints", () => {
     limited?.close();
   });
 
-  const run = async (fallbacks: string | undefined) => {
+  const run = async (fallbacks: string | undefined, keyed?: string) => {
     const list: Address[] = [getAddress("0x0000000000000000000000000000000000000abc"), getAddress("0x0000000000000000000000000000000000000abd")];
     const nowS = 1_800_000_000n;
     const deadline = nowS + 3600n;
     const signature = await manager.signTypedData(batchTypedData({ side: "bsc", chainId: 56, bridge: BRIDGE, addresses: list, allowed: true, nonce: 2n, deadline }) as Parameters<typeof manager.signTypedData>[0]);
-    const env: SubmitEnv = { BRIDGE, BSC_CHAIN_ID: "56", BSC_RPC_URL: limitedUrl, ...(fallbacks ? { BSC_RPC_FALLBACKS: fallbacks } : {}), WANTOS_CHAIN_ID: "13555", WANTOS_RPC_URL: goodUrl, SUBMITTER_KEY: generatePrivateKey() };
+    const env: SubmitEnv = { BRIDGE, BSC_CHAIN_ID: "56", BSC_RPC_URL: limitedUrl, ...(fallbacks ? { BSC_RPC_FALLBACKS: fallbacks } : {}), ...(keyed ? { BSC_RPC_KEYED: keyed } : {}), WANTOS_CHAIN_ID: "13555", WANTOS_RPC_URL: goodUrl, SUBMITTER_KEY: generatePrivateKey() };
     return submitWhitelist(env, { addresses: list, allowed: true, nonce: "2", deadline: String(deadline), signature }, () => Number(nowS) * 1000);
   };
 
@@ -302,5 +302,25 @@ describe("submit: BSC fallback endpoints", () => {
   it("only https (or loopback http) fallbacks are accepted", async () => {
     const r = await run("ftp://example.com,http://example.com");
     expect(r.status).toBe(CHAIN_FAILED); // both ignored → no working endpoint
+  });
+
+  it("a keyed endpoint (secret) is tried first: the 429 primary is never touched", async () => {
+    const before = hits.limited;
+    const r = await run(undefined, goodUrl);
+    expect(r.json.error).toBeUndefined();
+    expect(r.status).toBe(200);
+    expect(r.json.runs!.bsc.status).toBe("skipped");
+    expect(hits.limited).toBe(before);
+  });
+
+  it("a keyed value that is not https is ignored", async () => {
+    const r = await run(undefined, "http://example.com/v2/abc");
+    expect(r.status).toBe(CHAIN_FAILED); // falls back to the 429 primary only
+  });
+
+  it("the key never appears in the error returned to the page", async () => {
+    const r = await run(undefined, `${limitedUrl}/v2/SECRETKEY123`);
+    expect(r.status).toBe(CHAIN_FAILED);
+    expect(JSON.stringify(r.json)).not.toContain("SECRETKEY123");
   });
 });

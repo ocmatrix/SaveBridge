@@ -20,6 +20,12 @@ export interface SubmitEnv {
   WANTOS_RPC_URL: string;
   /** Optional, comma-separated: tried in order when the primary BSC_RPC_URL fails (e.g. answers 429 to Cloudflare's shared IPs). */
   BSC_RPC_FALLBACKS?: string;
+  /**
+   * Optional SECRET: a keyed BSC endpoint from a dedicated provider account (the key is in the URL). When present it is
+   * tried first, ahead of BSC_RPC_URL and the fallbacks. Never put it in wrangler.toml; set it with
+   * `wrangler pages secret put BSC_RPC_KEYED --project-name safebridge-admin`.
+   */
+  BSC_RPC_KEYED?: string;
   /** Secret: private key of the gas-only submitter (0x…). */
   SUBMITTER_KEY: string;
 }
@@ -100,7 +106,13 @@ interface Side {
   send: Transport;
 }
 
-const urlList = (primary: string, fallbacks?: string): string[] => [primary, ...(fallbacks ?? "").split(",").map((s) => s.trim()).filter((s) => /^(https:\/\/|http:\/\/(127\.0\.0\.1|localhost)[:/])/.test(s))];
+const usable = (u: string): boolean => /^(https:\/\/|http:\/\/(127\.0\.0\.1|localhost)[:/])/.test(u);
+/** Order: keyed endpoint (if any), the configured primary, then the fallbacks. Anything that is not https (or loopback) is dropped. */
+const urlList = (primary: string, fallbacks?: string, keyed?: string): string[] => [
+  ...(keyed && usable(keyed.trim()) ? [keyed.trim()] : []),
+  primary,
+  ...(fallbacks ?? "").split(",").map((s) => s.trim()).filter(usable),
+];
 
 /**
  * One endpoint → plain http with retries; several → viem `fallback` (next endpoint on any error, e.g. 429), each with a
@@ -128,7 +140,7 @@ export async function submitWhitelist(env: SubmitEnv, raw: unknown, now: () => n
     send: transportFor(urls, false),
   });
   const sides: Record<"bsc" | "wantos", Side> = {
-    bsc: mk("bsc", env.BSC_CHAIN_ID, urlList(env.BSC_RPC_URL, env.BSC_RPC_FALLBACKS)),
+    bsc: mk("bsc", env.BSC_CHAIN_ID, urlList(env.BSC_RPC_URL, env.BSC_RPC_FALLBACKS, env.BSC_RPC_KEYED)),
     wantos: mk("wantos", env.WANTOS_CHAIN_ID, urlList(env.WANTOS_RPC_URL)),
   };
 
