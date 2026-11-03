@@ -106,9 +106,12 @@ body { margin: 0; color: var(--text); }
 .info + .info { margin-top: 6px; }
 .bar, .notice { border-radius: 18px; padding: 12px 16px; margin: 0 0 10px; font-size: 14px; font-weight: 500; line-height: 1.5; background: rgba(255, 255, 255, 0.55); border: 1px solid rgba(255, 255, 255, 0.7); }
 .bar.warn, .notice.warn { background: rgba(255, 196, 64, 0.3); color: var(--warn); font-weight: 600; }
-.net-switch { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; }
-.net-switch button { font: inherit; font-size: 14px; font-weight: 600; color: #fff; background: var(--blue); border: 0; border-radius: 22px; padding: 10px 18px; min-height: 44px; cursor: pointer; }
-.net-switch button.secondary { color: var(--blue); background: rgba(255, 255, 255, 0.72); border: 1px solid rgba(255, 255, 255, 0.9); }
+.card > .panel { position: static; }
+.net-switch { position: absolute; top: -14px; right: 16px; z-index: 2; display: flex; gap: 6px; }
+.net-switch button { display: flex; align-items: center; gap: 5px; font: inherit; font-size: 13px; font-weight: 600; color: #fff; background: var(--blue); border: 0; border-radius: 14px; padding: 0 12px; height: 28px; cursor: pointer; }
+.net-switch .dot { width: 8px; height: 8px; border-radius: 50%; background: #f0b90b; }
+.net-switch.wantos .dot { background: #2da44e; }
+.net-switch button.secondary { color: var(--blue); background: rgba(255, 255, 255, 0.85); border: 1px solid rgba(255, 255, 255, 0.9); }
 .notice .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .notice button, .notice a { font: inherit; font-size: 13px; font-weight: 600; }
 .notice button { color: #fff; background: var(--blue); border: 0; border-radius: 16px; padding: 6px 12px; min-height: 32px; margin-top: 6px; cursor: pointer; }

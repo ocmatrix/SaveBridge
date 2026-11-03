@@ -45,6 +45,6 @@ export async function typeAmount(user: ReturnType<typeof userEvent.setup>, regio
 export async function toBsc(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "切换方向" }));
   const b2w = panel("BSC → WANTOS");
-  await waitFor(() => expect(within(b2w).queryByRole("button", { name: "请切换到 BSC" })).toBeNull(), T);
+  await waitFor(() => expect(within(b2w).queryByRole("button", { name: "连接 BSC" })).toBeNull(), T);
   return b2w;
 }

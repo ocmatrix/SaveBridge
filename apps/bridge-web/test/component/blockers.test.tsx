@@ -65,7 +65,7 @@ async function readyB2W(amount = "100") {
   const user = await connect();
   await user.click(screen.getByRole("button", { name: "切换方向" }));
   const b2w = panel("BSC → WANTOS");
-  await waitFor(() => expect(within(b2w).queryByRole("button", { name: "请切换到 BSC" })).toBeNull(), T);
+  await waitFor(() => expect(within(b2w).queryByRole("button", { name: "连接 BSC" })).toBeNull(), T);
   await user.type(within(b2w).getByLabelText("金额（USDT）"), amount);
   const btn = submit(b2w);
   await waitFor(() => expect(btn).toBeEnabled(), T);

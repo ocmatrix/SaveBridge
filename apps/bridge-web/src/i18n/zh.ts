@@ -30,7 +30,7 @@ export const zh = {
   "amount.receive": "接收金额（USDT）",
   "wallet.retry": "重试",
 
-  "net.switchTo": "请切换到 {chain}",
+  "net.switchTo": "连接 {chain}",
   "net.add": "添加 {chain} 网络",
 
   "wl.label": "开通状态",
@@ -91,7 +91,6 @@ export const zh = {
   "order.awaitingCredit": "BSC 已存入，等待 WANTOS 到账",
   "order.viewTx": "查看交易",
 
-  "footer.notice": "仅白名单地址可从 WANTOS 跨出到 BSC",
   "footer.powered": "Powered by WANTOS",
 
   "err.notWhitelisted": "未开通跨出，请联系客服",

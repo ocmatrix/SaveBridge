@@ -75,7 +75,7 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     await user.click(screen.getByRole("button", { name: "切换方向" }));
     const b2w = panel("BSC → WANTOS");
     // the wallet starts on WANTOS and is switched to BSC on its own
-    await waitFor(() => expect(within(b2w).queryByRole("button", { name: "请切换到 BSC" })).toBeNull(), T);
+    await waitFor(() => expect(within(b2w).queryByRole("button", { name: "连接 BSC" })).toBeNull(), T);
     await user.click(within(b2w).getByRole("button", { name: "修改" })); // the recipient defaults to the wallet; edit opens the field
     expect(within(b2w).getByLabelText("WANTOS 收款地址")).toHaveValue(KEYS.alice.address);
     expect(within(b2w).getByText("默认为当前地址。请勿填写交易所充值地址。")).toBeInTheDocument();
@@ -94,7 +94,7 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     const user = await connect();
     await user.click(screen.getByRole("button", { name: "切换方向" }));
     const b2w = panel("BSC → WANTOS");
-    await waitFor(() => expect(within(b2w).queryByRole("button", { name: "请切换到 BSC" })).toBeNull(), T);
+    await waitFor(() => expect(within(b2w).queryByRole("button", { name: "连接 BSC" })).toBeNull(), T);
     await user.click(within(b2w).getByRole("button", { name: "修改" })); // the recipient defaults to the wallet; edit opens the field
     const r = within(b2w).getByLabelText("WANTOS 收款地址");
     await user.clear(r);
@@ -116,7 +116,7 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     const user = await connect();
     await user.click(screen.getByRole("button", { name: "切换方向" }));
     const b2w = panel("BSC → WANTOS");
-    await waitFor(() => expect(within(b2w).queryByRole("button", { name: "请切换到 BSC" })).toBeNull(), T);
+    await waitFor(() => expect(within(b2w).queryByRole("button", { name: "连接 BSC" })).toBeNull(), T);
     await user.click(within(b2w).getByRole("button", { name: "修改" })); // the recipient defaults to the wallet; edit opens the field
     const r = within(b2w).getByLabelText("WANTOS 收款地址");
     await user.clear(r);
@@ -134,7 +134,7 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     const { switchChain } = await import("wagmi/actions");
     await switchChain(wagmiConfig, { chainId: 56 });
     await waitFor(() => expect(wagmiConfig.state.chainId).toBe(env.cfg.wantos.id), T);
-    await waitFor(() => expect(within(panel("WANTOS → BSC")).queryByRole("button", { name: "请切换到 WANTOS" })).toBeNull(), T);
+    await waitFor(() => expect(within(panel("WANTOS → BSC")).queryByRole("button", { name: "连接 WANTOS" })).toBeNull(), T);
   });
 
   it("switch refused by the wallet → prompt with switch / add buttons stays as the fallback", async () => {
@@ -148,13 +148,13 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     wagmiConfig.subscribe((st) => st.chainId, (id) => { if (id === 56) features.switchChainError = true; });
     await switchChain(wagmiConfig, { chainId: 56 });
     const w2b = panel("WANTOS → BSC");
-    expect(await within(w2b).findByRole("button", { name: "请切换到 WANTOS" }, T)).toBeInTheDocument();
+    expect(await within(w2b).findByRole("button", { name: "连接 WANTOS" }, T)).toBeInTheDocument();
     expect(within(w2b).getByRole("button", { name: "添加 WANTOS 网络" })).toBeInTheDocument();
-    expect(within(w2b).getByRole("button", { name: "请切换到 WANTOS" })).toBeInTheDocument();
+    expect(within(w2b).getByRole("button", { name: "连接 WANTOS" })).toBeInTheDocument();
     expect(submit(w2b)).toBeDisabled();
     features.switchChainError = false;
-    await user.click(within(w2b).getByRole("button", { name: "请切换到 WANTOS" }));
-    await waitFor(() => expect(within(w2b).queryByRole("button", { name: "请切换到 WANTOS" })).toBeNull(), T);
+    await user.click(within(w2b).getByRole("button", { name: "连接 WANTOS" }));
+    await waitFor(() => expect(within(w2b).queryByRole("button", { name: "连接 WANTOS" })).toBeNull(), T);
   });
 
   it("no wallet in the browser → note + the big button reads 连接钱包 and opens the wallet list (EVM wallets: BSC, WANTOS)", async () => {
@@ -183,12 +183,12 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     expect(screen.queryByRole("dialog", { name: "选择钱包" })).toBeNull();
   });
 
-  it("brand on top (logo + SafeBridge) and the footer: whitelist hint, then Powered by WANTOS — no contract address", async () => {
+  it("brand on top (logo + SafeBridge) and the footer: only Powered by WANTOS (no whitelist sentence) — no contract address", async () => {
     renderApp(env.cfg, KEYS.alice.address);
     expect(screen.getByRole("heading", { level: 1, name: "SafeBridge" })).toBeInTheDocument();
     const footer = screen.getByRole("contentinfo");
     const lines = Array.from(footer.querySelectorAll("small")).map((e) => e.textContent);
-    expect(lines).toEqual(["仅白名单地址可从 WANTOS 跨出到 BSC", "Powered by WANTOS"]);
+    expect(lines).toEqual(["Powered by WANTOS"]);
     expect(footer.textContent).not.toMatch(/0x[0-9a-fA-F]{8}/);
   });
 
@@ -197,10 +197,10 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     renderApp(env.cfg, KEYS.alice.address);
     await user.click(screen.getByRole("button", { name: "English" }));
     const footer = screen.getByRole("contentinfo");
-    expect(within(footer).getByText("Only whitelisted addresses can bridge out from WANTOS to BSC")).toBeInTheDocument();
+    expect(within(footer).getByRole("button", { name: "English" })).toHaveAttribute("aria-pressed", "true");
     expect(document.documentElement.lang).toBe("en");
     await user.click(screen.getByRole("button", { name: "中文" }));
-    expect(within(footer).getByText("仅白名单地址可从 WANTOS 跨出到 BSC")).toBeInTheDocument();
+    expect(within(footer).getByRole("button", { name: "中文" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("orders come through the replaceable StatusProvider; risk states are shown as 处理中", async () => {

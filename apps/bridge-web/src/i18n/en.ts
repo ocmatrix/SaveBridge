@@ -32,7 +32,7 @@ export const en: Dict = {
   "amount.receive": "Amount received (USDT)",
   "wallet.retry": "Retry",
 
-  "net.switchTo": "Please switch to {chain}",
+  "net.switchTo": "Connect {chain}",
   "net.add": "Add {chain} network",
 
   "wl.label": "Bridge access",
@@ -93,7 +93,6 @@ export const en: Dict = {
   "order.awaitingCredit": "Deposited on BSC, awaiting WANTOS credit",
   "order.viewTx": "View transaction",
 
-  "footer.notice": "Only whitelisted addresses can bridge out from WANTOS to BSC",
   "footer.powered": "Powered by WANTOS",
 
   "err.notWhitelisted": "Bridging is not enabled for this address. Please contact support.",
