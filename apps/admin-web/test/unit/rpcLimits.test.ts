@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { encodeAbiParameters, getAddress, pad, toFunctionSelector, type Address, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { parseConfig } from "../../src/lib/config";
-import { LOG_PARALLEL, scanLogs } from "../../src/lib/whitelist";
+import { LOG_PARALLEL, LOG_RETRIES, scanLogs } from "../../src/lib/whitelist";
 import { batchTypedData } from "../../src/lib/normalize";
 import { errorLine, READ_BATCH, submitWhitelist, type SubmitEnv } from "../../functions/_lib/submit";
 
@@ -89,6 +89,28 @@ describe("scanLogs", () => {
     expect(a).toEqual(expected);
     expect(b).toEqual(expected);
   });
+
+  const lag = 'Missing or invalid parameters. Details: failed to fetch header by number (latest): failed to get rpc block from comet block: failed to get receipts from comet block: tx not found: hash=0xabc';
+  const oneRange = (getLogs: () => Promise<unknown[]>) => ctx({ getBlockNumber: async () => 50n, getLogs }, { fromBlock: 0n, logStep: 100n, rpcUrl: "https://rpc3.example.com" });
+
+  it("retries the node's transient 'tx not found' (indexer one block behind) and returns the logs", async () => {
+    let calls = 0;
+    const c = oneRange(async () => {
+      if (++calls < 3) throw new Error(lag);
+      return [{ ok: true }];
+    });
+    expect(await scanLogs(c, { type: "event", name: "X", inputs: [] })).toEqual([{ ok: true }]);
+    expect(calls).toBe(3);
+  }, 15_000);
+
+  it("does not retry other errors, and gives up after the retry limit", async () => {
+    let other = 0;
+    await expect(scanLogs(oneRange(async () => { other++; throw new Error("execution reverted"); }), { type: "event", name: "X", inputs: [] })).rejects.toThrow("execution reverted");
+    expect(other).toBe(1);
+    let always = 0;
+    await expect(scanLogs(oneRange(async () => { always++; throw new Error(lag); }), { type: "event", name: "X", inputs: [] })).rejects.toThrow("tx not found");
+    expect(always).toBe(LOG_RETRIES + 1);
+  }, 30_000);
 });
 
 describe("submit: per-address reads go out as JSON-RPC batches", () => {

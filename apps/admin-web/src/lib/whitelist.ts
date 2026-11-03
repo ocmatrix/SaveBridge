@@ -174,12 +174,32 @@ async function gated<T>(key: string, limit: number, fn: () => Promise<T>): Promi
   }
 }
 
+/**
+ * The node can answer eth_getLogs with "failed to fetch header by number (latest) … failed to get receipts from comet
+ * block: tx not found" while its indexer is still one block behind (it resolves `latest` internally, whatever the range).
+ * It clears within a block or two, so these errors are retried instead of being shown to the admin.
+ */
+export const LOG_RETRIES = 4;
+export const LOG_RETRY_MS = 600;
+const isIndexLag = (e: unknown): boolean => /tx not found|failed to fetch header by number|failed to get receipts from comet block/i.test(e instanceof Error ? e.message : String(e));
+
+async function withIndexRetry<T>(fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (attempt >= LOG_RETRIES || !isIndexLag(e)) throw e;
+      await new Promise((resolve) => setTimeout(resolve, LOG_RETRY_MS * (attempt + 1)));
+    }
+  }
+}
+
 export async function scanLogs(ctx: ChainCtx, event: AbiEvent, address: Address = ctx.cfg.bridge, step = ctx.cfg.logStep ?? LOG_STEP) {
   const latest = await ctx.client.getBlockNumber({ cacheTime: 0 });
   const ranges: Array<[bigint, bigint]> = [];
   for (let from = ctx.cfg.fromBlock; from <= latest; from += step) ranges.push([from, from + step - 1n > latest ? latest : from + step - 1n]);
   const key = String(ctx.cfg.rpcUrl);
-  const parts = await Promise.all(ranges.map(([fromBlock, toBlock]) => gated(key, LOG_PARALLEL, () => ctx.client.getLogs({ address, event, fromBlock, toBlock }))));
+  const parts = await Promise.all(ranges.map(([fromBlock, toBlock]) => gated(key, LOG_PARALLEL, () => withIndexRetry(() => ctx.client.getLogs({ address, event, fromBlock, toBlock })))));
   return parts.flat();
 }
 
