@@ -15,6 +15,8 @@ export function NetworkPrompt({ target }: { target: ChainConf }) {
   const { connector } = useConnection();
   const { mutateAsync: switchChain, isPending } = useSwitchChain();
   const [failed, setFailed] = useState(false);
+  const isWantos = target.id === cfg.wantos.id;
+  const short = isWantos ? "WANTOS" : "BSC";
 
   const run = async (fn: () => Promise<unknown>) => {
     try {
@@ -35,17 +37,18 @@ export function NetworkPrompt({ target }: { target: ChainConf }) {
 
   if (!failed) return null;
   return (
-    <div className="net-switch">
+    <div className={`net-switch ${isWantos ? "wantos" : "bsc"}`}>
       <button type="button" disabled={isPending} onClick={() => void run(() => switchChain({ chainId: target.id }))}>
-        {t("net.switchTo", { chain: target.name })}
+        <span className="dot" aria-hidden="true" />
+        {t("net.switchTo", { chain: short })}
       </button>
-      {target.id === cfg.wantos.id && connector && (
+      {isWantos && connector && (
         <button
           type="button"
           className="secondary"
           onClick={() => void run(async () => addWantosNetwork((await connector.getProvider()) as Eip1193Like, cfg))}
         >
-          {t("net.add", { chain: target.name })}
+          {t("net.add", { chain: short })}
         </button>
       )}
     </div>

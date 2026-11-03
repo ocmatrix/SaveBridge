@@ -30,7 +30,7 @@ export const zh = {
   "amount.receive": "接收金额（USDT）",
   "wallet.retry": "重试",
 
-  "net.switchTo": "请切换到 {chain}",
+  "net.switchTo": "连接 {chain}",
   "net.add": "添加 {chain} 网络",
 
   "wl.label": "开通状态",

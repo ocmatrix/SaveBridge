@@ -32,7 +32,7 @@ export const en: Dict = {
   "amount.receive": "Amount received (USDT)",
   "wallet.retry": "Retry",
 
-  "net.switchTo": "Please switch to {chain}",
+  "net.switchTo": "Connect {chain}",
   "net.add": "Add {chain} network",
 
   "wl.label": "Bridge access",
