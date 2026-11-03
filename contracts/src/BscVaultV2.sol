@@ -179,6 +179,7 @@ contract BscVaultV2 is BridgeBase {
     // ------------------------------------------------------------------ B2W deposits
     function deposit(uint256 amount, address wantosRecipient)
         external
+        payable
         whenNotPaused
         nonReentrant
         returns (uint256 nonce)
@@ -192,6 +193,12 @@ contract BscVaultV2 is BridgeBase {
         $.deposits[nonce] =
             Deposit({from: msg.sender, amount: uint128(received), refundRequestedAt: 0, refundStatus: D_NONE});
         emit Deposited(nonce, msg.sender, wantosRecipient, received);
+        _collectNativeFee(received);
+    }
+
+    /// @dev BNB; at most 0.2 BNB per deposit.
+    function _maxNativeFee() internal pure override returns (uint256) {
+        return 0.2 ether;
     }
 
     /// @notice Admin requests a refund of deposit `nonce` (WANTOS side must have voided its eventKey first).

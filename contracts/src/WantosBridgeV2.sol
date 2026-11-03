@@ -123,7 +123,7 @@ contract WantosBridgeV2 is BridgeBase {
 
     // ------------------------------------------------------------------ W2B: bridgeOut
     /// @notice Lock `amount` WANTOS-USDT for payout to msg.sender on BSC.
-    function bridgeOut(uint256 amount) external whenNotPaused nonReentrant returns (uint256 orderId) {
+    function bridgeOut(uint256 amount) external payable whenNotPaused nonReentrant returns (uint256 orderId) {
         _requireWhitelisted(msg.sender);
         if (msg.sender.code.length != 0) revert ContractCaller(msg.sender);
         WantosStorage storage $ = _w();
@@ -141,6 +141,12 @@ contract WantosBridgeV2 is BridgeBase {
             refundRequestedAt: 0
         });
         emit BridgeOut(orderId, msg.sender, received);
+        _collectNativeFee(received);
+    }
+
+    /// @dev WANT; at most 250 WANT per bridgeOut (about 2x the top tier at WANT = 0.5 USD).
+    function _maxNativeFee() internal pure override returns (uint256) {
+        return 250 ether;
     }
 
     // ------------------------------------------------------------------ refunds of rejected orders
