@@ -1,14 +1,15 @@
-# Cloudflare Workers Static Assets site for admin.wanto.pro (Qbit account, Worker "savebridge-admin"; DESIGN §8).
-# The custom domain admin.wanto.pro is already attached to this Worker in the dashboard (placeholder page), so no
-# `routes` here: a deploy keeps it. workers.dev stays closed.
-# Deploy (owner-authorised): pnpm -C apps/admin-web build:prod && pnpm -C apps/admin-web exec wrangler deploy
-# The app uses History API paths (/handover, /emergency, ...): single-page-application fallback is required.
-# Cloudflare Access (optional "privacy shield", not the security boundary, DESIGN §8.4): admin.wanto.pro/* except /handover.
-name = "savebridge-admin"
+# Cloudflare Pages project "safebridge-admin" (Qbit account): static dist/ + the Pages Function in functions/
+# (POST /api/whitelist = one-signature whitelist submission, see functions/_lib/submit.ts).
+# Deploy (owner-authorised): pnpm -C apps/admin-web build:prod && cd apps/admin-web && wrangler pages deploy dist --project-name safebridge-admin --branch main
+# Secret (never in this file): wrangler pages secret put SUBMITTER_KEY --project-name safebridge-admin   (gas-only key, no contract role)
+name = "safebridge-admin"
 compatibility_date = "2026-10-01"
-workers_dev = false
-preview_urls = false
+pages_build_output_dir = "./dist"
 
-[assets]
-directory = "./dist"
-not_found_handling = "single-page-application"
+[vars]
+BRIDGE = "0x41e9900BF09553C46b6b3F267626FDa2b4711E44"
+BSC_CHAIN_ID = "56"
+BSC_RPC_URL = "https://bsc-rpc.publicnode.com"
+WANTOS_CHAIN_ID = "13555"
+WANTOS_RPC_URL = "https://rpc3.wantos.io"
+ALLOWED_ORIGINS = "https://admin.wanto.pro,https://safebridge-admin.pages.dev"

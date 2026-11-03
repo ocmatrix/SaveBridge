@@ -21,6 +21,8 @@ export interface AppConfig {
   adminApi: string | null;
   /** Hostname the SIWE message binds to. */
   siweDomain: string;
+  /** One-signature whitelist submission endpoint (same-origin Pages Function, e.g. "/api/whitelist"). `null` → the page falls back to per-chain wallet writes. */
+  submitApi: string | null;
 }
 
 export class ConfigError extends Error {}
@@ -57,7 +59,12 @@ export function parseConfig(env: Record<string, string | undefined>): AppConfig 
     const u = new URL(api);
     if (u.protocol !== "https:" && u.hostname !== "127.0.0.1" && u.hostname !== "localhost") throw new ConfigError("VITE_ADMIN_API 必须是 https");
   }
-  return { bsc, wantos, adminApi: api, siweDomain: env.VITE_SIWE_DOMAIN?.trim() || "admin.wanto.pro" };
+  const sub = env.VITE_WL_SUBMIT_URL?.trim() || null;
+  if (sub && !sub.startsWith("/")) {
+    const u = new URL(sub);
+    if (u.protocol !== "https:" && u.hostname !== "127.0.0.1" && u.hostname !== "localhost") throw new ConfigError("VITE_WL_SUBMIT_URL 必须是 https 或同源路径（以 / 开头）");
+  }
+  return { bsc, wantos, adminApi: api, siweDomain: env.VITE_SIWE_DOMAIN?.trim() || "admin.wanto.pro", submitApi: sub };
 }
 
 /** Placeholder builds (CI artifact without real addresses) use the dead address. */
