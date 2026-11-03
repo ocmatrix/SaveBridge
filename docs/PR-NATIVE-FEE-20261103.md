@@ -15,7 +15,7 @@
 | 转账 | 在状态写入之后、事件之后转给 `feeRecipient`；合约不留余额；转账失败整笔回滚；两函数均有 `nonReentrant` |
 | 配置 | `setNativeFeeTiers`：仅时间锁（A 类，暂停时不可）；一次设档位与收款地址 |
 | 总开关 | `disableNativeFee()`：管理钱包立即把四档清零，并发事件 |
-| 上限 | 代码写死：BSC 每档 ≤ 0.2 BNB；WANTOS 每档 ≤ 250 WANT（WANT=0.5 美元时约 125 美元） |
+| 上下限 | 代码写死：**最低档不得低于 0.001 BNB**（WANTOS 方向 1.2 WANT，等价）；BSC 每档 ≤ 0.2 BNB，WANTOS 每档 ≤ 250 WANT。档位费用必须随金额不降。最小存入额不变 |
 | 存储 | 新命名空间 `wantos.bridge.v2.NativeFee`（slot `0x996f…3a00`），未配置时全 0 即不收费；布局快照 `contracts/test/layout/NativeFee.namespace.json` |
 | 事件 | 新增 `NativeFeeCollected`、`NativeFeeConfigUpdated`；`Deposited`/`BridgeOut` 不变，watcher 无需改 |
 
@@ -34,14 +34,14 @@
 
 | 合约 | 改前 | 现在 | 余量 |
 |---|---|---|---|
-| BscVaultV2 | 22,484 | 23,530 | 1,046 |
-| WantosBridgeV2 | 21,662 | 22,709 | 1,867 |
+| BscVaultV2 | 22,484 | 23,614 | 962 |
+| WantosBridgeV2 | 21,662 | 22,794 | 1,782 |
 
-`SizeGateTest` 门槛由 1,500 降到 1,000 B（硬上限 24,576 不变）。与 `redeploy-20261103` 合并后试跑：干净合并，256 项测试全绿，BscVaultV2 23,478 / WantosBridgeV2 22,641。
+`SizeGateTest` 门槛由 1,500 降到 900 B（硬上限 24,576 不变）。与 `redeploy-20261103` 的干净合并是在加最低档下限之前试的，合并前后需再试一次。
 
 ## 4. 测试
 
-整套 `forge test` 253 项通过；覆盖率保持 100%。新增 `contracts/test/NativeFee.t.sol` 12 项，含：档位边界、金额不符回滚、收款地址拒收整笔回滚、上限与档位顺序校验、管理钱包只能清零不能设档、存储布局核对。改坏验证：改错档位边界、去掉转账，用例均变红。
+整套 `forge test` 257 项通过；覆盖率保持 100%。新增 `contracts/test/NativeFee.t.sol` 15 项，含：档位边界、金额不符回滚、收款地址拒收整笔回滚、上限与档位顺序校验、管理钱包只能清零不能设档、存储布局核对。改坏验证：改错档位边界、去掉转账、去掉最低档下限、去掉档位不降检查，用例均变红。
 
 ## 5. 部署方式
 
@@ -52,7 +52,7 @@
 ## 6. 待办 / 待确认
 
 - 前端读取 `quoteNativeFee` 并在签名前显示总费用；重新生成 `packages/abi`。
-- **`MIN_DEPOSIT` = 1 USDT（redeploy D12）时，最低档仍收 0.002 BNB（约 1.2 美元）**，小额存入费用占比超过 100%。需决定：提高最小存入额，或把最低档调到更低。
+- 最小存入额不变（redeploy D12 为 1 USDT）。小额存入的费用占比会很高，已由负责人决定交给用户自己权衡；合约只保证最低档不低于 0.001 BNB。时间锁不能把档位全设为 0（要关掉用管理钱包的总开关）。
 - slither 未跑；WANTOS 链的合约大小上限未实测（设计按 24,576），演练时验证。
 - 主网档位金额与 BNB 价格需负责人确认；任何链上写入需负责人明确授权。
 

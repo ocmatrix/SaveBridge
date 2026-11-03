@@ -144,9 +144,9 @@ contract WantosBridgeV2 is BridgeBase {
         _collectNativeFee(received);
     }
 
-    /// @dev WANT; at most 250 WANT per bridgeOut (about 2x the top tier at WANT = 0.5 USD).
-    function _maxNativeFee() internal pure override returns (uint256) {
-        return 250 ether;
+    /// @dev WANT (0.5 USD): lowest tier >= 1.2 WANT (= 0.001 BNB at BNB 600 USD), no tier above 250 WANT.
+    function _nativeFeeBounds() internal pure override returns (uint256, uint256) {
+        return (1.2 ether, 250 ether);
     }
 
     // ------------------------------------------------------------------ refunds of rejected orders

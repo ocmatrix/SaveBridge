@@ -196,9 +196,9 @@ contract BscVaultV2 is BridgeBase {
         _collectNativeFee(received);
     }
 
-    /// @dev BNB; at most 0.2 BNB per deposit.
-    function _maxNativeFee() internal pure override returns (uint256) {
-        return 0.2 ether;
+    /// @dev BNB: lowest tier >= 0.001 BNB, no tier above 0.2 BNB.
+    function _nativeFeeBounds() internal pure override returns (uint256, uint256) {
+        return (0.001 ether, 0.2 ether);
     }
 
     /// @notice Admin requests a refund of deposit `nonce` (WANTOS side must have voided its eventKey first).

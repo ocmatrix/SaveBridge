@@ -182,6 +182,34 @@ contract NativeFeeBscTest is BscFixture, Tiers {
         assertEq(vault.feeRecipient(), recipient);
     }
 
+    function _rejects(uint256[4] memory f) internal {
+        bytes memory data = abi.encodeCall(BridgeBase.setNativeFeeTiers, (_cfg(_limits(U), f, recipient)));
+        bytes32 salt = _propose(address(vault), data);
+        vm.warp(block.timestamp + 48 hours);
+        vm.expectRevert();
+        _execute(address(vault), data, salt);
+        assertEq(vault.quoteNativeFee(10 * U), 0);
+    }
+
+    function test_lowestTierFloor() public {
+        _rejects([uint256(0.001 ether - 1), 0.01 ether, 0.04 ether, 0.1 ether]);
+        _rejects([uint256(0), 0, 0, 0]); // timelock cannot set "all zero"; the admin kill switch does that
+        // exactly the floor is allowed
+        _viaTimelock(
+            address(vault),
+            abi.encodeCall(
+                BridgeBase.setNativeFeeTiers,
+                (_cfg(_limits(U), [uint256(0.001 ether), 0.001 ether, 0.04 ether, 0.1 ether], recipient))
+            )
+        );
+        assertEq(vault.quoteNativeFee(10 * U), 0.001 ether);
+    }
+
+    function test_tiersNeverDecrease() public {
+        _rejects([uint256(0.002 ether), 0.001 ether, 0.04 ether, 0.1 ether]);
+        _rejects([uint256(0.002 ether), 0.01 ether, 0.04 ether, 0.03 ether]);
+    }
+
     function test_adminKillSwitchOnly() public {
         _set(recipient);
         vm.prank(admin);
@@ -204,12 +232,12 @@ contract NativeFeeWantosTest is WantosFixture, Tiers {
     function setUp() public {
         _deployWantos();
         _fundUser(alice, 10_000 * U);
-        vm.deal(alice, 10 ether);
+        vm.deal(alice, 200 ether);
         _applyBatch(bridge, _one(alice), true);
     }
 
     function _set() internal {
-        uint256[4] memory f = [uint256(0.2 ether), 1 ether, 4 ether, 10 ether];
+        uint256[4] memory f = [uint256(2.5 ether), 12 ether, 50 ether, 120 ether];
         _viaTimelock(address(bridge), abi.encodeCall(BridgeBase.setNativeFeeTiers, (_cfg(_limits(U), f, recipient))));
     }
 
@@ -217,10 +245,20 @@ contract NativeFeeWantosTest is WantosFixture, Tiers {
         _set();
         uint256 before = recipient.balance;
         vm.prank(alice);
-        bridge.bridgeOut{value: 1 ether}(300 * U);
-        assertEq(recipient.balance - before, 1 ether);
+        bridge.bridgeOut{value: 12 ether}(300 * U);
+        assertEq(recipient.balance - before, 12 ether);
         assertEq(address(bridge).balance, 0);
         assertEq(bridge.orderNonce(), 1);
+    }
+
+    function test_wantosFloorIs1p2() public {
+        uint256[4] memory f = [uint256(1.2 ether - 1), 12 ether, 50 ether, 120 ether];
+        bytes memory data = abi.encodeCall(BridgeBase.setNativeFeeTiers, (_cfg(_limits(U), f, recipient)));
+        bytes32 salt = _propose(address(bridge), data);
+        vm.warp(block.timestamp + 48 hours);
+        vm.expectRevert();
+        _execute(address(bridge), data, salt);
+        assertEq(bridge.quoteNativeFee(10 * U), 0);
     }
 
     function test_bridgeOut_wrongValueReverts() public {

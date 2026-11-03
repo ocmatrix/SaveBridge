@@ -632,13 +632,15 @@ abstract contract BridgeBase is
         return _f().feeRecipient;
     }
 
-    /// @dev Hard cap per tier in native-coin wei; set per chain by the concrete bridge.
-    function _maxNativeFee() internal pure virtual returns (uint256);
+    /// @dev Per-chain bounds in native-coin wei: the lowest tier must be >= min, no tier may exceed max.
+    function _nativeFeeBounds() internal pure virtual returns (uint256 min, uint256 max);
 
     /// @notice Timelock only (A-class, not while paused): set tiers and recipient.
     function setNativeFeeTiers(FeeStorage calldata n) external onlyTimelockA whenNotPaused {
-        uint256 max = _maxNativeFee();
-        if (n.f0 > max || n.f1 > max || n.f2 > max || n.f3 > max) revert ParamOutOfRange(0);
+        (uint256 min, uint256 max) = _nativeFeeBounds();
+        if (n.f3 > max) revert ParamOutOfRange(0);
+        if (n.f0 < min) revert ParamOutOfRange(1);
+        if (n.f1 < n.f0 || n.f2 < n.f1 || n.f3 < n.f2) revert ParamConstraint();
         if (n.l0 >= n.l1 || n.l1 >= n.l2) revert ParamConstraint();
         if (n.feeRecipient == address(0)) revert ZeroAddress();
         FeeStorage storage $ = _f();
