@@ -44,7 +44,7 @@ export function makeChains(cfg: AppConfig, clientFor?: (c: ChainCfg, chain: Chai
   const one = (c: ChainCfg): ChainCtx => {
     const chain = toViemChain(c);
     // batched reads: the admin page reads ~25 values on load and rpc3 rate-limits single requests (429)
-    const client = clientFor ? clientFor(c, chain) : (createPublicClient({ chain, transport: http(c.rpcUrl, { retryCount: 1, batch: { batchSize: 20, wait: 16 } }) }) as PublicClient);
+    const client = clientFor ? clientFor(c, chain) : (createPublicClient({ chain, transport: http(c.rpcUrl, { retryCount: 3, retryDelay: 400, batch: { batchSize: 20, wait: 16 } }) }) as PublicClient);
     return { cfg: c, chain, client, bridgeAbi: bridgeAbiOf(c.side) };
   };
   return { bsc: one(cfg.bsc), wantos: one(cfg.wantos) };

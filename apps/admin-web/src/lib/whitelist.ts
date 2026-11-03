@@ -153,19 +153,34 @@ export interface WhitelistHistory {
 
 /** Default log-scan step; public RPCs limit getLogs ranges. A chain overrides it with `cfg.logStep` (rpc3's node allows 100 blocks). */
 export const LOG_STEP = 50_000n;
-/** Ranges requested at once; the batching transport merges them into one HTTP request (rpc3 rate-limits single requests). */
+/**
+ * getLogs calls in flight per RPC endpoint, across ALL scans on the page. The batching transport merges them into one
+ * HTTP request (batchSize 20), so this is about one request at a time. rpc3 allows a client only 8 concurrent heavy reads
+ * and ~10 per second (nginx limit_conn / limit_req, answered with 429); several scans started together used to exceed that.
+ */
 export const LOG_PARALLEL = 20;
+
+const gates = new Map<string, { active: number; waiting: Array<() => void> }>();
+async function gated<T>(key: string, limit: number, fn: () => Promise<T>): Promise<T> {
+  let g = gates.get(key);
+  if (!g) gates.set(key, (g = { active: 0, waiting: [] }));
+  if (g.active >= limit) await new Promise<void>((resolve) => g.waiting.push(resolve));
+  g.active++;
+  try {
+    return await fn();
+  } finally {
+    g.active--;
+    g.waiting.shift()?.();
+  }
+}
 
 export async function scanLogs(ctx: ChainCtx, event: AbiEvent, address: Address = ctx.cfg.bridge, step = ctx.cfg.logStep ?? LOG_STEP) {
   const latest = await ctx.client.getBlockNumber({ cacheTime: 0 });
   const ranges: Array<[bigint, bigint]> = [];
   for (let from = ctx.cfg.fromBlock; from <= latest; from += step) ranges.push([from, from + step - 1n > latest ? latest : from + step - 1n]);
-  const out = [];
-  for (let i = 0; i < ranges.length; i += LOG_PARALLEL) {
-    const part = await Promise.all(ranges.slice(i, i + LOG_PARALLEL).map(([fromBlock, toBlock]) => ctx.client.getLogs({ address, event, fromBlock, toBlock })));
-    for (const logs of part) out.push(...logs);
-  }
-  return out;
+  const key = String(ctx.cfg.rpcUrl);
+  const parts = await Promise.all(ranges.map(([fromBlock, toBlock]) => gated(key, LOG_PARALLEL, () => ctx.client.getLogs({ address, event, fromBlock, toBlock }))));
+  return parts.flat();
 }
 
 const ev = (ctx: ChainCtx, name: string) => getAbiItem({ abi: ctx.bridgeAbi, name }) as AbiEvent;

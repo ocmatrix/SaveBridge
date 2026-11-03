@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { encodeAbiParameters, getAddress, pad, toFunctionSelector, type Address, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { parseConfig } from "../../src/lib/config";
-import { scanLogs } from "../../src/lib/whitelist";
+import { LOG_PARALLEL, scanLogs } from "../../src/lib/whitelist";
 import { batchTypedData } from "../../src/lib/normalize";
 import { errorLine, READ_BATCH, submitWhitelist, type SubmitEnv } from "../../functions/_lib/submit";
 
@@ -59,6 +59,35 @@ describe("scanLogs", () => {
     const ranges: Array<[bigint, bigint]> = [];
     await scanLogs(ctx(fake(60_000n, ranges), { fromBlock: 0n }), { type: "event", name: "X", inputs: [] });
     expect(ranges.length).toBe(2);
+  });
+
+  it("several scans started together share one concurrency limit per RPC endpoint (rpc3: 8 heavy reads per client)", async () => {
+    let active = 0;
+    let peak = 0;
+    const client = {
+      getBlockNumber: async () => 5_000n,
+      getLogs: async () => {
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise((r) => setTimeout(r, 5));
+        active--;
+        return [];
+      },
+    };
+    const c = ctx(client, { fromBlock: 0n, logStep: 100n, rpcUrl: "https://rpc3.example.com" }); // 50 ranges per scan
+    const ev = { type: "event", name: "X", inputs: [] } as const;
+    await Promise.all([scanLogs(c, ev), scanLogs(c, ev), scanLogs(c, ev), scanLogs(c, ev)]); // 200 requests in total
+    expect(peak).toBeGreaterThan(0);
+    expect(peak).toBeLessThanOrEqual(LOG_PARALLEL);
+  });
+
+  it("the results of every range come back, in order, even when scans share the limit", async () => {
+    const client = { getBlockNumber: async () => 999n, getLogs: async (a: { fromBlock: bigint }) => [{ block: a.fromBlock }] };
+    const c = ctx(client, { fromBlock: 0n, logStep: 100n, rpcUrl: "https://rpc3.example.com" });
+    const [a, b] = await Promise.all([scanLogs(c, { type: "event", name: "X", inputs: [] }), scanLogs(c, { type: "event", name: "X", inputs: [] })]);
+    const expected = Array.from({ length: 10 }, (_, i) => ({ block: BigInt(i) * 100n }));
+    expect(a).toEqual(expected);
+    expect(b).toEqual(expected);
   });
 });
 
