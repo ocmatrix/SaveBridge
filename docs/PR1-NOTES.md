@@ -405,7 +405,7 @@ Refunded(uint256 indexed orderId, address indexed user, uint256 amount)
 | BscVaultV2 | 22,483 B | 2,093 B | `0x537205b1b6168e3f300bb5d60313ae43d1620d305e808f2b1131b45cb17f92ba` |
 | WantosBridgeV2 | 21,661 B | 2,915 B | `0x78c2abb14ff85232889f71281134454e4c6ee9c6e24e1d64bbafe8b34bb2033b` |
 
-- **CI 门槛**：任何核心合约运行时余量必须 ≥ 1,500 B；由 `SizeGateTest.test_runtimeSizeMargins` 强制（`forge test` 不过即红）。
+- **CI 门槛**：任何核心合约运行时余量必须 ≥ 1,000 B（原 1,500 B，2026-11-03 因原生币手续费降低）；由 `SizeGateTest.test_runtimeSizeMargins` 强制（`forge test` 不过即红）。
 - **codehash 说明**：实现合约含 UUPS 的 `__self` immutable（= 实现自身地址），时间锁含 `bridge`/`MIN_DELAY` immutable，所以**运行时 codehash 取决于部署地址与构造参数**，不能离线写死。验收脚本 `Verify.s.sol` 的 `IMPLEMENTATION_CODEHASH` 取法：用同一提交、同一 `foundry.toml`（runs = 1）在本地以 `PredictAddresses` 预测出的实现地址重放部署（或 fork 演练），读取 `extcodehash`；构建可复现性用上表 initcode 哈希核对。任何编译设置变化（含 optimizer_runs）都会改变这些哈希。
 - `forge test`：**240 通过 / 0 失败**（13 个测试套件；fuzz 512 轮）。
 - `forge coverage --report summary --no-match-coverage "(test|script)/"`：四个核心合约行、语句、分支、函数**均 100%**。
