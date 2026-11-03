@@ -271,6 +271,34 @@ importers:
         specifier: ^5.0.5
         version: 5.0.5(@types/node@26.6.6)(@vitest/coverage-v8@5.0.5)(jsdom@26.1.0)(vite@7.3.7(@types/node@26.6.6)(tsx@4.23.15))
 
+  packages/risk:
+    dependencies:
+      '@bridge/relayer':
+        specifier: workspace:*
+        version: link:../relayer
+      viem:
+        specifier: ^2.57.14
+        version: 2.57.14(typescript@7.0.2)
+    devDependencies:
+      '@bridge/abi':
+        specifier: workspace:*
+        version: link:../abi
+      '@electric-sql/pglite':
+        specifier: ^0.5.14
+        version: 0.5.14
+      '@types/node':
+        specifier: ^26.6.6
+        version: 26.6.6
+      '@vitest/coverage-v8':
+        specifier: ^5.0.5
+        version: 5.0.5(vitest@5.0.5)
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@types/node@26.6.6)(@vitest/coverage-v8@5.0.5)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
+
 packages:
 
   '@adobe/css-tools@4.5.0':
