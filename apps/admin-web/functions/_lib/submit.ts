@@ -52,6 +52,11 @@ const ABI = parseAbi([
 export const MAX_BATCH = 500;
 export const MAX_SIGNATURE_TTL = 24n * 3600n; // contract: DeadlineTooFar beyond this
 export const DEADLINE_MARGIN = 120n; // refuse signatures that expire within 2 minutes
+/**
+ * Status for "a chain call failed". Not 502/503: Cloudflare replaces the body of a 502 (and 503/504) answered by a
+ * Worker with its own HTML error page, so the page only saw "提交服务返回 502" and never the real reason in our JSON.
+ */
+export const CHAIN_FAILED = 424;
 export const READ_BATCH = 40; // JSON-RPC calls per HTTP request; the node's batch-request-limit is 50
 
 const bad = (error: string, status = 400): SubmitResult => ({ status, json: { ok: false, error } });
@@ -115,7 +120,7 @@ export async function submitWhitelist(env: SubmitEnv, raw: unknown, now: () => n
   try {
     managers = (await Promise.all([sides.bsc, sides.wantos].map((s) => s.pub.readContract({ address: bridge, abi: ABI, functionName: "whitelistManager" })))) as [Address, Address];
   } catch {
-    return bad("读取链上白名单管理者失败，请稍后重试", 503);
+    return bad("读取链上白名单管理者失败，请稍后重试", CHAIN_FAILED);
   }
   if (managers[0].toLowerCase() !== managers[1].toLowerCase()) return bad("两条链的白名单管理者不一致，拒绝提交", 409);
   const digest = hashTypedData(batchTypedData({ side: "bsc", chainId: sides.bsc.chainId, bridge, addresses: p.addresses, allowed: p.allowed, nonce: p.nonce, deadline: p.deadline }));
@@ -156,13 +161,13 @@ export async function submitWhitelist(env: SubmitEnv, raw: unknown, now: () => n
       const rc = await s.pub.waitForTransactionReceipt({ hash, timeout: 90_000 });
       if (rc.status !== "success") {
         runs[k] = { status: "failed", txHash: hash, error: "交易已上链但执行失败" };
-        return { status: 502, json: { ok: false, error: runs[k].error, runs } };
+        return { status: CHAIN_FAILED, json: { ok: false, error: runs[k].error, runs } };
       }
       runs[k] = { status: "done", txHash: hash };
     } catch (e) {
       const msg = errorLine(e);
       runs[k] = { status: "failed", error: msg };
-      return { status: 502, json: { ok: false, error: `${k === "bsc" ? "BSC" : "WANTOS"}：${msg}`, runs } };
+      return { status: CHAIN_FAILED, json: { ok: false, error: `${k === "bsc" ? "BSC" : "WANTOS"}：${msg}`, runs } };
     }
   }
   return { status: 200, json: { ok: true, runs } };

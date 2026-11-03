@@ -10,7 +10,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { parseConfig } from "../../src/lib/config";
 import { LOG_PARALLEL, LOG_RETRIES, scanLogs } from "../../src/lib/whitelist";
 import { batchTypedData } from "../../src/lib/normalize";
-import { errorLine, READ_BATCH, submitWhitelist, type SubmitEnv } from "../../functions/_lib/submit";
+import { CHAIN_FAILED, errorLine, READ_BATCH, submitWhitelist, type SubmitEnv } from "../../functions/_lib/submit";
 
 const BRIDGE = "0x41e9900BF09553C46b6b3F267626FDa2b4711E44";
 const baseEnv = {
@@ -176,5 +176,64 @@ describe("errorLine", () => {
     expect(t).toContain("Details: too many requests");
     expect(t).not.toContain("secret");
     expect(t).not.toContain("Request body");
+  });
+});
+
+describe("submit: a chain failure is answered with a status Cloudflare does not replace", () => {
+  const manager = privateKeyToAccount(generatePrivateKey());
+  let server: Server;
+  let url = "";
+  let mode: "revert" | "down" = "revert";
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      let raw = "";
+      req.on("data", (d) => (raw += d));
+      req.on("end", () => {
+        res.setHeader("content-type", "application/json");
+        if (mode === "down") {
+          res.statusCode = 500;
+          res.end("down");
+          return;
+        }
+        const calls = JSON.parse(raw) as Array<{ id: number; method: string; params?: Array<{ data?: string }> }> | { id: number; method: string; params?: Array<{ data?: string }> };
+        const one = (c: { id: number; method: string; params?: Array<{ data?: string }> }) => {
+          const data = c.params?.[0]?.data ?? "0x";
+          if (data.startsWith(toFunctionSelector("function whitelistManager()"))) return { jsonrpc: "2.0", id: c.id, result: encodeAbiParameters([{ type: "address" }], [manager.address]) };
+          if (data.startsWith(toFunctionSelector("function whitelisted(address)"))) return { jsonrpc: "2.0", id: c.id, result: pad("0x00", { size: 32 }) };
+          if (data.startsWith(toFunctionSelector("function whitelistNonce()"))) return { jsonrpc: "2.0", id: c.id, result: pad("0x02", { size: 32 }) };
+          return { jsonrpc: "2.0", id: c.id, error: { code: 3, message: "execution reverted: BadNonce", data: "0x" } }; // the simulation of applyWhitelistBatch
+        };
+        res.end(JSON.stringify(Array.isArray(calls) ? calls.map(one) : one(calls)));
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+  afterAll(() => server?.close());
+
+  const attempt = async () => {
+    const list: Address[] = [getAddress("0x0000000000000000000000000000000000000abc")];
+    const nowS = 1_800_000_000n;
+    const deadline = nowS + 3600n;
+    const signature = await manager.signTypedData(batchTypedData({ side: "bsc", chainId: 56, bridge: BRIDGE, addresses: list, allowed: true, nonce: 2n, deadline }) as Parameters<typeof manager.signTypedData>[0]);
+    const env: SubmitEnv = { BRIDGE, BSC_CHAIN_ID: "56", BSC_RPC_URL: url, WANTOS_CHAIN_ID: "13555", WANTOS_RPC_URL: url, SUBMITTER_KEY: generatePrivateKey() };
+    return submitWhitelist(env, { addresses: list, allowed: true, nonce: "2", deadline: String(deadline), signature }, () => Number(nowS) * 1000);
+  };
+
+  it("a failing simulation returns 424 with the reason and the per-chain runs, never 502", async () => {
+    mode = "revert";
+    const r = await attempt();
+    expect(r.status).toBe(CHAIN_FAILED);
+    expect([502, 503, 504]).not.toContain(r.status);
+    expect(r.json.error).toContain("BSC");
+    expect(r.json.error).toContain("BadNonce");
+    expect(r.json.runs!.bsc.status).toBe("failed");
+  });
+
+  it("an unreachable RPC also returns 424, never 503", async () => {
+    mode = "down";
+    const r = await attempt();
+    expect(r.status).toBe(CHAIN_FAILED);
+    expect(r.json.ok).toBe(false);
   });
 });
