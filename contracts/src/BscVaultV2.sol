@@ -196,9 +196,10 @@ contract BscVaultV2 is BridgeBase {
         _collectNativeFee(received);
     }
 
-    /// @dev BNB: lowest tier >= 0.001 BNB, no tier above 0.2 BNB.
+    /// @dev BNB: lowest tier >= 0.0001 BNB (about 10x the BSC gas of one approve + deposit at 0.05 gwei),
+    ///      no tier above 0.01 BNB.
     function _nativeFeeBounds() internal pure override returns (uint256, uint256) {
-        return (0.001 ether, 0.2 ether);
+        return (0.0001 ether, 0.01 ether);
     }
 
     /// @notice Admin requests a refund of deposit `nonce` (WANTOS side must have voided its eventKey first).

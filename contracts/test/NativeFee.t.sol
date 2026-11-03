@@ -17,7 +17,7 @@ abstract contract Tiers {
     }
 
     function _fees() internal pure returns (uint256[4] memory f) {
-        f = [uint256(0.002 ether), 0.01 ether, 0.04 ether, 0.1 ether];
+        f = [uint256(0.0002 ether), 0.001 ether, 0.004 ether, 0.01 ether];
     }
 
     function _cfg(uint256[3] memory l, uint256[4] memory f, address to)
@@ -85,10 +85,10 @@ contract NativeFeeBscTest is BscFixture, Tiers {
             200 * U,
             1000 * U,
             5000 * U,
-            0.002 ether,
-            0.01 ether,
-            0.04 ether,
-            0.1 ether
+            0.0002 ether,
+            0.001 ether,
+            0.004 ether,
+            0.01 ether
         ];
         for (uint256 i; i < 8; ++i) {
             uint256 slot = vm.parseJsonUint(j, string.concat(".fields.", names[i], ".slot"));
@@ -98,21 +98,21 @@ contract NativeFeeBscTest is BscFixture, Tiers {
 
     function test_quoteTiers() public {
         _set(recipient);
-        assertEq(vault.quoteNativeFee(10 * U), 0.002 ether);
-        assertEq(vault.quoteNativeFee(200 * U - 1), 0.002 ether);
-        assertEq(vault.quoteNativeFee(200 * U), 0.01 ether);
-        assertEq(vault.quoteNativeFee(1000 * U - 1), 0.01 ether);
-        assertEq(vault.quoteNativeFee(1000 * U), 0.04 ether);
-        assertEq(vault.quoteNativeFee(5000 * U - 1), 0.04 ether);
-        assertEq(vault.quoteNativeFee(5000 * U), 0.1 ether);
-        assertEq(vault.quoteNativeFee(type(uint128).max), 0.1 ether);
+        assertEq(vault.quoteNativeFee(10 * U), 0.0002 ether);
+        assertEq(vault.quoteNativeFee(200 * U - 1), 0.0002 ether);
+        assertEq(vault.quoteNativeFee(200 * U), 0.001 ether);
+        assertEq(vault.quoteNativeFee(1000 * U - 1), 0.001 ether);
+        assertEq(vault.quoteNativeFee(1000 * U), 0.004 ether);
+        assertEq(vault.quoteNativeFee(5000 * U - 1), 0.004 ether);
+        assertEq(vault.quoteNativeFee(5000 * U), 0.01 ether);
+        assertEq(vault.quoteNativeFee(type(uint128).max), 0.01 ether);
     }
 
     function test_feeForwardedToRecipient_contractHoldsNothing() public {
         _set(recipient);
         uint256 before = recipient.balance;
-        _dep(alice, 300 * U, 0.01 ether);
-        assertEq(recipient.balance - before, 0.01 ether);
+        _dep(alice, 300 * U, 0.001 ether);
+        assertEq(recipient.balance - before, 0.001 ether);
         assertEq(address(vault).balance, 0);
         assertEq(vault.depositNonce(), 1);
     }
@@ -126,9 +126,9 @@ contract NativeFeeBscTest is BscFixture, Tiers {
         vm.expectRevert(BridgeBase.WrongNativeFee.selector);
         vault.deposit(300 * U, alice);
         vm.expectRevert(BridgeBase.WrongNativeFee.selector);
-        vault.deposit{value: 0.002 ether}(300 * U, alice); // lower tier's fee is not enough
+        vault.deposit{value: 0.0002 ether}(300 * U, alice); // lower tier's fee is not enough
         vm.expectRevert(BridgeBase.WrongNativeFee.selector);
-        vault.deposit{value: 0.01 ether + 1}(300 * U, alice);
+        vault.deposit{value: 0.001 ether + 1}(300 * U, alice);
         vm.stopPrank();
         assertEq(vault.depositNonce(), 0);
     }
@@ -140,7 +140,7 @@ contract NativeFeeBscTest is BscFixture, Tiers {
         vm.startPrank(alice);
         token.approve(address(vault), 300 * U);
         vm.expectRevert(BridgeBase.NativeFeeTransferFailed.selector);
-        vault.deposit{value: 0.01 ether}(300 * U, alice);
+        vault.deposit{value: 0.001 ether}(300 * U, alice);
         vm.stopPrank();
         assertEq(vault.depositNonce(), 0);
         assertEq(token.balanceOf(alice), 300 * U);
@@ -148,7 +148,7 @@ contract NativeFeeBscTest is BscFixture, Tiers {
 
     function test_capAndOrderingEnforced() public {
         uint256[4] memory f = _fees();
-        f[3] = 0.2 ether + 1;
+        f[3] = 0.01 ether + 1;
         bytes memory data = abi.encodeCall(BridgeBase.setNativeFeeTiers, (_cfg(_limits(U), f, recipient)));
         bytes32 salt = _propose(address(vault), data);
         vm.warp(block.timestamp + 48 hours);
@@ -192,22 +192,22 @@ contract NativeFeeBscTest is BscFixture, Tiers {
     }
 
     function test_lowestTierFloor() public {
-        _rejects([uint256(0.001 ether - 1), 0.01 ether, 0.04 ether, 0.1 ether]);
+        _rejects([uint256(0.0001 ether - 1), 0.001 ether, 0.004 ether, 0.01 ether]);
         _rejects([uint256(0), 0, 0, 0]); // timelock cannot set "all zero"; the admin kill switch does that
         // exactly the floor is allowed
         _viaTimelock(
             address(vault),
             abi.encodeCall(
                 BridgeBase.setNativeFeeTiers,
-                (_cfg(_limits(U), [uint256(0.001 ether), 0.001 ether, 0.04 ether, 0.1 ether], recipient))
+                (_cfg(_limits(U), [uint256(0.0001 ether), 0.0001 ether, 0.004 ether, 0.01 ether], recipient))
             )
         );
-        assertEq(vault.quoteNativeFee(10 * U), 0.001 ether);
+        assertEq(vault.quoteNativeFee(10 * U), 0.0001 ether);
     }
 
     function test_tiersNeverDecrease() public {
-        _rejects([uint256(0.002 ether), 0.001 ether, 0.04 ether, 0.1 ether]);
-        _rejects([uint256(0.002 ether), 0.01 ether, 0.04 ether, 0.03 ether]);
+        _rejects([uint256(0.0004 ether), 0.0002 ether, 0.004 ether, 0.01 ether]);
+        _rejects([uint256(0.0002 ether), 0.001 ether, 0.004 ether, 0.003 ether]);
     }
 
     function test_adminKillSwitchOnly() public {
