@@ -31,7 +31,6 @@ export const zh = {
   "wallet.retry": "重试",
 
   "net.switchTo": "连接 {chain}",
-  "net.add": "添加 {chain} 网络",
 
   "wl.label": "开通状态",
   "wl.open": "已开通",
