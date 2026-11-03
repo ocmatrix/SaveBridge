@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {BscFixture} from "./utils/Fixtures.sol";
+import {W} from "./utils/Windows.sol";
 import {BridgeTimelock} from "../src/BridgeTimelock.sol";
 import {
     BscVaultV2Next,
@@ -27,7 +28,7 @@ contract TimelockSelfCheckTest is BscFixture {
     function _upgradeMustRevert(address newImpl) internal {
         bytes memory data = abi.encodeCall(vault.upgradeToAndCall, (newImpl, ""));
         bytes32 salt = _propose(address(vault), data);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert();
         _execute(address(vault), data, salt);
         assertEq(_impl(), address(impl)); // upgrade rolled back
@@ -41,7 +42,7 @@ contract TimelockSelfCheckTest is BscFixture {
         StuckRecoveryImpl bad = new StuckRecoveryImpl(address(tl), wl);
         bytes memory data = abi.encodeCall(vault.upgradeToAndCall, (address(bad), ""));
         bytes32 salt = _propose(address(vault), data);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert(BridgeTimelock.BridgeCheckFailed.selector);
         _execute(address(vault), data, salt);
         assertEq(_impl(), address(impl));
@@ -51,7 +52,7 @@ contract TimelockSelfCheckTest is BscFixture {
         LostNamespaceImpl bad = new LostNamespaceImpl();
         bytes memory data = abi.encodeCall(vault.upgradeToAndCall, (address(bad), ""));
         bytes32 salt = _propose(address(vault), data);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert(BridgeTimelock.BridgeCheckFailed.selector);
         _execute(address(vault), data, salt);
     }
@@ -63,8 +64,8 @@ contract TimelockSelfCheckTest is BscFixture {
         bytes[] memory p = new bytes[](1);
         p[0] = abi.encodeCall(vault.upgradeToAndCall, (address(new DroppedViewsImpl()), ""));
         vm.prank(admin);
-        tl.scheduleBatch(t, v, p, bytes32(0), "b", 48 hours);
-        vm.warp(block.timestamp + 48 hours);
+        tl.scheduleBatch(t, v, p, bytes32(0), "b", W.TL_MIN_DELAY);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert();
         tl.executeBatch(t, v, p, bytes32(0), "b");
         assertEq(_impl(), address(impl));
@@ -74,7 +75,7 @@ contract TimelockSelfCheckTest is BscFixture {
         OneBrokenViewImpl bad = new OneBrokenViewImpl(address(tl), wl, mode);
         bytes memory data = abi.encodeCall(vault.upgradeToAndCall, (address(bad), ""));
         bytes32 salt = _propose(address(vault), data);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert(expectedRevert);
         _execute(address(vault), data, salt);
         assertEq(_impl(), address(impl));

@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {W} from "./utils/Windows.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -107,7 +108,7 @@ contract BscVaultV2Test is BscFixture {
         p.largeThreshold = p.perAddrDailyCap + 1;
         assertFalse(_deployWith(wl, relayer, pauser, true, p));
         p = _bscParams();
-        p.releaseDelay = 1 hours;
+        p.releaseDelay = W.RELEASE_DELAY_MIN - 1;
         assertFalse(_deployWith(wl, relayer, pauser, true, p));
     }
 
@@ -129,7 +130,7 @@ contract BscVaultV2Test is BscFixture {
     function test_wl_addAndRemove() public {
         address[] memory a = _sorted(_two(alice, bob));
         bytes32 listHash = keccak256(abi.encode(a));
-        uint256 deadline = block.timestamp + 1 hours;
+        uint256 deadline = block.timestamp + W.SIG_TTL / 24;
         bytes memory sig = _signBatch(vault, wlKey, a, true, 0, deadline);
         vm.expectEmit(address(vault));
         emit BridgeBase.WhitelistUpdated(a[0], true, listHash);
@@ -166,7 +167,7 @@ contract BscVaultV2Test is BscFixture {
 
     function test_wl_replayRejected() public {
         address[] memory a = _one(alice);
-        uint256 deadline = block.timestamp + 1 hours;
+        uint256 deadline = block.timestamp + W.SIG_TTL / 24;
         bytes memory sig = _signBatch(vault, wlKey, a, true, 0, deadline);
         vault.applyWhitelistBatch(a, true, 0, deadline, sig);
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.BadNonce.selector, 1, 0));
@@ -175,7 +176,7 @@ contract BscVaultV2Test is BscFixture {
 
     function test_wl_outOfOrderNonceRejected() public {
         address[] memory a = _one(alice);
-        uint256 deadline = block.timestamp + 1 hours;
+        uint256 deadline = block.timestamp + W.SIG_TTL / 24;
         bytes memory sig = _signBatch(vault, wlKey, a, true, 1, deadline);
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.BadNonce.selector, 0, 1));
         vault.applyWhitelistBatch(a, true, 1, deadline, sig);
@@ -185,7 +186,7 @@ contract BscVaultV2Test is BscFixture {
     /// Turns red if chainId is added back to the domain.
     function test_wl_sameSignatureValidOnAnyChain() public {
         address[] memory a = _one(alice);
-        uint256 deadline = block.timestamp + 1 hours;
+        uint256 deadline = block.timestamp + W.SIG_TTL / 24;
         vm.chainId(WANTOS_CHAIN);
         bytes32 digestOnWantos = vault.hashWhitelistBatch(a, true, 0, deadline);
         bytes memory sig = _signBatch(vault, wlKey, a, true, 0, deadline);
@@ -198,7 +199,7 @@ contract BscVaultV2Test is BscFixture {
     function test_wl_crossContractRejected() public {
         // signature over another verifyingContract (e.g. the WANTOS bridge at a different address)
         address[] memory a = _one(alice);
-        uint256 deadline = block.timestamp + 1 hours;
+        uint256 deadline = block.timestamp + W.SIG_TTL / 24;
         bytes32 typeHash = vault.WHITELIST_BATCH_TYPEHASH();
         bytes32 structHash = keccak256(abi.encode(typeHash, keccak256(abi.encode(a)), uint32(1), true, 0, deadline));
         bytes32 domain = keccak256(
@@ -216,7 +217,7 @@ contract BscVaultV2Test is BscFixture {
 
     function test_wl_expiredRejected() public {
         address[] memory a = _one(alice);
-        uint256 deadline = block.timestamp + 1 hours;
+        uint256 deadline = block.timestamp + W.SIG_TTL / 24;
         bytes memory sig = _signBatch(vault, wlKey, a, true, 0, deadline);
         vm.warp(deadline + 1);
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.SignatureExpired.selector, deadline));
@@ -225,12 +226,12 @@ contract BscVaultV2Test is BscFixture {
 
     function test_wl_deadlineOver24hRejected() public {
         address[] memory a = _one(alice);
-        uint256 deadline = block.timestamp + 24 hours + 1;
+        uint256 deadline = block.timestamp + W.SIG_TTL + 1;
         bytes memory sig = _signBatch(vault, wlKey, a, true, 0, deadline);
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.DeadlineTooFar.selector, deadline));
         vault.applyWhitelistBatch(a, true, 0, deadline, sig);
         // exactly 24h is fine
-        deadline = block.timestamp + 24 hours;
+        deadline = block.timestamp + W.SIG_TTL;
         sig = _signBatch(vault, wlKey, a, true, 0, deadline);
         vault.applyWhitelistBatch(a, true, 0, deadline, sig);
     }
@@ -238,7 +239,7 @@ contract BscVaultV2Test is BscFixture {
     function test_wl_unsortedAndDuplicateRejected() public {
         address[] memory a = _sorted(_two(alice, bob));
         address[] memory rev = _two(a[1], a[0]);
-        uint256 deadline = block.timestamp + 1 hours;
+        uint256 deadline = block.timestamp + W.SIG_TTL / 24;
         bytes memory sig = _signBatch(vault, wlKey, rev, true, 0, deadline);
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.AddressesNotSorted.selector, 1));
         vault.applyWhitelistBatch(rev, true, 0, deadline, sig);
@@ -250,7 +251,7 @@ contract BscVaultV2Test is BscFixture {
 
     function test_wl_zeroAddressRejected() public {
         address[] memory a = _two(address(0), alice);
-        uint256 deadline = block.timestamp + 1 hours;
+        uint256 deadline = block.timestamp + W.SIG_TTL / 24;
         bytes memory sig = _signBatch(vault, wlKey, a, true, 0, deadline);
         vm.expectRevert(BridgeBase.ZeroAddress.selector);
         vault.applyWhitelistBatch(a, true, 0, deadline, sig);
@@ -261,7 +262,7 @@ contract BscVaultV2Test is BscFixture {
         for (uint256 i; i < 501; i++) {
             big[i] = address(uint160(i + 1));
         }
-        uint256 deadline = block.timestamp + 1 hours;
+        uint256 deadline = block.timestamp + W.SIG_TTL / 24;
         bytes memory sig = _signBatch(vault, wlKey, big, true, 0, deadline);
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.BadBatchSize.selector, 501));
         vault.applyWhitelistBatch(big, true, 0, deadline, sig);
@@ -281,7 +282,7 @@ contract BscVaultV2Test is BscFixture {
     function test_wl_wrongSignerRejected() public {
         (, uint256 otherKey) = makeAddrAndKey("other");
         address[] memory a = _one(alice);
-        uint256 deadline = block.timestamp + 1 hours;
+        uint256 deadline = block.timestamp + W.SIG_TTL / 24;
         bytes memory sig = _signBatch(vault, otherKey, a, true, 0, deadline);
         vm.expectRevert();
         vault.applyWhitelistBatch(a, true, 0, deadline, sig);
@@ -293,7 +294,7 @@ contract BscVaultV2Test is BscFixture {
 
     function test_wl_invalidateNonce() public {
         address[] memory a = _one(alice);
-        uint256 deadline = block.timestamp + 1 hours;
+        uint256 deadline = block.timestamp + W.SIG_TTL / 24;
         bytes memory sig = _signBatch(vault, wlKey, a, true, 0, deadline);
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.NotWhitelistManager.selector, admin));
@@ -315,7 +316,7 @@ contract BscVaultV2Test is BscFixture {
         assertTrue(vault.whitelistFrozen());
         address[] memory a = _one(bob);
         uint256 nonce = vault.whitelistNonce();
-        uint256 deadline = block.timestamp + 1 hours;
+        uint256 deadline = block.timestamp + W.SIG_TTL / 24;
         bytes memory sig = _signBatch(vault, wlKey, a, true, nonce, deadline);
         vm.expectRevert(BridgeBase.WhitelistWritesBlocked.selector);
         vault.applyWhitelistBatch(a, true, nonce, deadline, sig);
@@ -331,7 +332,7 @@ contract BscVaultV2Test is BscFixture {
         vault.unfreezeWhitelist();
         bytes memory data = abi.encodeCall(BridgeBase.unfreezeWhitelist, ());
         bytes32 salt = _propose(address(vault), data);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.prank(pauser);
         vault.pause();
         vm.expectRevert();
@@ -389,7 +390,7 @@ contract BscVaultV2Test is BscFixture {
         ];
         for (uint256 i; i < 4; i++) {
             bytes32 salt = _propose(address(vault), bad[i]);
-            vm.warp(block.timestamp + 48 hours);
+            vm.warp(block.timestamp + W.TL_MIN_DELAY);
             vm.expectRevert();
             _execute(address(vault), bad[i], salt);
         }
@@ -410,7 +411,7 @@ contract BscVaultV2Test is BscFixture {
         bytes32 s2 = _propose(address(vault), r);
         bytes memory n = abi.encodeCall(IAccessControl.renounceRole, (D, address(tl)));
         bytes32 s3 = _propose(address(vault), n);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert();
         _execute(address(vault), g, s1);
         vm.expectRevert();
@@ -421,7 +422,7 @@ contract BscVaultV2Test is BscFixture {
         // an unknown role cannot be granted either
         bytes memory u = abi.encodeCall(IAccessControl.grantRole, (keccak256("OTHER"), stranger));
         bytes32 s4 = _propose(address(vault), u);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert();
         _execute(address(vault), u, s4);
     }
@@ -536,9 +537,9 @@ contract BscVaultV2Test is BscFixture {
         vault.beginWhitelistManagerTransfer(wl2);
         (address cand, uint64 avail, uint64 exp) = vault.pendingWhitelistManager();
         assertEq(cand, wl2);
-        assertEq(avail, block.timestamp + 48 hours);
-        assertEq(exp, block.timestamp + 48 hours + 7 days);
-        vm.warp(block.timestamp + 48 hours - 1);
+        assertEq(avail, block.timestamp + W.WL_TRANSFER_DELAY);
+        assertEq(exp, block.timestamp + W.WL_TRANSFER_DELAY + W.WL_TRANSFER_TTL);
+        vm.warp(block.timestamp + W.WL_TRANSFER_DELAY - 1);
         vm.prank(wl2);
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.NotReady.selector, uint256(avail)));
         vault.acceptWhitelistManagerTransfer();
@@ -551,7 +552,7 @@ contract BscVaultV2Test is BscFixture {
         assertEq(vault.whitelistManager(), wl2);
         // old WL signatures rejected, new accepted
         address[] memory a = _one(alice);
-        uint256 deadline = block.timestamp + 1 hours;
+        uint256 deadline = block.timestamp + W.SIG_TTL / 24;
         bytes memory sig = _signBatch(vault, wlKey, a, true, 0, deadline);
         vm.expectRevert();
         vault.applyWhitelistBatch(a, true, 0, deadline, sig);
@@ -571,7 +572,7 @@ contract BscVaultV2Test is BscFixture {
         address wl2 = makeAddr("wl2");
         vm.prank(wl);
         vault.beginWhitelistManagerTransfer(wl2);
-        vm.warp(block.timestamp + 48 hours + 7 days + 1);
+        vm.warp(block.timestamp + W.WL_TRANSFER_DELAY + W.WL_TRANSFER_TTL + 1);
         vm.prank(wl2);
         vm.expectRevert(BridgeBase.Expired.selector);
         vault.acceptWhitelistManagerTransfer();
@@ -586,7 +587,7 @@ contract BscVaultV2Test is BscFixture {
         vault.cancelWhitelistManagerTransfer();
         vm.prank(wl);
         vault.cancelWhitelistManagerTransfer();
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.WL_TRANSFER_DELAY);
         vm.prank(wl2);
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.NotCandidate.selector, wl2));
         vault.acceptWhitelistManagerTransfer();
@@ -640,7 +641,7 @@ contract BscVaultV2Test is BscFixture {
         assertEq(pc, address(0)); // pending handover voided
         // writes blocked: add AND remove
         address[] memory a = _one(alice);
-        uint256 deadline = block.timestamp + 1 hours;
+        uint256 deadline = block.timestamp + W.SIG_TTL / 24;
         bytes memory sig = _signBatch(vault, wlKey, a, true, 0, deadline);
         vm.expectRevert(BridgeBase.WhitelistWritesBlocked.selector);
         vault.applyWhitelistBatch(a, true, 0, deadline, sig);
@@ -651,7 +652,7 @@ contract BscVaultV2Test is BscFixture {
         vm.prank(wl);
         vm.expectRevert(BridgeBase.RecoveryInProgress.selector);
         vault.beginWhitelistManagerTransfer(makeAddr("x"));
-        vm.warp(block.timestamp + 7 days - 1);
+        vm.warp(block.timestamp + W.WL_RECOVERY - 1);
         vm.prank(wl2);
         vm.expectRevert();
         vault.acceptWhitelistRecovery();
@@ -664,7 +665,7 @@ contract BscVaultV2Test is BscFixture {
         assertEq(vault.whitelistManager(), wl2);
         assertFalse(vault.whitelistRecoveryActive());
         // writable again without a timelock unfreeze
-        deadline = block.timestamp + 1 hours;
+        deadline = block.timestamp + W.SIG_TTL / 24;
         sig = _signBatch(vault, wl2Key, a, true, 0, deadline);
         vault.applyWhitelistBatch(a, true, 0, deadline, sig);
         assertTrue(vault.whitelisted(alice));
@@ -682,9 +683,9 @@ contract BscVaultV2Test is BscFixture {
         assertFalse(vault.whitelistRecoveryActive());
         _wlAlice(); // writes resume immediately
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(BridgeBase.RecoveryCooldown.selector, block.timestamp + 3 days));
+        vm.expectRevert(abi.encodeWithSelector(BridgeBase.RecoveryCooldown.selector, block.timestamp + W.WL_COOLDOWN));
         vault.startWhitelistRecovery(wl2);
-        vm.warp(block.timestamp + 3 days);
+        vm.warp(block.timestamp + W.WL_COOLDOWN);
         vm.prank(admin);
         vault.startWhitelistRecovery(wl2);
         vm.prank(admin); // initiator may also cancel
@@ -715,7 +716,7 @@ contract BscVaultV2Test is BscFixture {
         vault.startWhitelistRecovery(makeAddr("wl2"));
         // admin recovery also blocks whitelist writes
         address[] memory a = _one(alice);
-        uint256 deadline = block.timestamp + 1 hours;
+        uint256 deadline = block.timestamp + W.SIG_TTL / 24;
         bytes memory sig = _signBatch(vault, wlKey, a, true, 0, deadline);
         vm.expectRevert(BridgeBase.WhitelistWritesBlocked.selector);
         vault.applyWhitelistBatch(a, true, 0, deadline, sig);
@@ -737,7 +738,7 @@ contract BscVaultV2Test is BscFixture {
     function test_recovery_blocksTimelockExecution() public {
         bytes memory data = abi.encodeCall(BridgeBase.withdraw, (bob, 1 * U));
         bytes32 salt = _propose(address(vault), data);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.prank(admin);
         vault.startWhitelistRecovery(makeAddr("wl2"));
         vm.expectRevert(BridgeTimelock.RecoveryInProgress.selector);
@@ -748,7 +749,7 @@ contract BscVaultV2Test is BscFixture {
         address wl2 = makeAddr("wl2");
         vm.prank(admin);
         vault.startWhitelistRecovery(wl2);
-        vm.warp(block.timestamp + 7 days);
+        vm.warp(block.timestamp + W.WL_RECOVERY);
         vm.prank(wl2);
         vault.acceptWhitelistRecovery();
         bytes memory data = abi.encodeCall(BridgeBase.unfreezeWhitelist, ());
@@ -1029,7 +1030,7 @@ contract BscVaultV2Test is BscFixture {
         vault.requestDepositRefund(n);
         vm.prank(admin);
         vault.requestDepositRefund(n);
-        vm.warp(block.timestamp + 24 hours - 1);
+        vm.warp(block.timestamp + W.REFUND_DELAY - 1);
         vm.expectRevert();
         vault.executeDepositRefund(n);
         vm.warp(block.timestamp + 1);
@@ -1055,7 +1056,7 @@ contract BscVaultV2Test is BscFixture {
         vault.cancelDepositRefund(n);
         vm.prank(wl);
         vault.cancelDepositRefund(n);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + W.REFUND_DELAY);
         vm.expectRevert();
         vault.executeDepositRefund(n);
         vm.prank(admin);
@@ -1072,7 +1073,7 @@ contract BscVaultV2Test is BscFixture {
         uint256 n = _deposit(bob, 2_000 * U);
         vm.prank(admin);
         vault.requestDepositRefund(n);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + W.REFUND_DELAY);
         vm.prank(relayer);
         vault.release(1, alice, 1_000 * U);
         vm.prank(relayer);
@@ -1115,7 +1116,7 @@ contract BscVaultV2Test is BscFixture {
     function test_withdraw_blockedWhilePausedAndBefore48h() public {
         bytes memory data = abi.encodeCall(BridgeBase.withdraw, (bob, 1_000 * U));
         bytes32 salt = _propose(address(vault), data);
-        vm.warp(block.timestamp + 48 hours - 1);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY - 1);
         vm.expectRevert();
         _execute(address(vault), data, salt);
         vm.warp(block.timestamp + 1);
@@ -1153,7 +1154,7 @@ contract BscVaultV2Test is BscFixture {
         // paying the same oldKey again fails
         bytes memory again = _legacy(k, to, amt);
         bytes32 salt = _propose(address(vault), again);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert();
         _execute(address(vault), again, salt);
     }
@@ -1271,7 +1272,7 @@ contract BscVaultV2Test is BscFixture {
         p.releaseDelay = 6 hours;
         bytes memory data = abi.encodeCall(BscVaultV2.setParams, (p));
         bytes32 salt = _propose(address(vault), data);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.prank(pauser);
         vault.pause();
         vm.expectRevert();
@@ -1284,7 +1285,7 @@ contract BscVaultV2Test is BscFixture {
         p.dailyCap = 500_001 * U;
         data = abi.encodeCall(BscVaultV2.setParams, (p));
         salt = _propose(address(vault), data);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert();
         _execute(address(vault), data, salt);
     }

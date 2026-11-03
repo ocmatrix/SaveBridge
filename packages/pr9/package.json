@@ -1,0 +1,30 @@
+{
+  "name": "@bridge/pr9",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "rehearse": "tsx src/rehearse/main.ts",
+    "probe": "tsx src/probe/cli.ts"
+  },
+  "dependencies": {
+    "@bridge/abi": "workspace:*",
+    "@bridge/migrate": "workspace:*",
+    "@bridge/offline-check": "workspace:*",
+    "@bridge/relayer": "workspace:*",
+    "@bridge/watcher": "workspace:*",
+    "@electric-sql/pglite": "^0.5.14",
+    "viem": "^2.57.14"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

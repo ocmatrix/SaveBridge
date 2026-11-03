@@ -1,0 +1,24 @@
+{
+  "_comment": "BSC testnet (chainId 97) RPC template for PR-9. URLs are supplied via env only (relayer config forbids URLs in the file). Fill the env vars from `pnpm --filter @bridge/pr9 probe` output; keep >= 3 independent providers.",
+  "chainId": 97,
+  "env": {
+    "BSC_TESTNET_RPC_1": "<https url of provider A>",
+    "BSC_TESTNET_RPC_2": "<https url of provider B>",
+    "BSC_TESTNET_RPC_3": "<https url of provider C>"
+  },
+  "relayer": {
+    "bsc": { "chainId": 97, "rpcUrlEnvs": ["BSC_TESTNET_RPC_1", "BSC_TESTNET_RPC_2", "BSC_TESTNET_RPC_3"] },
+    "poll": { "maxBlockRange": 1000 }
+  },
+  "watcher": {
+    "minRpcAgreement": 2,
+    "chains": {
+      "bsc": {
+        "chainId": 97,
+        "rpcUrls": ["${BSC_TESTNET_RPC_1}", "${BSC_TESTNET_RPC_2}", "${BSC_TESTNET_RPC_3}"],
+        "head": { "kind": "finalized" },
+        "maxBlockRange": 1000
+      }
+    }
+  }
+}

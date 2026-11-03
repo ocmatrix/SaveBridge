@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import {W} from "./utils/Windows.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {WantosFixture} from "./utils/WantosFixture.sol";
@@ -213,7 +214,7 @@ contract WantosBridgeV2Test is WantosFixture {
         uint256 ts = token.totalSupply();
         bytes memory data = abi.encodeCall(WantosBridgeV2.setSupplyCeiling, (ts + 1_000_000 * U));
         bytes32 salt = _propose(address(bridge), data);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.prank(pauser);
         bridge.pause();
         vm.expectRevert();
@@ -225,7 +226,7 @@ contract WantosBridgeV2Test is WantosFixture {
         // timelock also cannot go below supply
         data = abi.encodeCall(WantosBridgeV2.setSupplyCeiling, (ts - 1));
         salt = _propose(address(bridge), data);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert();
         _execute(address(bridge), data, salt);
     }
@@ -241,12 +242,12 @@ contract WantosBridgeV2Test is WantosFixture {
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.NotAdmin.selector, wl));
         bridge.requestRefund(id);
         vm.expectEmit(address(bridge));
-        emit WantosBridgeV2.RefundRequested(id, expectedKey, alice, 800 * U, block.timestamp + 24 hours);
+        emit WantosBridgeV2.RefundRequested(id, expectedKey, alice, 800 * U, block.timestamp + W.REFUND_DELAY);
         vm.prank(admin);
         bridge.requestRefund(id);
         (,,, uint8 st,) = bridge.orders(id);
         assertEq(st, O_REFUNDING);
-        vm.warp(block.timestamp + 24 hours - 1);
+        vm.warp(block.timestamp + W.REFUND_DELAY - 1);
         vm.expectRevert();
         bridge.executeRefund(id);
         vm.warp(block.timestamp + 1);
@@ -276,7 +277,7 @@ contract WantosBridgeV2Test is WantosFixture {
         bridge.cancelRefund(id);
         (,,, uint8 st,) = bridge.orders(id);
         assertEq(st, O_LOCKED);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + W.REFUND_DELAY);
         vm.expectRevert();
         bridge.executeRefund(id);
         vm.prank(admin);
@@ -296,7 +297,7 @@ contract WantosBridgeV2Test is WantosFixture {
         bridge.pause();
         vm.prank(admin); // request allowed while paused
         bridge.requestRefundBatch(ids);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + W.REFUND_DELAY);
         vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         bridge.executeRefund(ids[0]);
         vm.prank(wl);
