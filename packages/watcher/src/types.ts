@@ -108,6 +108,8 @@ export interface DerivedState {
   timelockOps: Record<string, TimelockOp>;
   /** BSC Deposited nonce -> block number (to fetch the recipient from the right block). */
   depositBlocks: Record<string, string>;
+  /** Recent confirmed BridgeOut orders per user (lower-case address), used for the frequent-withdrawal alert. Optional: older state files do not have it. */
+  withdrawLog?: Record<string, Array<{ id: string; t: number; amount: string }>>;
 }
 
 export interface MetaState {

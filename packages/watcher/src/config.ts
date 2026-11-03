@@ -51,6 +51,13 @@ export interface WatcherConfig {
   dailyCapReportRatioBps: number;
   gasWatch: GasWatch[];
   legacyAddresses: WatchedAddress[];
+  /** Abnormal-withdrawal alerts on WANTOS BridgeOut orders (level 2). */
+  withdrawalAlerts: {
+    /** A single order strictly above this amount → LARGE_WITHDRAWAL. */
+    largeWei: bigint;
+    /** One address with at least `count` orders within `windowSeconds` → FREQUENT_WITHDRAWALS (once per address per window). */
+    frequent: { count: number; windowSeconds: number };
+  };
 }
 
 type Json = Record<string, unknown>;
@@ -108,6 +115,8 @@ export function parseConfig(raw: unknown): WatcherConfig {
   const rec = obj(r["reconcile"], "reconcile");
   const tol = obj(rec["toleranceWei"], "reconcile.toleranceWei");
   const pr = obj(r["pauseRetry"], "pauseRetry");
+  const wa = r["withdrawalAlerts"] === undefined ? {} : obj(r["withdrawalAlerts"], "withdrawalAlerts");
+  const wf = wa["frequent"] === undefined ? {} : obj(wa["frequent"], "withdrawalAlerts.frequent");
   return {
     dataDir: str(r["dataDir"], "dataDir"),
     minRpcAgreement,
@@ -139,5 +148,12 @@ export function parseConfig(raw: unknown): WatcherConfig {
       return { ...w, minWei: big(obj(v, `gasWatch[${i}]`)["minWei"], `gasWatch[${i}].minWei`) };
     }),
     legacyAddresses: arr(r["legacyAddresses"] ?? [], "legacyAddresses").map((v, i) => watched(v, `legacyAddresses[${i}]`)),
+    withdrawalAlerts: {
+      largeWei: wa["largeWei"] === undefined ? 2000n * 10n ** 18n : big(wa["largeWei"], "withdrawalAlerts.largeWei"),
+      frequent: {
+        count: num(wf["count"] ?? 5, "withdrawalAlerts.frequent.count", 2),
+        windowSeconds: num(wf["windowSeconds"] ?? 3600, "withdrawalAlerts.frequent.windowSeconds", 60),
+      },
+    },
   };
 }

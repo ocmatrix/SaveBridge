@@ -46,10 +46,6 @@
     { "chain": "wantos", "address": "0x00000000000000000000000000000000000a0002", "label": "白名单钱包", "minWei": "1000000000000000000" },
     { "chain": "wantos", "address": "0x00000000000000000000000000000000000a0003", "label": "暂停钥匙", "minWei": "1000000000000000000" }
   ],
-  "legacyAddresses": [
-    { "chain": "wantos", "address": "0x8dFd39E98f478688A41Cdbe40bc544d672F0A9E3", "label": "旧 WANTOS 金库 0x8dFd" },
-    { "chain": "wantos", "address": "0x9dAb17a9Ad061cbDA2BeF607A6A330EE74076E90", "label": "旧付款程序 0x9dab" },
-    { "chain": "bsc", "address": "0x9dAb17a9Ad061cbDA2BeF607A6A330EE74076E90", "label": "旧付款程序 0x9dab" },
-    { "chain": "bsc", "address": "0xeC6E356a2E986D6A9b103217B9d215c8a6F37139", "label": "旧 BSC 金库 0xec6e" }
-  ]
+  "legacyAddresses": [],
+  "withdrawalAlerts": { "largeWei": "2000000000000000000000", "frequent": { "count": 5, "windowSeconds": 3600 } }
 }
