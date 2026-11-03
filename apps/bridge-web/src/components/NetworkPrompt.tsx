@@ -3,25 +3,25 @@ import { useConnection, useSwitchChain } from "wagmi";
 import type { ChainConf } from "../config";
 import { useDeps, useI18n } from "../context";
 import { addWantosNetwork, type Eip1193Like } from "../wallet/network";
-import { describeError, translateError } from "../lib/errors";
 
 /**
- * Shown when the wallet is on another chain. Both chains work by default: the switch is requested once on its own
- * (wagmi adds the chain from config when the wallet lacks it); the buttons stay as the fallback if it was refused.
+ * Both chains work by default: the switch is requested once on its own (wagmi adds the chain from config when the
+ * wallet lacks it) and nothing is shown meanwhile. Only if that fails (chain missing or refused) a single button
+ * appears; no other text.
  */
 export function NetworkPrompt({ target }: { target: ChainConf }) {
   const { cfg } = useDeps();
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   const { connector } = useConnection();
   const { mutateAsync: switchChain, isPending } = useSwitchChain();
-  const [error, setError] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
 
   const run = async (fn: () => Promise<unknown>) => {
-    setError(null);
     try {
       await fn();
-    } catch (e) {
-      setError(describeError(translateError(e, { decimals: 18 }), lang));
+      setFailed(false);
+    } catch {
+      setFailed(true);
     }
   };
 
@@ -33,24 +33,21 @@ export function NetworkPrompt({ target }: { target: ChainConf }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target.id]);
 
+  if (!failed) return null;
   return (
-    <div className="notice warn">
-      <p>{t("net.wrong", { chain: target.name })}</p>
-      <div className="row">
-        <button type="button" disabled={isPending} onClick={() => void run(() => switchChain({ chainId: target.id }))}>
-          {t("net.switchTo", { chain: target.name })}
+    <div className="net-switch">
+      <button type="button" disabled={isPending} onClick={() => void run(() => switchChain({ chainId: target.id }))}>
+        {t("net.switchTo", { chain: target.name })}
+      </button>
+      {target.id === cfg.wantos.id && connector && (
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => void run(async () => addWantosNetwork((await connector.getProvider()) as Eip1193Like, cfg))}
+        >
+          {t("net.add", { chain: target.name })}
         </button>
-        {target.id === cfg.wantos.id && connector && (
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => void run(async () => addWantosNetwork((await connector.getProvider()) as Eip1193Like, cfg))}
-          >
-            {t("net.add", { chain: target.name })}
-          </button>
-        )}
-      </div>
-      {error && <p className="error">{error}</p>}
+      )}
     </div>
   );
 }
