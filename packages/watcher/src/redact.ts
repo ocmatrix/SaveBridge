@@ -12,4 +12,12 @@ export function redact(text: string): string {
     .replace(/(0x)?[0-9a-fA-F]{64,}/g, "<redacted-64hex>");
 }
 
-export const errText = (e: unknown): string => redact(e instanceof Error ? e.message.split("\n")[0]! : String(e));
+/**
+ * Keeps the whole error, not just its first line: viem puts the provider's own reason in "Details:"
+ * (e.g. "block range extends beyond current head"), and a first-line cut hides it. Redact first, then cap length.
+ */
+export const errText = (e: unknown): string => {
+  const full = e instanceof Error ? e.message : String(e);
+  const oneLine = full.split("\n").map((s) => s.trim()).filter(Boolean).join(" | ");
+  return redact(oneLine).slice(0, 400);
+};
