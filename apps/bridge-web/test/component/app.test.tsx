@@ -137,7 +137,7 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     await waitFor(() => expect(within(panel("WANTOS → BSC")).queryByRole("button", { name: "连接 WANTOS" })).toBeNull(), T);
   });
 
-  it("switch refused by the wallet → prompt with switch / add buttons stays as the fallback", async () => {
+  it("switch refused by the wallet → the 连接 pill stays as the fallback and works once the wallet accepts", async () => {
     await whitelist(env, env.wantos, [KEYS.alice.address]);
     await whitelist(env, env.bsc, [KEYS.alice.address]);
     const features: { switchChainError?: boolean } = {};
@@ -149,8 +149,7 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     await switchChain(wagmiConfig, { chainId: 56 });
     const w2b = panel("WANTOS → BSC");
     expect(await within(w2b).findByRole("button", { name: "连接 WANTOS" }, T)).toBeInTheDocument();
-    expect(within(w2b).getByRole("button", { name: "添加 WANTOS 网络" })).toBeInTheDocument();
-    expect(within(w2b).getByRole("button", { name: "连接 WANTOS" })).toBeInTheDocument();
+    expect(within(w2b).queryByRole("button", { name: "添加 WANTOS 网络" })).toBeNull();
     expect(submit(w2b)).toBeDisabled();
     features.switchChainError = false;
     await user.click(within(w2b).getByRole("button", { name: "连接 WANTOS" }));

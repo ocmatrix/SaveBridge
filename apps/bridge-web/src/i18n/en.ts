@@ -33,7 +33,6 @@ export const en: Dict = {
   "wallet.retry": "Retry",
 
   "net.switchTo": "Connect {chain}",
-  "net.add": "Add {chain} network",
 
   "wl.label": "Bridge access",
   "wl.open": "Enabled",
