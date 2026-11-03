@@ -4,7 +4,9 @@ import { getAddress, keccak256, recoverMessageAddress, toBytes, type Hex } from 
 import { reviewMessage as relayerReviewMessage } from "../../../../packages/relayer/src/review";
 import { readChainState } from "../../src/lib/state";
 import { readParams, applyParams } from "../../src/lib/params";
-import { propose } from "../../src/lib/timelock";
+import { executeProposal, listProposals, propose } from "../../src/lib/timelock";
+import { actions } from "../../src/lib/handover";
+import { readBoth } from "../../src/lib/state";
 import { U, BSC_ID, localSigner, startWorld, type World } from "../support/world";
 import { renderApp } from "./render";
 
@@ -132,6 +134,7 @@ describe("params page", () => {
 describe("/handover page", () => {
   it("shows contract addresses; new holder proves address; current WL verifies; gates per role", async () => {
     renderApp(w, localSigner(w, w.act.newHolder), "/handover");
+    fireEvent.click(await screen.findByRole("radio", { name: "白名单钱包" }));
     await screen.findAllByRole("button", { name: "接收（新地址）" });
     expect(screen.getAllByText(w.bridge).length).toBeGreaterThan(2);
     expect(btn("接收（新地址）")[0]).toBeDisabled();
@@ -142,6 +145,7 @@ describe("/handover page", () => {
     cleanup();
 
     renderApp(w, localSigner(w, w.act.wl), "/handover");
+    fireEvent.click(await screen.findByRole("radio", { name: "白名单钱包" }));
     fireEvent.change(await screen.findByLabelText("粘贴地址证明"), { target: { value: proof } });
     fireEvent.click(screen.getByRole("button", { name: "验证证明" }));
     expect(await screen.findByTestId("verified")).toHaveTextContent(w.act.newHolder.address);
@@ -222,5 +226,93 @@ describe("review / reserves (Worker API placeholder, fake fetch)", () => {
     expect(await screen.findByTestId("reserve-wantos")).toHaveTextContent("今日已用");
     fireEvent.click(screen.getByRole("button", { name: /读取（需要签名登录）/ }));
     expect(await screen.findByText(/WANTOS 无短缺/)).toBeInTheDocument();
+  });
+});
+
+describe("/params page greys out what the connected wallet cannot do", () => {
+  it("non-admin: every field disabled with the reason; contract-fixed values are read-only text", async () => {
+    renderApp(w, localSigner(w, w.act.stranger), "/params");
+    const f = await screen.findByLabelText("BSC 全局日额度");
+    expect(f).toBeDisabled();
+    expect(screen.getByLabelText("WANTOS B2W 日额度")).toBeDisabled();
+    expect(screen.getByLabelText("新的发行上限")).toBeDisabled();
+    expect(screen.getAllByText(/当前钱包不是 BSC 的管理钱包/).length).toBeGreaterThan(0);
+    const fixed = screen.getByTestId("fixed-params");
+    expect(fixed).toHaveTextContent("时间锁延迟");
+    expect(fixed).toHaveTextContent("48 小时");
+    expect(within(fixed).queryByRole("textbox")).toBeNull();
+  });
+
+  it("not connected: fields disabled too", async () => {
+    renderApp(w, null, "/params");
+    expect(await screen.findByLabelText("BSC 全局日额度")).toBeDisabled();
+  });
+
+  it("admin: fields editable", async () => {
+    renderApp(w, localSigner(w, w.act.admin), "/params");
+    expect(await screen.findByLabelText("BSC 全局日额度")).toBeEnabled();
+    expect(screen.getByLabelText("新的发行上限")).toBeEnabled();
+  });
+});
+
+describe("/handover page: admin-wallet handover", () => {
+  it("defaults to the admin-wallet role with the four steps per chain; authorize then revoke", async () => {
+    renderApp(w, localSigner(w, w.act.admin), "/handover");
+    expect(await screen.findByRole("radio", { name: "管理钱包" })).toBeChecked();
+    const bsc = await screen.findByTestId("admin-handover-bsc");
+    for (const t of ["① 现管理员授权", "② 等待 48 小时", "③ 执行提议", "④ 新地址签名接收"]) expect(bsc).toHaveTextContent(t);
+    expect(bsc).toHaveTextContent("待授权");
+    expect(within(bsc).getByRole("button", { name: "撤销授权" })).toBeDisabled();
+    expect(within(bsc).getByRole("button", { name: "接收管理钱包（新地址签名）" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("新地址"), { target: { value: w.act.newHolder.address } });
+    const go = within(bsc).getByRole("button", { name: "授权新地址" });
+    await waitFor(() => expect(go).toBeEnabled());
+    fireEvent.click(go);
+    fireEvent.click(within(bsc).getByRole("button", { name: "确认" }));
+    await waitFor(() => expect(screen.getByTestId("admin-handover-bsc")).toHaveTextContent("已完成 ✓"), { timeout: 15_000 });
+    expect(screen.getByTestId("admin-handover-bsc")).toHaveTextContent(/剩 \d+ 天|剩 47 小时|剩 48 小时/);
+    expect(await screen.findByTestId("gaps")).toHaveTextContent("管理钱包交接");
+    const revoke = within(screen.getByTestId("admin-handover-bsc")).getByRole("button", { name: "撤销授权" });
+    await waitFor(() => expect(revoke).toBeEnabled());
+    fireEvent.click(revoke);
+    fireEvent.click(within(screen.getByTestId("admin-handover-bsc")).getByRole("button", { name: "确认" }));
+    await waitFor(() => expect(screen.getByTestId("admin-handover-bsc")).toHaveTextContent("待授权"), { timeout: 15_000 });
+    await waitFor(() => expect(screen.queryByTestId("gaps")).toBeNull(), { timeout: 15_000 });
+  });
+
+  it("a stranger sees the authorize/revoke buttons disabled with the reason", async () => {
+    renderApp(w, localSigner(w, w.act.stranger), "/handover");
+    const bsc = await screen.findByTestId("admin-handover-bsc");
+    fireEvent.change(screen.getByLabelText("新地址"), { target: { value: w.act.newHolder.address } });
+    expect(within(bsc).getByRole("button", { name: "授权新地址" })).toBeDisabled();
+    expect(within(bsc).getAllByText(/当前钱包不是 BSC 的管理钱包/).length).toBeGreaterThan(0);
+  });
+});
+
+// Last on purpose: it really hands the admin wallet over (warps 48h, executes, accepts) and changes the world's admin.
+describe("/handover page: new address accepts (TP signature)", () => {
+  it("shows the banner and per-chain accept; after both accepts the new address is effective", async () => {
+    const admin = localSigner(w, w.act.admin);
+    const both = await readBoth(w.chains);
+    const ids: Record<string, Hex> = {};
+    for (const s of ["bsc", "wantos"] as const) ids[s] = (await actions.proposeTransferAdmin(w.chains[s], admin, both[s].timelock, w.act.newHolder.address)).id;
+    await w.warp(48 * 3600 + 5);
+    for (const s of ["bsc", "wantos"] as const) {
+      const p = (await listProposals(w.chains[s], both[s].timelock)).find((x) => x.id === ids[s])!;
+      await executeProposal(w.chains[s], localSigner(w, w.act.pauser), both[s].timelock, p);
+    }
+    renderApp(w, localSigner(w, w.act.newHolder), "/handover");
+    expect(await screen.findByTestId("new-admin-banner")).toHaveTextContent("你被指定为新的管理钱包");
+    const bsc = await screen.findByTestId("admin-handover-bsc");
+    expect(bsc).toHaveTextContent("待签名");
+    const acceptBsc = within(bsc).getByRole("button", { name: "接收管理钱包（新地址签名）" });
+    await waitFor(() => expect(acceptBsc).toBeEnabled());
+    fireEvent.click(acceptBsc);
+    await waitFor(async () => expect((await readChainState(w.chains.bsc)).admin).toBe(w.act.newHolder.address), { timeout: 15_000 });
+    const acceptW = within(screen.getByTestId("admin-handover-wantos")).getByRole("button", { name: "接收管理钱包（新地址签名）" });
+    fireEvent.click(acceptW);
+    await waitFor(async () => expect((await readChainState(w.chains.wantos)).admin).toBe(w.act.newHolder.address), { timeout: 15_000 });
+    fireEvent.change(screen.getByLabelText("新地址"), { target: { value: w.act.newHolder.address } });
+    await waitFor(() => expect(screen.getByTestId("admin-handover-bsc")).toHaveTextContent("已生效 ✓"), { timeout: 15_000 });
   });
 });

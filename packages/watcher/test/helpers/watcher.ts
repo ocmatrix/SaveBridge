@@ -199,6 +199,7 @@ export async function makeWatcher(H: Harness, o: WOpts = {}): Promise<TW> {
     dailyCapReportRatioBps: 7000,
     gasWatch: [],
     legacyAddresses: [],
+    withdrawalAlerts: { largeWei: E(2000), frequent: { count: 5, windowSeconds: 3600 } },
   };
   o.config?.(cfg);
   const mkRpc = (h: ChainH): MultiRpc =>

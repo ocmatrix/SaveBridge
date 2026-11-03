@@ -1,8 +1,8 @@
 import { getAddress, isAddress, isAddressEqual, type Address, type Hex, type PublicClient } from "viem";
 import { send, timelockAbi, type ChainCtx, type Signer } from "./chain";
 import { SIDE_NAME, SIDES } from "./config";
-import type { BothStates } from "./state";
-import { encodeTimelock, propose } from "./timelock";
+import type { BothStates, ChainState } from "./state";
+import { encodeTimelock, propose, type Proposal } from "./timelock";
 
 export type HandoverRole = "wl" | "admin";
 const ROLE_TEXT: Record<HandoverRole, string> = { wl: "whitelist-wallet", admin: "admin-wallet" };
@@ -119,3 +119,37 @@ export function countdown(target: bigint, now: bigint): string {
 }
 
 export const chainsOf = () => SIDES.map((s) => ({ side: s, name: SIDE_NAME[s] }));
+
+export interface AdminHandoverView {
+  rows: { label: string; value: string }[];
+  /** an open (waiting/ready) transferAdmin proposal exists → the admin or WL wallet can cancel it */
+  revocable: boolean;
+  /** pendingAdmin is set for the typed address → only the new address can finish (contract has no one-click revoke here) */
+  waitingAccept: boolean;
+  effective: boolean;
+}
+
+/**
+ * Four steps of the admin-wallet handover on ONE chain, derived only from chain reads (DESIGN §4.6):
+ * ① admin proposes transferAdmin → ② 48h wait (cancellable) → ③ execute → ④ new address signs acceptAdmin (effective at once).
+ * `p` = the open transferAdmin proposal for `cand`; `cand` = the new address typed on the page (null = unknown).
+ */
+export function adminHandoverView(st: ChainState, p: Proposal | null, cand: Address | null): AdminHandoverView {
+  const labels = ["① 现管理员授权", "② 等待 48 小时", "③ 执行提议", "④ 新地址签名接收"];
+  const mk = (v: string[], flags: Partial<AdminHandoverView> = {}): AdminHandoverView => ({
+    rows: labels.map((label, i) => ({ label, value: v[i]! })),
+    revocable: false,
+    waitingAccept: false,
+    effective: false,
+    ...flags,
+  });
+  const done = "已完成 ✓";
+  if (cand && isAddressEqual(cand, st.admin)) return mk([done, done, done, "已生效 ✓"], { effective: true });
+  const pa = st.pendingAdmin;
+  if (pa && (!cand || isAddressEqual(pa.candidate, cand))) return mk([done, done, "已执行 ✓", `待签名 · 剩 ${countdown(pa.expiresAt, st.now)}`], { waitingAccept: true });
+  if (p && (p.state === "waiting" || p.state === "ready")) {
+    const waiting = p.state === "waiting";
+    return mk([done, waiting ? `剩 ${countdown(p.readyAt, st.now)}` : "已到 ✓", waiting ? "未到时间" : "可执行", "—"], { revocable: true });
+  }
+  return mk(["待授权", "—", "—", "—"]);
+}

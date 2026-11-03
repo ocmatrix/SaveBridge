@@ -19,8 +19,8 @@ describe("config", () => {
       expect(c.rpcUrls.length).toBeGreaterThanOrEqual(2);
       for (const u of c.rpcUrls) expect(u).toMatch(/example\.invalid/);
     }
-    expect(cfg.legacyAddresses.map((l) => l.address.toLowerCase())).toContain("0x8dfd39e98f478688a41cdbe40bc544d672f0a9e3");
-    expect(cfg.legacyAddresses.map((l) => l.address.toLowerCase())).toContain("0x9dab17a9ad061cbda2bef607a6a330ee74076e90");
+    // only the new bridge is monitored; the old bridge is no longer watched
+    expect(cfg.legacyAddresses).toEqual([]);
   });
 
   it("rejects fewer RPCs than the agreement threshold, threshold < 2, bad addresses", () => {

@@ -609,6 +609,7 @@ export class Watcher {
     switch (l.name) {
       case "BridgeOut":
         add(der.sums, "bridgeOut", a["amount"]);
+        await this.checkWithdrawal(c, l);
         return;
       case "Deposited":
         add(der.sums, "deposited", a["amount"]);
@@ -751,6 +752,33 @@ export class Watcher {
     if (legacy.has(from) || legacy.has(to)) {
       await this.raise("LEGACY_ACTIVITY", `${c} 旧桥地址有资金动作`, { chain: c, detail: this.evDetail(l), key: `${key}:legacy` });
     }
+  }
+
+  /**
+   * Abnormal-withdrawal alerts on a WANTOS BridgeOut order (level 2, alert only — never pauses):
+   * one order strictly above `largeWei`, or one address placing at least `frequent.count` orders within
+   * `frequent.windowSeconds` (at most one alert per address per window). Only confirmed orders enter the window.
+   */
+  private async checkWithdrawal(c: ChainName, l: DecodedLog): Promise<void> {
+    const w = this.cfg.withdrawalAlerts;
+    const user = lc(String(l.args["user"]));
+    const amount = BigInt(String(l.args["amount"]));
+    const key = this.evKey(c, l);
+    if (amount > w.largeWei)
+      await this.raise("LARGE_WITHDRAWAL", `${c} 单笔出金 ${amount} 超过 ${w.largeWei}`, { chain: c, detail: { ...this.evDetail(l), user, amount: amount.toString(), threshold: w.largeWei.toString() }, key: `${key}:large` });
+    if (!l.confirmed) return; // unconfirmed logs never change state
+    const log = (this.state.derived.withdrawLog ??= {});
+    const earlier = log[user] ?? [];
+    if (earlier.some((e) => e.id === key)) return;
+    const recent = [...earlier, { id: key, t: l.timestamp, amount: amount.toString() }].filter((e) => e.t > l.timestamp - w.frequent.windowSeconds);
+    log[user] = recent;
+    if (recent.length < w.frequent.count) return;
+    const total = recent.reduce((s, e) => s + BigInt(e.amount), 0n);
+    await this.raise("FREQUENT_WITHDRAWALS", `${c} 地址 ${user} ${Math.round(w.frequent.windowSeconds / 60)} 分钟内出金 ${recent.length} 次，合计 ${total}`, {
+      chain: c,
+      detail: { user, count: recent.length, windowSeconds: w.frequent.windowSeconds, total: total.toString(), events: recent.map((e) => e.id) },
+      key: `wfreq:${user}:${Math.floor(l.timestamp / w.frequent.windowSeconds)}`,
+    });
   }
 
   private async onLegacyLog(c: ChainName, l: DecodedLog): Promise<void> {
