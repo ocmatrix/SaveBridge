@@ -24,7 +24,6 @@ library W {
     uint256 internal constant REFUND_DELAY = 24 hours;
     // Parameter lower bounds
     uint256 internal constant RELEASE_DELAY_MIN = 6 hours;
-    uint256 internal constant B2W_DELAY_MIN = 10 minutes;
     // Chains the tests impersonate
     uint256 internal constant BSC_CHAIN = 56;
     uint256 internal constant WANTOS_CHAIN = 13555;

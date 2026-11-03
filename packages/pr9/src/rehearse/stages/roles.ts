@@ -72,8 +72,9 @@ export async function stageRoles(ctx: Ctx): Promise<void> {
   ctx.check("R4b", "过期批次被拒", (await batchReverts(ctx, expired)) === "SignatureExpired");
   const far = await signBatch(ctx, "bsc", x, true, { deadline: BigInt(now + 3600) });
   ctx.check("R4c", "deadline 超过 MAX_SIGNATURE_TTL（快速版 10 分钟）被拒", (await batchReverts(ctx, far)) === "DeadlineTooFar");
-  const cross = await signBatch(ctx, "bsc", x, true, { nonce: await ctx.view<bigint>("wantos", "whitelistNonce") });
-  ctx.check("R4d", "跨链批次（BSC 签名拿到 WANTON 提交）被拒", (await batchReverts(ctx, cross, "wantos")) === "InvalidSigner");
+  // The whitelist domain has no chainId (one signature is valid on both chains, proved in BscVaultV2.t.sol); what binds it is the contract address.
+  const otherContract = await signBatch(ctx, "bsc", x, true, { verifyingContract: keys.role("attacker").address });
+  ctx.check("R4d", "签给别的合约地址的批次被拒（签名域不含 chainId，绑定的是合约地址）", (await batchReverts(ctx, otherContract)) === "InvalidSigner");
   const notWl = await signBatch(ctx, "bsc", x, true, { signer: keys.role("attacker") });
   ctx.check("R4e", "非白名单钱包签名被拒", (await batchReverts(ctx, notWl)) === "InvalidSigner");
   const replayOf = await signBatch(ctx, "bsc", [keys.user(1).address], true, { nonce: nonceB - 1n });

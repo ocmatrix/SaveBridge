@@ -147,6 +147,7 @@ export async function startWatcher(ctx: Ctx, o: { statePath?: string; config?: (
     pauseRetry: { attempts: 3, backoffMs: rc.waitMode === "warp" ? 0 : 3000 },
     timelockRemindersSeconds: [60, 30],
     dailyCapReportRatioBps: 7000,
+    withdrawalAlerts: { largeWei: 2000n * 10n ** 18n, frequent: { count: 5, windowSeconds: 3600 } },
     gasWatch: [],
     legacyAddresses: [],
   };

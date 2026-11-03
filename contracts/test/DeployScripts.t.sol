@@ -202,15 +202,17 @@ contract DeployScriptsTest is Test {
         deployer.deployBsc(_common(address(bscUsdt), W.WANTOS_CHAIN), p);
     }
 
-    function test_buildB2wLowerBoundMatchesTestMirror() public {
+    /// The inbound delay has no lower bound since the zero-delay redeploy (2fadb99); only the 24h upper bound is enforced.
+    /// Turns red if a lower bound comes back (the zero-delay deploy would revert) or the upper bound goes away.
+    function test_buildB2wDelayZeroAllowedUpperBoundEnforced() public {
         WantosBridgeV2.Params memory p = _wParams();
         uint256 ceiling = wantosUsdt.totalSupply() + 10_000 * U;
-        p.b2wDelay = W.B2W_DELAY_MIN - 1;
+        p.b2wDelay = 24 hours + 1;
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.ParamOutOfRange.selector, 3));
         deployer.deployWantos(_common(address(wantosUsdt), W.BSC_CHAIN), p, ceiling);
         vm.stopBroadcast();
         dep = makeAddr("freshDeployer2");
-        p.b2wDelay = W.B2W_DELAY_MIN;
+        p.b2wDelay = 0;
         deployer.deployWantos(_common(address(wantosUsdt), W.BSC_CHAIN), p, ceiling);
     }
 }

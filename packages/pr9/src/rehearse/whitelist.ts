@@ -26,11 +26,12 @@ export interface SignedBatch {
   digest: Hex;
 }
 
-export async function signBatch(ctx: Ctx, side: Side, addrs: Address[], allowed: boolean, o: { signer?: Account; nonce?: bigint; deadline?: bigint; chainId?: number } = {}): Promise<SignedBatch> {
+export async function signBatch(ctx: Ctx, side: Side, addrs: Address[], allowed: boolean, o: { signer?: Account; nonce?: bigint; deadline?: bigint; verifyingContract?: Address } = {}): Promise<SignedBatch> {
   const sorted = sortAddrs(addrs);
   const nonce = o.nonce ?? (await ctx.view<bigint>(side, "whitelistNonce"));
   const deadline = o.deadline ?? BigInt((await ctx.syncClock()) + 300);
-  const domain = { name: side === "bsc" ? "BscVaultV2" : "WantosBridgeV2", version: "1", chainId: o.chainId ?? ctx.chains[side].chainId, verifyingContract: ctx.d.proxy };
+  // Chainless whitelist domain (BridgeBase WL_DOMAIN_*): one name on both chains, no chainId; the per-chain nonce still stops replay.
+  const domain = { name: "SaveBridgeWhitelist", version: "1", verifyingContract: o.verifyingContract ?? ctx.d.proxy };
   const message = { listHash: listHashOf(sorted), count: sorted.length, allowed, nonce, deadline };
   const signer = o.signer ?? ctx.acct("wl");
   const signature = await (signer as Account & { signTypedData: (x: unknown) => Promise<Hex> }).signTypedData({ domain, types: BATCH_TYPES, primaryType: "WhitelistBatch", message });

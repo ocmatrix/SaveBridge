@@ -343,7 +343,7 @@ export async function stageEmergency(ctx: Ctx): Promise<void> {
     const nonce = await ctx.view<bigint>("bsc", "whitelistNonce");
     const deadline = BigInt(ctx.clockSec + 300);
     const offline = computeBatches(shown.join("\n"), { allowed: true, contract: d.proxy, deadline, bscNonce: nonce, wantosNonce: nonce, bscChainId: ctx.chains.bsc.chainId, wantosChainId: ctx.chains.wantos.chainId });
-    const device = hashTypedData({ domain: { name: "BscVaultV2", version: "1", chainId: ctx.chains.bsc.chainId, verifyingContract: d.proxy }, types: BATCH_TYPES, primaryType: "WhitelistBatch", message: { listHash: listHashOf(sortAddrs(actual)), count: 2, allowed: true, nonce, deadline } });
+    const device = hashTypedData({ domain: { name: "SaveBridgeWhitelist", version: "1", verifyingContract: d.proxy }, types: BATCH_TYPES, primaryType: "WhitelistBatch", message: { listHash: listHashOf(sortAddrs(actual)), count: 2, allowed: true, nonce, deadline } });
     const calldata = encodeFunctionData({ abi: abiOf("bsc"), functionName: "applyWhitelistBatch", args: [sortAddrs(actual), true, nonce, deadline, "0x"] });
     const decoded = decodeCalldata(calldata);
     ctx.check("E9", "后台被篡改：离线工具算出的 digest 与设备显示不符 → 负责人不签；解码 calldata 暴露真实地址", offline.batches[0]!.bsc.digest!.toLowerCase() !== device.toLowerCase() && JSON.stringify(decoded).toLowerCase().includes(keys.role("attacker").address.slice(2).toLowerCase()));

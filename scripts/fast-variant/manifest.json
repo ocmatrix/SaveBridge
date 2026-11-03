@@ -205,17 +205,6 @@
       "note": "releaseDelay lower bound (upper 7d unchanged)"
     },
     {
-      "id": "R2",
-      "file": "src/WantosBridgeV2.sol",
-      "kind": "range",
-      "old": "p.b2wDelay < 10 minutes ",
-      "new": "p.b2wDelay < 30 seconds ",
-      "count": 1,
-      "oldValue": "10min",
-      "newValue": "30s",
-      "note": "b2wDelay lower bound (upper 24h unchanged)"
-    },
-    {
       "id": "X1",
       "file": "test/utils/Windows.sol",
       "kind": "test-constant",
@@ -357,17 +346,6 @@
       "oldValue": "6h",
       "newValue": "1min",
       "note": "test mirror of RELEASE_DELAY_MIN"
-    },
-    {
-      "id": "X14",
-      "file": "test/utils/Windows.sol",
-      "kind": "test-constant",
-      "old": "B2W_DELAY_MIN = 10 minutes;",
-      "new": "B2W_DELAY_MIN = 30 seconds;",
-      "count": 1,
-      "oldValue": "10min",
-      "newValue": "30s",
-      "note": "test mirror of B2W_DELAY_MIN"
     },
     {
       "id": "X15",

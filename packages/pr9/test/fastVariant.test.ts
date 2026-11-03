@@ -47,7 +47,7 @@ beforeAll(async () => {
 });
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
-const ALL_WINDOW_IDS = ["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "B1", "B2", "B3", "B4", "B5", "B6", "R1", "R2"];
+const ALL_WINDOW_IDS = ["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "B1", "B2", "B3", "B4", "B5", "B6", "R1"];
 
 describe("manifest", () => {
   it("lists every production window constant with old → new values, testnet chain ids only", () => {
