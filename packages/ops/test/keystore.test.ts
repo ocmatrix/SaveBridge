@@ -19,7 +19,7 @@ import {
   type KeystoreFile,
 } from "../src/keystore";
 import { keygen, verifyKeystore } from "../src/keygen";
-import { readCredential, readCredentialText, credentialPath, wipe } from "../src/credentials";
+import { readCredential, readCredentialText, credentialPath, credentialStatProblem, wipe } from "../src/credentials";
 
 const FAST = { N: 2 ** 10, r: 8, p: 1 };
 const minN = 2 ** 10;
@@ -260,5 +260,25 @@ describe("credentials", () => {
     expect(() => credentialPath("../etc/passwd", env)).toThrow(/invalid/);
     expect(() => readCredential("pass", {})).toThrow(/CREDENTIALS_DIRECTORY is not set/);
     expect(() => readCredential("missing", env)).toThrow(/cannot stat/);
+  });
+});
+
+describe("credentialStatProblem (systemd credential files)", () => {
+  const me = 999;
+  const gid = 990;
+  const ok = (st: { mode: number; uid: number; gid: number }, ds: { mode: number; uid: number }) =>
+    credentialStatProblem({ isFile: () => true, ...st }, ds, me, gid);
+  it("accepts systemd 249 style (owned by the service user, 0400, dir 0700)", () => {
+    expect(ok({ mode: 0o100400, uid: me, gid }, { mode: 0o40700, uid: me })).toBeUndefined();
+  });
+  it("accepts systemd 257 style (root:root 0440 + ACL for the service user, dir 0550 root)", () => {
+    expect(ok({ mode: 0o100440, uid: 0, gid: 0 }, { mode: 0o40550, uid: 0 })).toBeUndefined();
+  });
+  it("refuses other-readable files, foreign owners, foreign groups and open directories", () => {
+    expect(ok({ mode: 0o100444, uid: 0, gid: 0 }, { mode: 0o40550, uid: 0 })).toMatch(/other/);
+    expect(ok({ mode: 0o100400, uid: 1234, gid }, { mode: 0o40700, uid: me })).toMatch(/owner/);
+    expect(ok({ mode: 0o100440, uid: 0, gid: 77 }, { mode: 0o40550, uid: 0 })).toMatch(/group/);
+    expect(ok({ mode: 0o100440, uid: 0, gid: 0 }, { mode: 0o40755, uid: 0 })).toMatch(/directory/);
+    expect(ok({ mode: 0o100440, uid: 0, gid: 0 }, { mode: 0o40570, uid: 0 })).toMatch(/directory/);
   });
 });

@@ -3,6 +3,7 @@ import { formatUnits, getAddress, type Address } from "viem";
 import { chainNow, erc20Abi } from "../lib/chain";
 import { SIDE_NAME, SIDES, type Side } from "../lib/config";
 import { chunk, MAX_BATCH, parseAddressList, REASON_TEXT } from "../lib/normalize";
+import { fileToText, XlsxError } from "../lib/xlsx";
 import { gate, gateWith, type Gate } from "../lib/perm";
 import { FLAG_ICON, FLAG_TEXT, flagsFor, type Flag } from "../lib/risk";
 import type { AddressInfo } from "../lib/api";
@@ -33,6 +34,9 @@ const STATUS_TEXT: Record<string, string> = { pending: "待写入", signing: "�
 export function WhitelistPage() {
   const { cfg, chains, signer, api, both } = useApp();
   const [text, setText] = useState("");
+  const [fileErr, setFileErr] = useState<string | null>(null);
+  const fileSeq = useRef(0); // only the newest chosen file may write its result
+  const lockedRef = useRef(false); // preparing / signing: a late file result must not touch the form
   const [allowed, setAllowed] = useState(true);
   const parsed = useMemo(() => parseAddressList(text), [text]);
   const [unchecked, setUnchecked] = useState<Set<string>>(new Set());
@@ -182,6 +186,7 @@ export function WhitelistPage() {
     }
   };
   const locked = preparing || running;
+  lockedRef.current = locked;
   const loadHistory = async () => {
     try {
       setHistErr(null);
@@ -212,18 +217,7 @@ export function WhitelistPage() {
   return (
     <div>
       <Section title="1. 上传或粘贴地址">
-        <p className="hint">CSV / TXT / 粘贴均可；每行取第一列；第一行不是地址会当表头跳过；# 开头为注释。规则与离线核对工具（rules v1）完全相同。</p>
-        <input
-          type="file"
-          accept=".csv,.txt,text/plain,text/csv"
-          aria-label="选择地址文件"
-          disabled={locked}
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) void f.text().then(setText);
-          }}
-        />
-        <textarea aria-label="地址列表" disabled={locked} rows={6} value={text} onChange={(e) => setText(e.target.value)} placeholder="0x…" />
+        <p className="hint">Excel（.xlsx，只读第一个工作表，不超过 500KB）/ CSV / TXT（不超过 2MB）/ 粘贴均可，只读第一列，最多 5000 行；第一行不是地址会当表头跳过；# 开头为注释。文件只在本机读取，不上传。规则与离线核对工具（rules v1）完全相同。</p>
         <fieldset>
           <label>
             <input type="radio" name="mode" disabled={locked} checked={allowed} onChange={() => (setAllowed(true), resetJob())} /> 添加
@@ -232,6 +226,45 @@ export function WhitelistPage() {
             <input type="radio" name="mode" disabled={locked} checked={!allowed} onChange={() => (setAllowed(false), resetJob())} /> 移除
           </label>
         </fieldset>
+        {!allowed && (
+          <p className="warn" data-testid="remove-warning">
+            这些地址将立即无法跨链
+          </p>
+        )}
+        <input
+          type="file"
+          accept=".xlsx,.csv,.txt,text/plain,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          aria-label="选择地址文件"
+          disabled={locked}
+          onChange={(e) => {
+            const input = e.target;
+            const f = input.files?.[0];
+            if (!f) return;
+            const mine = ++fileSeq.current;
+            const fresh = () => mine === fileSeq.current && !lockedRef.current;
+            setFileErr(null);
+            void fileToText(f)
+              .then((t) => fresh() && setText(t))
+              .catch((err: unknown) => {
+                if (!fresh()) return;
+                setText("");
+                setFileErr(err instanceof XlsxError ? err.message : "无法读取这个文件");
+              })
+              .finally(() => {
+                try {
+                  input.value = ""; // choosing the same file again (after fixing it) must fire onChange
+                } catch {
+                  /* some environments forbid it */
+                }
+              });
+          }}
+        />
+        {fileErr && (
+          <p className="err" role="alert">
+            {fileErr}
+          </p>
+        )}
+        <textarea aria-label="地址列表" disabled={locked} rows={6} value={text} onChange={(e) => (fileSeq.current++, setFileErr(null), setText(e.target.value))} placeholder="0x…" />
         {parsed.errors.length > 0 && (
           <div className="err" role="alert">
             地址文件有 {parsed.errors.length} 处错误，修好原始文件后再上传：
@@ -253,7 +286,7 @@ export function WhitelistPage() {
         <Section title="2. 逐行参考信息（只作提示）">
           {apiNote && <p className="hint">{apiNote}</p>}
           <p className="hint">
-            🟡 不在网体内　⚪ 合约地址（只作提示；风控只靠白名单本身）
+            △ 不在网体内　○ 合约地址（只作提示；风控只靠白名单本身）
           </p>
           {pages.length > 1 && (
             <p>
@@ -392,6 +425,7 @@ export function WhitelistPage() {
               label={`作废 ${SIDE_NAME[s]} 当前批次 nonce`}
               gate={both ? gate("wl", me(signer), both[s]) : { ok: false, reason: "读取中" }}
               confirmText="作废后，已签名未提交的批次全部失效。确定？"
+              danger
               run={() => invalidateNonce(chains[s], signer!)}
             />
           </p>

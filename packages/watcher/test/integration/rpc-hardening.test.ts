@@ -40,7 +40,44 @@ describe("RPC hardening", () => {
       await H.settle();
       await t.w.tick();
       expect(t.w.state.derived.bsc.cursor).toBeNull();
+      // a brief outage is not worth a message: nothing yet…
+      expect(t.codes()).not.toContain("RPC_UNREACHABLE");
+      // …but a sustained one (> 5 minutes of consecutive failed ticks) is reported, once
+      t.clock.now += 301;
+      await t.w.tick();
       expect(t.codes()).toContain("RPC_UNREACHABLE");
+      expect(t.w.state.derived.bsc.cursor).toBeNull();
+      t.clock.now += 15;
+      await t.w.tick();
+      expect(t.sink.alerts.filter((x) => x.code === "RPC_UNREACHABLE" && x.chain === "bsc")).toHaveLength(1);
+    });
+
+    it("a one-off getLogs failure is retried inside the same tick: cursor advances and nothing is alerted", async () => {
+      let failures = 1;
+      const flaky = tamperedClient(H.bsc, (m) => (m === "eth_getLogs" && failures-- > 0 ? { handled: true, result: new Error("block range extends beyond current head") } : { handled: false }));
+      const t = await makeWatcher(H, { endpoints: { bsc: [{ label: "a", client: H.bsc.pub }, { label: "flaky", client: flaky }] } });
+      await forge(23n);
+      await H.settle();
+      await t.w.tick();
+      expect(t.w.state.derived.bsc.cursor).not.toBeNull();
+      expect(t.codes()).not.toContain("RPC_UNREACHABLE");
+    });
+
+    it("the failure timer resets after a success: two short outages far apart never alert", async () => {
+      let down = true;
+      const flaky = tamperedClient(H.bsc, (m) => (m === "eth_getLogs" && down ? { handled: true, result: new Error("down") } : { handled: false }));
+      const t = await makeWatcher(H, { endpoints: { bsc: [{ label: "a", client: H.bsc.pub }, { label: "flaky", client: flaky }] } });
+      await H.settle();
+      await t.w.tick();
+      t.clock.now += 200;
+      down = false;
+      await t.w.tick(); // recovers → timer cleared
+      down = true;
+      t.clock.now += 200;
+      await t.w.tick(); // a NEW outage starts now, not 400 s ago
+      t.clock.now += 200;
+      await t.w.tick();
+      expect(t.codes()).not.toContain("RPC_UNREACHABLE");
     });
 
     it("B1: a cursor that cannot move for more than 10 minutes escalates to level 1 (CURSOR_STUCK)", async () => {

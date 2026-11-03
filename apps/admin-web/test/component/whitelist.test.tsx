@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { keccak256, toBytes } from "viem";
+import writeXlsxFile from "write-excel-file/node";
 import * as tool from "@bridge/offline-check";
 import { parseAddressList } from "../../src/lib/normalize";
 import { readWhitelisted } from "../../src/lib/whitelist";
@@ -24,6 +25,64 @@ const plain = [keccak256(toBytes("c1")).slice(0, 42), keccak256(toBytes("c2")).s
 
 const paste = (text: string) => fireEvent.change(screen.getByLabelText("地址列表"), { target: { value: text } });
 const prepareBtn = () => screen.getByRole("button", { name: /准备本批/ });
+
+describe("whitelist page: spreadsheet upload", () => {
+  const upload = (file: File) => fireEvent.change(screen.getByLabelText("选择地址文件"), { target: { files: [file] } });
+  const xlsxFile = async (rows: string[][]) => {
+    const buf = await writeXlsxFile(rows.map((r) => r.map((value) => ({ value }))) as never).toBuffer();
+    return new File([new Uint8Array(buf)], "list.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  };
+
+  it("reads an .xlsx (first column only) through the same rules as pasted text", async () => {
+    renderApp(w, null);
+    upload(await xlsxFile([["地址"], [plain[0]!], [plain[1]!]]));
+    await waitFor(() => expect(screen.getByTestId("parse-summary")).toHaveTextContent("有效地址 2 个"));
+    expect(screen.getByTestId("parse-summary")).toHaveTextContent("表头已跳过");
+  });
+
+  it("an unreadable .xlsx shows a readable error and imports nothing", async () => {
+    renderApp(w, null);
+    upload(new File([new TextEncoder().encode("not a spreadsheet")], "bad.xlsx"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("无法读取这个文件");
+    expect(screen.getByTestId("parse-summary")).toHaveTextContent("有效地址 0 个");
+  });
+
+  it("remove mode shows the warning, add mode does not", async () => {
+    renderApp(w, null);
+    expect(screen.queryByTestId("remove-warning")).toBeNull();
+    fireEvent.click(screen.getByLabelText("移除", { selector: "input" }));
+    expect(screen.getByTestId("remove-warning")).toHaveTextContent("这些地址将立即无法跨链");
+    fireEvent.click(screen.getByLabelText("添加", { selector: "input" }));
+    expect(screen.queryByTestId("remove-warning")).toBeNull();
+  });
+
+  it("a slow earlier file never overwrites a later one", async () => {
+    renderApp(w, null);
+    const slow = new File([`${plain[0]}\n`], "slow.csv", { type: "text/csv" });
+    const bytes = new TextEncoder().encode(`${plain[0]}\n`).buffer as ArrayBuffer;
+    slow.arrayBuffer = () => new Promise((r) => setTimeout(() => r(bytes), 250)); // finishes AFTER the second file
+    const fast = new File([`${plain[1]}\n`], "fast.csv", { type: "text/csv" });
+    upload(slow);
+    upload(fast);
+    await waitFor(() => expect(screen.getByLabelText("地址列表")).toHaveValue(`${plain[1]}\n`));
+    await new Promise((r) => setTimeout(r, 500));
+    expect(screen.getByLabelText("地址列表")).toHaveValue(`${plain[1]}\n`);
+  });
+
+  it("a stale file error disappears once the text is edited", async () => {
+    renderApp(w, null);
+    upload(new File([new TextEncoder().encode("not a spreadsheet")], "bad.xlsx"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("无法读取这个文件");
+    paste(plain[0]!);
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  });
+
+  it("a .csv still works as before", async () => {
+    renderApp(w, null);
+    upload(new File([`address\n${plain[0]}\n${plain[1]}\n`], "list.csv", { type: "text/csv" }));
+    await waitFor(() => expect(screen.getByTestId("parse-summary")).toHaveTextContent("有效地址 2 个"));
+  });
+});
 
 describe("whitelist page", () => {
   it("not connected / wrong wallet: write buttons disabled with the reason", async () => {

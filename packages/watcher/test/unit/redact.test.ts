@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { redact } from "../../src/redact.js";
+import { errText, redact } from "../../src/redact.js";
 import { PauseExecutor, PauseOnlySigner, type PauseChainReader, type RawTxSender } from "../../src/pauser.js";
 import type { Address, Hex } from "viem";
 
@@ -52,6 +52,17 @@ describe("B3 redaction of error text", () => {
 
   it("leaves ordinary text and addresses intact", () => {
     expect(redact("nonce too low for 0x1111111111111111111111111111111111111111")).toBe("nonce too low for 0x1111111111111111111111111111111111111111");
+  });
+
+  it("errText keeps the provider reason from a multi-line viem error, still redacts URLs and keys, and caps length", () => {
+    const viemLike = new Error(
+      `Invalid parameters were provided to the RPC method.\nDouble check you have provided the correct parameters.\n\nURL: https://bsc.example.com/v1/SECRETKEY999\nRequest body: {"method":"eth_getLogs"}\n\nDetails: block range extends beyond current head ${KEY64}\nVersion: viem@2`,
+    );
+    const t = errText(viemLike);
+    expect(t).toContain("block range extends beyond current head");
+    expect(t).not.toContain("SECRETKEY999");
+    expect(t).not.toContain(KEY64);
+    expect(errText(new Error("x".repeat(1000))).length).toBeLessThanOrEqual(400);
   });
 
   it("PAUSE_FAILED details carry only redacted errors", async () => {

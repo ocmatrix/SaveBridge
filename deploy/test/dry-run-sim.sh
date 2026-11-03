@@ -107,4 +107,13 @@ if grep -q 'PATH=/opt/node-v[0-9.]*/bin:.* /opt/node-v[0-9.]*/bin/corepack prepa
   grep -q 'NODE_OPTIONS=--no-network-family-autoselection' deploy/rpc3-watcher/deploy.sh || { echo "FAIL [node-family]: dry-run-service does not pass NODE_OPTIONS"; exit 1; }
   echo "ok   [node-family]: units and dry-run-service disable Node family autoselection" ) || fail=1
 
+# libuv copyFile (the watcher/relayer state backup) calls fchown, which sits in @privileged. Without this exception the
+# unit's SystemCallFilter kills the process with SIGSYS on its first backup (seen live on rpc3, 2026-11-02).
+( cd "$ROOT"
+  for f in deploy/rpc3-watcher/files/savebridge-watcher.service deploy/ss02-payout/files/savebridge-relayer.service; do
+    grep -q '^SystemCallFilter=~@privileged' "$f" || { echo "FAIL [fchown]: $f lost its @privileged deny line"; exit 1; }
+    grep -q '^SystemCallFilter=fchown$' "$f" || { echo "FAIL [fchown]: $f does not allow fchown (state backup would die with SIGSYS)"; exit 1; }
+  done
+  echo "ok   [fchown]: units allow fchown (state backup) while still denying @privileged" ) || fail=1
+
 exit "$fail"

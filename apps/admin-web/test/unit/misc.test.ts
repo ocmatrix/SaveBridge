@@ -131,7 +131,7 @@ describe("admin API client + Worker", () => {
 });
 
 describe("reference hints (v0.9.5: whitelist-only risk control)", () => {
-  it("only 🟡 not-in-network and ⚪ contract; unknown network → no flag", () => {
+  it("only △ not-in-network and ○ contract; unknown network → no flag", () => {
     expect(flagsFor({ info: { inNetwork: false, parent: null, bridgedOut: null }, isContract: true })).toEqual(["yellow", "white"]);
     expect(flagsFor({ info: { inNetwork: null, parent: null, bridgedOut: null }, isContract: false })).toEqual([]);
     expect(flagsFor({ info: { inNetwork: true, parent: "0x1", bridgedOut: "0" }, isContract: false })).toEqual([]);

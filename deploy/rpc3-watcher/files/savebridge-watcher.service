@@ -60,6 +60,8 @@ RemoveIPC=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @mount @debug @cpu-emulation @obsolete
+# libuv copyFile (state backup) calls fchown, which sits in @privileged; allow only that call
+SystemCallFilter=fchown
 CapabilityBoundingSet=
 AmbientCapabilities=
 ReadWritePaths=/var/lib/savebridge-watcher
