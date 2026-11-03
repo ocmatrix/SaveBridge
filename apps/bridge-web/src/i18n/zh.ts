@@ -91,7 +91,6 @@ export const zh = {
   "order.awaitingCredit": "BSC 已存入，等待 WANTOS 到账",
   "order.viewTx": "查看交易",
 
-  "footer.notice": "仅白名单地址可从 WANTOS 跨出到 BSC",
   "footer.powered": "Powered by WANTOS",
 
   "err.notWhitelisted": "未开通跨出，请联系客服",

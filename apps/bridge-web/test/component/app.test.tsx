@@ -183,12 +183,12 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     expect(screen.queryByRole("dialog", { name: "选择钱包" })).toBeNull();
   });
 
-  it("brand on top (logo + SafeBridge) and the footer: whitelist hint, then Powered by WANTOS — no contract address", async () => {
+  it("brand on top (logo + SafeBridge) and the footer: only Powered by WANTOS (no whitelist sentence) — no contract address", async () => {
     renderApp(env.cfg, KEYS.alice.address);
     expect(screen.getByRole("heading", { level: 1, name: "SafeBridge" })).toBeInTheDocument();
     const footer = screen.getByRole("contentinfo");
     const lines = Array.from(footer.querySelectorAll("small")).map((e) => e.textContent);
-    expect(lines).toEqual(["仅白名单地址可从 WANTOS 跨出到 BSC", "Powered by WANTOS"]);
+    expect(lines).toEqual(["Powered by WANTOS"]);
     expect(footer.textContent).not.toMatch(/0x[0-9a-fA-F]{8}/);
   });
 
@@ -197,10 +197,10 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     renderApp(env.cfg, KEYS.alice.address);
     await user.click(screen.getByRole("button", { name: "English" }));
     const footer = screen.getByRole("contentinfo");
-    expect(within(footer).getByText("Only whitelisted addresses can bridge out from WANTOS to BSC")).toBeInTheDocument();
+    expect(within(footer).getByRole("button", { name: "English" })).toHaveAttribute("aria-pressed", "true");
     expect(document.documentElement.lang).toBe("en");
     await user.click(screen.getByRole("button", { name: "中文" }));
-    expect(within(footer).getByText("仅白名单地址可从 WANTOS 跨出到 BSC")).toBeInTheDocument();
+    expect(within(footer).getByRole("button", { name: "中文" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("orders come through the replaceable StatusProvider; risk states are shown as 处理中", async () => {

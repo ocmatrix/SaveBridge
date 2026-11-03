@@ -1,11 +1,10 @@
 import { useI18n } from "../context";
 
-/** Under the card: who can use the bridge, and the credit line. */
+/** Under the card: the credit line and the language switch. */
 export function Footer() {
   const { t, lang, setLang } = useI18n();
   return (
     <footer className="foot">
-      <small>{t("footer.notice")}</small>
       <small className="powered">{t("footer.powered")}</small>
       <div className="lang" role="group" aria-label="Language">
         {(["zh", "en"] as const).map((l) => (
