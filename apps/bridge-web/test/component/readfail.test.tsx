@@ -4,7 +4,7 @@ import { cleanup, screen, within } from "@testing-library/react";
 import { HttpRequestError, createWalletClient, http, type PublicClient } from "viem";
 import { KEYS, U, startEnv, whitelist, snapshot, type Env } from "../support/anvil";
 import { renderApp } from "./renderApp";
-import { T, connect, panel, typeAmount } from "./helpers";
+import { T, connect, panel, submit, typeAmount } from "./helpers";
 import { makeClients, type Clients } from "../../src/lib/clients";
 import { bridgeOutFlow } from "../../src/lib/flows";
 
@@ -49,6 +49,6 @@ describe("BSC paused() unreadable (B5)", () => {
     expect(screen.getByRole("button", { name: "刷新" })).toBeInTheDocument();
     const w2b = panel("WANTOS → BSC");
     await typeAmount(user, w2b, "100");
-    expect(within(w2b).getByRole("button", { name: "跨出" })).toBeDisabled();
+    expect(submit(w2b)).toBeDisabled();
   });
 });

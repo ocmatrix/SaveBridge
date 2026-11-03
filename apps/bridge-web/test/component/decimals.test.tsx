@@ -6,6 +6,7 @@ import { KEYS, U, startEnv, whitelist, snapshot, type Env } from "../support/anv
 import { renderApp } from "./renderApp";
 import { makeClients, type Clients } from "../../src/lib/clients";
 import type { StatusProvider } from "../../src/lib/statusProvider";
+import { submit, waitConnected } from "./helpers";
 
 let env: Env;
 let revert: () => Promise<void>;
@@ -40,12 +41,10 @@ const orders: StatusProvider = {
 async function openW2B(clients?: Clients) {
   renderApp(env.cfg, KEYS.alice.address, { statusProvider: orders, ...(clients ? { clients } : {}) });
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "连接钱包" }));
-  await user.click(await screen.findByRole("button", { name: "Mock Connector" }));
-  await screen.findByRole("button", { name: "断开" }, T);
+  await waitConnected();
   const w2b = screen.getByRole("region", { name: "WANTOS → BSC" });
   await user.type(within(w2b).getByLabelText("金额（USDT）"), "100");
-  return within(w2b).getByRole("button", { name: "跨出" });
+  return submit(w2b);
 }
 
 describe("USDT decimals differ between chains (A3 / M11b)", () => {
@@ -64,6 +63,6 @@ describe("USDT decimals differ between chains (A3 / M11b)", () => {
     expect(await screen.findByText("两条链 USDT 精度不一致，页面已停用，请联系客服", {}, T)).toBeInTheDocument();
     expect(btn).toBeDisabled();
     expect(screen.queryByRole("region", { name: "我的订单" })).toBeNull();
-    expect(screen.queryByText(/本地址今日可跨出/)).toBeNull();
+    expect(screen.queryByText(/今日剩余额度/)).toBeNull();
   });
 });

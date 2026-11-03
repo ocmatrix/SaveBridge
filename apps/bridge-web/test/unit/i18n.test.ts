@@ -21,7 +21,7 @@ describe("i18n dictionaries", () => {
     expect(t("zh", "amount.belowMin", { min: "10" })).toContain("10");
   });
   it("required wording (DESIGN §8.1)", () => {
-    expect(zh["wl.closed"]).toBe("跨链未开通，请联系客服");
+    expect(zh["wl.closed"]).toBe("未开通跨出，请联系客服");
     expect(zh["order.processing"]).toBe("处理中");
   });
   it("picks zh for Chinese browsers, en otherwise", () => {

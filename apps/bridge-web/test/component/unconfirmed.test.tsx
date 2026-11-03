@@ -5,6 +5,7 @@ import { WaitForTransactionReceiptTimeoutError, type Hex, type PublicClient } fr
 import { KEYS, startEnv, whitelist, snapshot, type Env } from "../support/anvil";
 import { renderApp } from "./renderApp";
 import { makeClients, type Clients } from "../../src/lib/clients";
+import { submit, waitConnected } from "./helpers";
 
 let env: Env;
 let revert: () => Promise<void>;
@@ -38,13 +39,11 @@ describe("broadcast but unconfirmed (B1)", () => {
     await whitelist(env, env.bsc, [KEYS.alice.address]);
     renderApp(env.cfg, KEYS.alice.address, { clients: flaky(1) });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "连接钱包" }));
-    await user.click(await screen.findByRole("button", { name: "Mock Connector" }));
-    await screen.findByRole("button", { name: "断开" }, T);
+    await waitConnected();
     const w2b = screen.getByRole("region", { name: "WANTOS → BSC" });
-    await screen.findByText(/本地址今日可跨出/, {}, T);
+    await screen.findByText(/今日剩余额度/, {}, T);
     await user.type(within(w2b).getByLabelText("金额（USDT）"), "100");
-    const btn = within(w2b).getByRole("button", { name: "跨出" });
+    const btn = submit(w2b);
     await waitFor(() => expect(btn).toBeEnabled(), T);
     await user.click(btn);
 

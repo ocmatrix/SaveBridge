@@ -68,7 +68,7 @@ describe("state reads (DESIGN §8.1)", () => {
 });
 
 describe("W2B bridgeOut (acceptance: 未开通被拒 / 方向一 / 订单状态)", () => {
-  it("not whitelisted → rejected with '跨链未开通' before anything is sent", async () => {
+  it("not whitelisted → rejected with '未开通跨出' before anything is sent", async () => {
     const ctx = ctxFor("wantos");
     const before = await env.wantos.anvil.pc.getTransactionCount({ address: KEYS.alice.address });
     const err = await bridgeOutFlow(ctx, 100n * U, () => {}).catch((e) => e);

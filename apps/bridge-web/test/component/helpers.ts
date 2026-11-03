@@ -19,13 +19,19 @@ export function flaky(cfg: AppConfig, side: "wantos" | "bsc", okWaits: number, g
   return { ...base, [side]: { ...pc, waitForTransactionReceipt } as PublicClient };
 }
 
+/** The page connects to the app's wallet on its own (no connect button): wait until the amount box is usable. */
+export async function waitConnected() {
+  await waitFor(() => expect(screen.getByLabelText("金额（USDT）")).toBeEnabled(), T);
+}
+
 export async function connect() {
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "连接钱包" }));
-  await user.click(await screen.findByRole("button", { name: "Mock Connector" }));
-  await screen.findByRole("button", { name: "断开" }, T);
+  await waitConnected();
   return user;
 }
+
+/** The single big button of a card. */
+export const submit = (region: HTMLElement) => within(region).getByTestId("submit");
 
 export const panel = (name: string) => screen.getByRole("region", { name });
 
@@ -35,13 +41,10 @@ export async function typeAmount(user: ReturnType<typeof userEvent.setup>, regio
   await user.type(input, v);
 }
 
+/** Flip the card to BSC → WANTOS; the wallet is switched to BSC on its own. */
 export async function toBsc(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("tab", { name: "BSC → WANTOS" }));
+  await user.click(screen.getByRole("button", { name: "切换方向" }));
   const b2w = panel("BSC → WANTOS");
-  const sw = within(b2w).queryByRole("button", { name: "切换到 BSC" });
-  if (sw) {
-    await user.click(sw);
-    await waitFor(() => expect(within(b2w).queryByText("当前网络不是 BSC，请切换")).toBeNull(), T);
-  }
+  await waitFor(() => expect(within(b2w).queryByText("当前网络不是 BSC，请切换")).toBeNull(), T);
   return b2w;
 }

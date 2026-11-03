@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { AppConfig } from "./config";
 import type { Clients } from "./lib/clients";
 import type { StatusProvider } from "./lib/statusProvider";
@@ -36,6 +36,9 @@ export function LangProvider({ initial, children }: { initial: Lang; children: R
       /* storage unavailable: preference is per-session only */
     }
   }, []);
+  useEffect(() => {
+    document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+  }, [lang]);
   const v = useMemo(() => ({ lang, setLang }), [lang, setLang]);
   return <LangCtx.Provider value={v}>{children}</LangCtx.Provider>;
 }

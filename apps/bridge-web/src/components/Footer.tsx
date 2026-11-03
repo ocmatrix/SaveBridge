@@ -1,31 +1,19 @@
-import { useDeps, useI18n } from "../context";
+import { useI18n } from "../context";
 
-/** Fixed footer: both bridge addresses from build config (DESIGN §8.1), so users can verify what they sign. */
+/** Under the card: who can use the bridge, and the credit line. */
 export function Footer() {
-  const { cfg } = useDeps();
-  const { t } = useI18n();
+  const { t, lang, setLang } = useI18n();
   return (
-    <footer>
-      <h3>{t("footer.contracts")}</h3>
-      <dl>
-        <dt>
-          {t("footer.wantos")} ({cfg.wantos.name} · {cfg.wantos.id})
-        </dt>
-        <dd>
-          <a href={`${cfg.wantos.explorerUrl}/address/${cfg.wantos.bridge}`} target="_blank" rel="noopener noreferrer">
-            <code>{cfg.wantos.bridge}</code>
-          </a>
-        </dd>
-        <dt>
-          {t("footer.bsc")} ({cfg.bsc.name} · {cfg.bsc.id})
-        </dt>
-        <dd>
-          <a href={`${cfg.bsc.explorerUrl}/address/${cfg.bsc.bridge}`} target="_blank" rel="noopener noreferrer">
-            <code>{cfg.bsc.bridge}</code>
-          </a>
-        </dd>
-      </dl>
-      <p className="muted">{t("footer.notice")}</p>
+    <footer className="foot">
+      <small>{t("footer.notice")}</small>
+      <small className="powered">{t("footer.powered")}</small>
+      <div className="lang" role="group" aria-label="Language">
+        {(["zh", "en"] as const).map((l) => (
+          <button key={l} type="button" lang={l} aria-pressed={lang === l} onClick={() => setLang(l)}>
+            {l === "zh" ? "中文" : "English"}
+          </button>
+        ))}
+      </div>
     </footer>
   );
 }
