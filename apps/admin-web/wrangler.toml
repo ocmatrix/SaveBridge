@@ -10,6 +10,8 @@ pages_build_output_dir = "./dist"
 BRIDGE = "0x41e9900BF09553C46b6b3F267626FDa2b4711E44"
 BSC_CHAIN_ID = "56"
 BSC_RPC_URL = "https://bsc-rpc.publicnode.com"
+# Tried in order when the primary answers 429 (publicnode rate-limits Cloudflare's shared egress IPs). Public URLs only, no keys.
+BSC_RPC_FALLBACKS = "https://rpc-bsc.48.club,https://bsc-dataseed.bnbchain.org,https://bsc-dataseed1.defibit.io"
 WANTOS_CHAIN_ID = "13555"
 WANTOS_RPC_URL = "https://rpc3.wantos.io"
 ALLOWED_ORIGINS = "https://admin.wanto.pro,https://safebridge-admin.pages.dev"

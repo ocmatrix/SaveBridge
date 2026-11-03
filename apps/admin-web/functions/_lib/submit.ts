@@ -7,7 +7,7 @@
  * locally and require it to be the on-chain whitelist manager, (2) require the on-chain nonce, (3) simulate the call.
  * The gas key holds no contract role; a leaked key can only burn its own gas balance.
  */
-import { createPublicClient, createWalletClient, getAddress, hashTypedData, http, isAddress, parseAbi, recoverAddress, type Address, type Hex, type PublicClient } from "viem";
+import { createPublicClient, createWalletClient, fallback, getAddress, hashTypedData, http, isAddress, parseAbi, recoverAddress, type Address, type Hex, type PublicClient, type Transport } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { batchTypedData } from "../../src/lib/normalize";
 
@@ -18,6 +18,8 @@ export interface SubmitEnv {
   BSC_RPC_URL: string;
   WANTOS_CHAIN_ID: string;
   WANTOS_RPC_URL: string;
+  /** Optional, comma-separated: tried in order when the primary BSC_RPC_URL fails (e.g. answers 429 to Cloudflare's shared IPs). */
+  BSC_RPC_FALLBACKS?: string;
   /** Secret: private key of the gas-only submitter (0x…). */
   SUBMITTER_KEY: string;
 }
@@ -94,7 +96,19 @@ interface Side {
   key: "bsc" | "wantos";
   chainId: number;
   pub: PublicClient;
-  rpcUrl: string;
+  /** Transport for sending transactions: same endpoints, but not batched. */
+  send: Transport;
+}
+
+const urlList = (primary: string, fallbacks?: string): string[] => [primary, ...(fallbacks ?? "").split(",").map((s) => s.trim()).filter((s) => /^(https:\/\/|http:\/\/(127\.0\.0\.1|localhost)[:/])/.test(s))];
+
+/**
+ * One endpoint → plain http with retries; several → viem `fallback` (next endpoint on any error, e.g. 429), each with a
+ * single quick retry. `batch` merges concurrent reads into JSON-RPC batches.
+ */
+function transportFor(urls: string[], batch: boolean): Transport {
+  const one = (u: string, retryCount: number) => http(u, { retryCount, retryDelay: 300, timeout: 12_000, ...(batch ? { batch: { batchSize: READ_BATCH, wait: 16 } } : {}) });
+  return urls.length === 1 ? one(urls[0]!, 2) : fallback(urls.map((u) => one(u, 1)), { retryCount: 0 });
 }
 
 export async function submitWhitelist(env: SubmitEnv, raw: unknown, now: () => number = () => Date.now()): Promise<SubmitResult> {
@@ -105,15 +119,18 @@ export async function submitWhitelist(env: SubmitEnv, raw: unknown, now: () => n
   if (!/^0x[0-9a-fA-F]{64}$/.test(env.SUBMITTER_KEY ?? "")) return bad("服务未配置提交钥匙", 500);
   const account = privateKeyToAccount(env.SUBMITTER_KEY as Hex);
 
-  const mk = (key: "bsc" | "wantos", chainId: string, rpcUrl: string): Side => ({
+  const mk = (key: "bsc" | "wantos", chainId: string, urls: string[]): Side => ({
     key,
     chainId: Number(chainId),
-    rpcUrl,
     // Batched: the per-address `whitelisted()` reads become a few JSON-RPC batch requests. Single parallel requests are
     // rate-limited by rpc3 (429) and would also exhaust the Pages Function's subrequest cap on large batches.
-    pub: createPublicClient({ transport: http(rpcUrl, { retryCount: 2, retryDelay: 300, timeout: 12_000, batch: { batchSize: READ_BATCH, wait: 16 } }) }) as PublicClient,
+    pub: createPublicClient({ transport: transportFor(urls, true) }) as PublicClient,
+    send: transportFor(urls, false),
   });
-  const sides: Record<"bsc" | "wantos", Side> = { bsc: mk("bsc", env.BSC_CHAIN_ID, env.BSC_RPC_URL), wantos: mk("wantos", env.WANTOS_CHAIN_ID, env.WANTOS_RPC_URL) };
+  const sides: Record<"bsc" | "wantos", Side> = {
+    bsc: mk("bsc", env.BSC_CHAIN_ID, urlList(env.BSC_RPC_URL, env.BSC_RPC_FALLBACKS)),
+    wantos: mk("wantos", env.WANTOS_CHAIN_ID, urlList(env.WANTOS_RPC_URL)),
+  };
 
   // 1. the signature must come from the on-chain whitelist manager (same on both chains)
   let managers: [Address, Address];
@@ -154,7 +171,7 @@ export async function submitWhitelist(env: SubmitEnv, raw: unknown, now: () => n
         runs[k] = { status: "failed", error: `链上批次 nonce 是 ${nonce}，与签名的 ${p.nonce} 不一致，请重新准备本批` };
         return { status: 409, json: { ok: false, error: runs[k].error, runs } };
       }
-      const wallet = createWalletClient({ account, transport: http(s.rpcUrl, { retryCount: 1, timeout: 12_000 }) });
+      const wallet = createWalletClient({ account, transport: s.send });
       const args = [p.addresses, p.allowed, p.nonce, p.deadline, p.signature] as const;
       const { request } = await s.pub.simulateContract({ address: bridge, abi: ABI, functionName: "applyWhitelistBatch", args, account });
       const hash = await wallet.writeContract({ ...request, chain: null });
