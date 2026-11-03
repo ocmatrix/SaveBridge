@@ -12,6 +12,8 @@ export interface ChainCfg {
   bridge: Address;
   /** First block to scan for events (deployment block). */
   fromBlock: bigint;
+  /** Max blocks per eth_getLogs request (the node's block-range cap). Unset → the generic default in `scanLogs`. */
+  logStep?: bigint;
 }
 
 export interface AppConfig {
@@ -45,7 +47,10 @@ function chain(env: Record<string, string | undefined>, side: Side): ChainCfg {
   if (!isAddress(bridge, { strict: false })) throw new ConfigError(`${p}BRIDGE 不是地址`);
   const fb = env[`${p}FROM_BLOCK`]?.trim() || "0";
   if (!/^\d+$/.test(fb)) throw new ConfigError(`${p}FROM_BLOCK 无效`);
-  return { side, chainId, rpcUrl, bridge: getAddress(bridge), fromBlock: BigInt(fb) };
+  // rpc3's node caps eth_getLogs at 100 blocks (app.toml block-range-cap); BSC public RPCs accept far more.
+  const ls = env[`${p}LOG_STEP`]?.trim() || (side === "wantos" ? "100" : "50000");
+  if (!/^[1-9]\d*$/.test(ls)) throw new ConfigError(`${p}LOG_STEP 无效`);
+  return { side, chainId, rpcUrl, bridge: getAddress(bridge), fromBlock: BigInt(fb), logStep: BigInt(ls) };
 }
 
 /** Build-time configuration (Vite env). Only public values: chain ids, RPC URLs, contract addresses. */

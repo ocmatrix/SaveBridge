@@ -151,15 +151,19 @@ export interface WhitelistHistory {
   emergency: { by: Address; listHash: Hex; count: bigint; block: bigint; tx: Hex }[];
 }
 
-/** Log-scan step; public RPCs limit getLogs ranges. */
+/** Default log-scan step; public RPCs limit getLogs ranges. A chain overrides it with `cfg.logStep` (rpc3's node allows 100 blocks). */
 export const LOG_STEP = 50_000n;
+/** Ranges requested at once; the batching transport merges them into one HTTP request (rpc3 rate-limits single requests). */
+export const LOG_PARALLEL = 20;
 
-export async function scanLogs(ctx: ChainCtx, event: AbiEvent, address: Address = ctx.cfg.bridge, step = LOG_STEP) {
+export async function scanLogs(ctx: ChainCtx, event: AbiEvent, address: Address = ctx.cfg.bridge, step = ctx.cfg.logStep ?? LOG_STEP) {
   const latest = await ctx.client.getBlockNumber({ cacheTime: 0 });
+  const ranges: Array<[bigint, bigint]> = [];
+  for (let from = ctx.cfg.fromBlock; from <= latest; from += step) ranges.push([from, from + step - 1n > latest ? latest : from + step - 1n]);
   const out = [];
-  for (let from = ctx.cfg.fromBlock; from <= latest; from += step) {
-    const to = from + step - 1n > latest ? latest : from + step - 1n;
-    out.push(...(await ctx.client.getLogs({ address, event, fromBlock: from, toBlock: to })));
+  for (let i = 0; i < ranges.length; i += LOG_PARALLEL) {
+    const part = await Promise.all(ranges.slice(i, i + LOG_PARALLEL).map(([fromBlock, toBlock]) => ctx.client.getLogs({ address, event, fromBlock, toBlock })));
+    for (const logs of part) out.push(...logs);
   }
   return out;
 }

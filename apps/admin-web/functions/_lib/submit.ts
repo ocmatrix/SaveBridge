@@ -52,8 +52,16 @@ const ABI = parseAbi([
 export const MAX_BATCH = 500;
 export const MAX_SIGNATURE_TTL = 24n * 3600n; // contract: DeadlineTooFar beyond this
 export const DEADLINE_MARGIN = 120n; // refuse signatures that expire within 2 minutes
+export const READ_BATCH = 40; // JSON-RPC calls per HTTP request; the node's batch-request-limit is 50
 
 const bad = (error: string, status = 400): SubmitResult => ({ status, json: { ok: false, error } });
+
+/** One short line for the page: viem's headline plus its "Status:" / "Details:" lines; never the URL or the request body. */
+export function errorLine(e: unknown): string {
+  if (!(e instanceof Error)) return "未知错误";
+  const lines = e.message.split("\n").map((s) => s.trim()).filter(Boolean);
+  return lines.filter((l, i) => i === 0 || /^(Status|Details):/.test(l)).join(" | ").slice(0, 200);
+}
 
 /** Strict shape check; returns the parsed values or an error string. */
 export function parseBody(b: unknown): { addresses: Address[]; allowed: boolean; nonce: bigint; deadline: bigint; signature: Hex } | string {
@@ -96,7 +104,9 @@ export async function submitWhitelist(env: SubmitEnv, raw: unknown, now: () => n
     key,
     chainId: Number(chainId),
     rpcUrl,
-    pub: createPublicClient({ transport: http(rpcUrl, { retryCount: 1, timeout: 12_000 }) }) as PublicClient,
+    // Batched: the per-address `whitelisted()` reads become a few JSON-RPC batch requests. Single parallel requests are
+    // rate-limited by rpc3 (429) and would also exhaust the Pages Function's subrequest cap on large batches.
+    pub: createPublicClient({ transport: http(rpcUrl, { retryCount: 2, retryDelay: 300, timeout: 12_000, batch: { batchSize: READ_BATCH, wait: 16 } }) }) as PublicClient,
   });
   const sides: Record<"bsc" | "wantos", Side> = { bsc: mk("bsc", env.BSC_CHAIN_ID, env.BSC_RPC_URL), wantos: mk("wantos", env.WANTOS_CHAIN_ID, env.WANTOS_RPC_URL) };
 
@@ -150,7 +160,7 @@ export async function submitWhitelist(env: SubmitEnv, raw: unknown, now: () => n
       }
       runs[k] = { status: "done", txHash: hash };
     } catch (e) {
-      const msg = e instanceof Error ? (e.message.split("\n")[0] ?? "").slice(0, 200) : "未知错误";
+      const msg = errorLine(e);
       runs[k] = { status: "failed", error: msg };
       return { status: 502, json: { ok: false, error: `${k === "bsc" ? "BSC" : "WANTOS"}：${msg}`, runs } };
     }
