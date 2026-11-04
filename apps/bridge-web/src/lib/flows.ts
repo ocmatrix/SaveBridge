@@ -234,11 +234,11 @@ export async function depositFlow(ctx: TxContext, amount: bigint, recipient: Add
   if (amount < params.minDeposit) throw new PreflightError("AmountBelowMinimum", [amount, params.minDeposit]);
   if (amount > params.maxDepositPerTx) throw new PreflightError("AmountAboveLimit", [amount, params.maxDepositPerTx]);
   await balanceCheck(ctx, c.id, c.usdt, amount);
-  await nativeCheck(pc, account(ctx).address, (await quoteDepositFee(pc, ctx.cfg)).value);
+  await nativeCheck(pc, account(ctx).address, (await quoteDepositFee(pc, ctx.cfg, account(ctx).address)).fee);
 
   const approveTxHash = await ensureAllowance(ctx, c.id, amount, onStep);
   // quoted again right before sending: the gas price may have moved during the approval
-  const q = await quoteDepositFee(pc, ctx.cfg);
+  const q = await quoteDepositFee(pc, ctx.cfg, account(ctx).address);
   onStep("send");
   const txHash = await sendGuarded(ctx, c.id, { ...B, abi: bscVaultV2Abi as Abi, functionName: "deposit", args: [amount, recipient], value: q.value, gasPrice: q.gasPrice });
   onStep("confirming", txHash);

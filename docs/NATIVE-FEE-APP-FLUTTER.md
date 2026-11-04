@@ -68,7 +68,12 @@ nativeFeeConfig() view returns (address recipient, uint256 multiplier)   选择�
 - 合约用的是 `tx.gasprice`，所以**报价用的 gas 价必须和交易实际使用的 gas 价一致**：
   - 请用 **legacy 交易**，并**显式设置 `gasPrice`**（BSC 支持）。先取 `eth_gasPrice`，用这个值报价，也用这个值发交易。
   - 不要让钱包库自动换成 EIP-1559（`maxFeePerGas`）：实际 gas 价会变成 baseFee + 小费，和报价对不上。
-- **`value` 多附约 20% 余量**：`value = quote × 1.2`。多付的部分合约会**当场退回给发起人**，不会损失。少了则回滚（`WrongNativeFee`）。
+- **`value` 要多附，不能只附刚好等于报价的数（失败率最低的规则）。** 合约要求 `value ≥ fee`，多付的部分**当场退回给发起人**，不会损失。如果钱包没按我们给的 `gasPrice` 发，实际 gas 价更高，费用就会比报价高，只附报价的钱就不够（回滚 `WrongNativeFee`）。所以：
+  1. 读合约常量 `MAX_FEE()`（BSC 侧，选择器 `0xbc063e1a`，上线值 0.002 BNB）：无论钱包用什么 gas 价，费用都不会超过它。
+  2. 先算一个 gas 预留：`reserve = gasPrice × 600,000 × 2`。
+  3. `value = min(MAX_FEE, 余额 − reserve)`；如果这个数小于报价 `fee`，就取 `fee`（再由余额检查提示不足）。
+  4. **例外：发起人地址本身有合约代码**（智能合约钱包，或 EIP-7702 授权过的地址，`eth_getCode` 不是 `0x`）：这类地址可能收不了退款，会让整笔回滚，所以 `value` 取**恰好等于 `fee`**。
+  - 效果：余额充足的普通用户，`value` 就是 0.002 BNB，退回约 0.0015 BNB（同一笔交易内退回）；余额紧的用户尽量多附；只有余额连手续费都不够时才被拦下，并给出明确提示。
 
 ### 3.3 其他新增只读接口（可选，用于核对）
 
@@ -100,9 +105,9 @@ App 不必调用它们；做「手续费收款地址展示」或自检时才需�
 **BSC → WANTOS（`deposit`）**
 1. 原有预检不变。
 2. 取 `gasPrice = eth_gasPrice`；读 `quoteNativeFee(gasPrice)` → 得 `fee`。
-3. 余额检查：BNB 余额 ≥ `fee × 1.2` + 本笔 gas 费（approve + deposit 各一笔）。
+3. 余额检查：BNB 余额 ≥ `fee` + 本笔 gas 费（approve + deposit 各一笔）。
 4. `approve`（如需）。
-5. 发 `deposit(amount, recipient)`，`value = fee × 1.2`，**`gasPrice` 显式设为第 2 步那个值**。
+5. `approve` 完成后**重新取 gas 价并重新报价**，按 §3.2 的规则算 `value`，发 `deposit(amount, recipient)`，**`gasPrice` 显式设为这次报价用的值**。
 
 估 gas：`eth_estimateGas` 必须**带上 `value`**，否则估算会因 `WrongNativeFee` 失败。
 
@@ -153,7 +158,10 @@ App 不必调用它们；做「手续费收款地址展示」或自检时才需�
 | 手续费未启用，`bridgeOut` / `deposit` 带 `value=0` | 成功 |
 | WANTOS 侧，`value` 等于报价 | 成功，收款地址到账 |
 | WANTOS 侧，`value` 多 1 wei 或少 1 wei | 回滚 `WrongNativeFee` |
-| BSC 侧，`value = 报价 × 1.2` | 成功，多付的部分退回到发起人 |
+| BSC 侧，普通钱包、余额充足，`value = MAX_FEE` | 成功，多付的部分退回到发起人 |
+| BSC 侧，钱包把 gas 价改成报价的 2 倍以上 | 仍然成功（`value` 够用），退回的部分变少 |
+| BSC 侧，余额只比手续费多一点 | `value` 取 `fee` 或余额减 gas 预留，不会因 `value` 为 0 而失败；不够时给出明确提示 |
+| BSC 侧，发起人地址有合约代码 | `value` 恰好等于 `fee`，不依赖退款 |
 | BSC 侧，`value` 小于报价 | 回滚 `WrongNativeFee` |
 | BSC 侧，使用 EIP-1559 交易 | 可能与报价不符，应避免 |
 | 余额只够本金、不够手续费 | 界面提示余额不足，不发交易 |

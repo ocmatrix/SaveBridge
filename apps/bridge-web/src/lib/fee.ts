@@ -1,10 +1,6 @@
-import { formatUnits, type PublicClient } from "viem";
+import { formatUnits, type Address, type PublicClient } from "viem";
 import { bscVaultV2Abi, wantosBridgeV2Abi } from "@bridge/abi";
 import type { AppConfig } from "../config";
-
-/** BSC fee follows tx.gasprice, so the wallet cannot know it to the wei: send 20% more, the contract refunds the excess. */
-const BSC_VALUE_NUM = 12n;
-const BSC_VALUE_DEN = 10n;
 
 /**
  * The page may be published before the contracts are upgraded: an old bridge has no `quoteNativeFee`, so the call
@@ -33,19 +29,40 @@ export async function quoteBridgeOutFee(pc: PublicClient, cfg: AppConfig, amount
 }
 
 export interface DepositFeeQuote {
-  /** BNB the contract will keep. */
+  /** BNB the contract will keep (at the quoted gas price). */
   fee: bigint;
-  /** BNB to attach (fee + 20%); the excess is refunded. 0 when the fee is off. */
+  /**
+   * BNB to attach. The contract charges `tx.gasprice`-based fee and refunds the excess, so attaching more than the fee
+   * costs nothing and makes the deposit immune to a wallet that prices gas higher than we asked. 0 when the fee is off.
+   */
   value: bigint;
-  /** Gas price the quote was made at. The transaction must use exactly this price (legacy tx), or the contract sees another one. */
+  /** Gas price the quote was made at: the transaction should use exactly this price (legacy tx). */
   gasPrice: bigint | undefined;
 }
 
-export async function quoteDepositFee(pc: PublicClient, cfg: AppConfig): Promise<DepositFeeQuote> {
+/** Gas the deposit transaction may use at most, times 2 for slack: kept out of the attached value. */
+const GAS_RESERVE_UNITS = 600_000n * 2n;
+
+/**
+ * Quote for a deposit by `owner`. Value rule (lowest failure rate):
+ *  - normal wallet with enough balance: the contract's MAX_FEE (no gas price can push the fee above it);
+ *  - modest balance: everything above a gas reserve, but never below the fee;
+ *  - wallet with code (smart wallet / EIP-7702): exactly the fee, because it may be unable to receive the refund.
+ */
+export async function quoteDepositFee(pc: PublicClient, cfg: AppConfig, owner: Address): Promise<DepositFeeQuote> {
   const gasPrice = await pc.getGasPrice();
   const fee = await quoteOrZero(() => pc.readContract({ address: cfg.bsc.bridge, abi: bscVaultV2Abi, functionName: "quoteNativeFee", args: [gasPrice] }));
   if (fee === 0n) return { fee: 0n, value: 0n, gasPrice: undefined };
-  return { fee, value: (fee * BSC_VALUE_NUM) / BSC_VALUE_DEN, gasPrice };
+  const [maxFee, balance, code] = await Promise.all([
+    pc.readContract({ address: cfg.bsc.bridge, abi: bscVaultV2Abi, functionName: "MAX_FEE" }) as Promise<bigint>,
+    pc.getBalance({ address: owner }),
+    pc.getCode({ address: owner }),
+  ]);
+  if (code && code !== "0x") return { fee, value: fee, gasPrice };
+  const reserve = gasPrice * GAS_RESERVE_UNITS;
+  const affordable = balance > reserve ? balance - reserve : 0n;
+  const value = affordable < maxFee ? affordable : maxFee;
+  return { fee, value: value > fee ? value : fee, gasPrice };
 }
 
 /** Native coin amount for display: up to 6 decimals, trailing zeros removed (0.0005, 12, 2.5). */

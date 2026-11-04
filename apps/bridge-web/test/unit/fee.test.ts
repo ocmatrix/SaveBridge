@@ -32,7 +32,7 @@ function fakeClient(reads: Reads, extra: Record<string, unknown> = {}) {
 
 function setup(opts: { wantos?: Reads; bsc?: Reads; wantosExtra?: Record<string, unknown>; bscExtra?: Record<string, unknown> }) {
   const w = fakeClient({ paused: false, whitelisted: true, supplyCeiling: BIG, totalSupply: 1n, currentDay: 1n, addrDailyUsed: 0n, dailyUsed: 0n, balanceOf: BIG, allowance: BIG, params: { w2bMinAmount: 1n, w2bPerAddrDailyCap: BIG, b2wDailyCap: BIG }, quoteNativeFee: 0n, ...opts.wantos }, opts.wantosExtra);
-  const b = fakeClient({ paused: false, balanceOf: BIG, allowance: BIG, params: { minDeposit: 1n, maxDepositPerTx: BIG }, quoteNativeFee: 0n, ...opts.bsc }, opts.bscExtra);
+  const b = fakeClient({ paused: false, balanceOf: BIG, allowance: BIG, params: { minDeposit: 1n, maxDepositPerTx: BIG }, quoteNativeFee: 0n, MAX_FEE: 2_000_000_000_000_000n, ...opts.bsc }, opts.bscExtra);
   const write = vi.fn(async (_req: Record<string, unknown>): Promise<never> => {
     throw STOP;
   });
@@ -53,19 +53,42 @@ describe("quoteBridgeOutFee (WANTOS, tiered by amount)", () => {
   });
 });
 
-describe("quoteDepositFee (BSC, follows the gas price)", () => {
-  it("quotes at the current gas price and sends 20% above the fee", async () => {
-    const { b } = setup({ bsc: { quoteNativeFee: 500_000_000_000_000n } });
-    const q = await quoteDepositFee(b.client, testConfig);
+describe("quoteDepositFee (BSC): headroom against a wallet that prices gas differently", () => {
+  const FEE = 500_000_000_000_000n; // 0.0005 BNB at 0.05 gwei
+  const MAX = 2_000_000_000_000_000n; // MAX_FEE of the contract, 0.002 BNB
+  const quote = (balance: bigint, code = "0x") => {
+    const s = setup({ bsc: { quoteNativeFee: FEE }, bscExtra: { getBalance: vi.fn(async () => balance), getCode: vi.fn(async () => code) } });
+    return { s, run: () => quoteDepositFee(s.b.client, testConfig, USER) };
+  };
+  it("quotes at the current gas price", async () => {
+    const { s, run } = quote(10n ** 18n);
+    const q = await run();
     expect(q.gasPrice).toBe(50_000_000n);
-    expect(q.fee).toBe(500_000_000_000_000n);
-    expect(q.value).toBe(600_000_000_000_000n);
-    expect(b.raw.readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: "quoteNativeFee", args: [50_000_000n] }));
+    expect(q.fee).toBe(FEE);
+    expect(s.b.raw.readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: "quoteNativeFee", args: [50_000_000n] }));
+  });
+  it("enough balance: attaches the contract's MAX_FEE, so no gas price the wallet picks can make the fee exceed it (the excess is refunded)", async () => {
+    const q = await quote(10n ** 18n).run();
+    expect(q.value).toBe(MAX);
+  });
+  it("modest balance: attaches what it can afford after a gas reserve (gas price x 600k x 2), never less than the fee", async () => {
+    const reserve = 50_000_000n * 600_000n * 2n;
+    const q = await quote(1_000_000_000_000_000n).run(); // 0.001 BNB
+    expect(q.value).toBe(1_000_000_000_000_000n - reserve);
+    expect(q.value).toBeGreaterThan(FEE);
+    expect(q.value).toBeLessThan(MAX);
+  });
+  it("balance barely above the fee: attaches exactly the fee (the wallet then judges the gas)", async () => {
+    const q = await quote(FEE + 1n).run();
+    expect(q.value).toBe(FEE);
+  });
+  it("a wallet with contract code (smart wallet, EIP-7702) gets exactly the fee: it may not be able to receive a refund", async () => {
+    const q = await quote(10n ** 18n, "0xef0100aabbccddeeff00112233445566778899aabbccddeeff").run();
+    expect(q.value).toBe(FEE);
   });
   it("fee 0 (switched off) means no value and no gas price override", async () => {
-    const { b } = setup({ bsc: { quoteNativeFee: 0n } });
-    const q = await quoteDepositFee(b.client, testConfig);
-    expect(q).toEqual({ fee: 0n, value: 0n, gasPrice: undefined });
+    const s = setup({ bsc: { quoteNativeFee: 0n } });
+    expect(await quoteDepositFee(s.b.client, testConfig, USER)).toEqual({ fee: 0n, value: 0n, gasPrice: undefined });
   });
 });
 
@@ -80,14 +103,14 @@ describe("old contract without quoteNativeFee (the page is published before the 
   it("a reverting quote means no fee, no value, no gas price override (BSC)", async () => {
     const { b } = setup({});
     b.raw.readContract.mockRejectedValueOnce(revertErr());
-    expect(await quoteDepositFee(b.client, testConfig)).toEqual({ fee: 0n, value: 0n, gasPrice: undefined });
+    expect(await quoteDepositFee(b.client, testConfig, USER)).toEqual({ fee: 0n, value: 0n, gasPrice: undefined });
   });
   it("a network error is NOT treated as 'no fee': it propagates", async () => {
     const { w, b } = setup({});
     w.raw.readContract.mockRejectedValueOnce(netErr());
     await expect(quoteBridgeOutFee(w.client, testConfig, 500n)).rejects.toMatchObject({ name: "HttpRequestError" });
     b.raw.readContract.mockRejectedValueOnce(netErr());
-    await expect(quoteDepositFee(b.client, testConfig)).rejects.toMatchObject({ name: "HttpRequestError" });
+    await expect(quoteDepositFee(b.client, testConfig, USER)).rejects.toMatchObject({ name: "HttpRequestError" });
   });
 });
 
@@ -156,12 +179,12 @@ describe("bridgeOutFlow pays the WANTOS fee exactly", () => {
   });
 });
 
-describe("depositFlow pays the BSC fee with headroom at the quoted gas price", () => {
+describe("depositFlow pays the BSC fee with headroom, at the quoted gas price", () => {
   const fee = 500_000_000_000_000n;
-  it("sends value = fee x 1.2 and the same gasPrice it quoted at", async () => {
+  it("sends the headroom value (MAX_FEE with enough balance) and the same gasPrice it quoted at", async () => {
     const s = setup({ bsc: { quoteNativeFee: fee }, bscExtra: { getBalance: vi.fn(async () => 10n ** 18n) } });
     await expect(depositFlow(s.make(56), 100n, USER, vi.fn())).rejects.toBe(STOP);
-    expect(s.write).toHaveBeenCalledWith(expect.objectContaining({ functionName: "deposit", value: 600_000_000_000_000n, gasPrice: 50_000_000n }));
+    expect(s.write).toHaveBeenCalledWith(expect.objectContaining({ functionName: "deposit", value: 2_000_000_000_000_000n, gasPrice: 50_000_000n }));
   });
   it("fee 0: no value, no gas price override", async () => {
     const s = setup({ bsc: { quoteNativeFee: 0n } });
@@ -170,8 +193,8 @@ describe("depositFlow pays the BSC fee with headroom at the quoted gas price", (
     expect(sent.value ?? 0n).toBe(0n);
     expect(sent.gasPrice).toBeUndefined();
   });
-  it("BNB below value: stops before the wallet is asked", async () => {
-    const s = setup({ bsc: { quoteNativeFee: fee }, bscExtra: { getBalance: vi.fn(async () => 599_999_999_999_999n) } });
+  it("BNB below the fee: stops before the wallet is asked", async () => {
+    const s = setup({ bsc: { quoteNativeFee: fee }, bscExtra: { getBalance: vi.fn(async () => fee - 1n) } });
     await expect(depositFlow(s.make(56), 100n, USER, vi.fn())).rejects.toBeInstanceOf(PreflightError);
     expect(s.write).not.toHaveBeenCalled();
   });
