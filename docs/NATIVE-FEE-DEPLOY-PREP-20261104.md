@@ -103,3 +103,7 @@ cast send $TL "schedule(address,uint256,bytes,bytes32,bytes32,uint256)" $PROXY 0
 | 字节码比对脚本 | `node scripts/compare-impl.mjs <RPC> <实现地址> out/<合约>.sol/<合约>.json` |
 
 发布前这些「当前最新部署」都要重新读一次，别的会话也可能在部署。
+
+## 7. G1 完成记录（2026-11-04/05）
+
+两条链的新实现都已部署并核对：BSC `0xdfeE8c9bc21d2a7bf9f0c8d55115135aF5634A59`（交易 `0x923d200d…2bfb`，区块 131651638），WANTOS `0xcBa30ff023f576ffa915bA322b34D6A835F330B7`（交易 `0x1df88c63…b688`，区块 3498560）。与预测地址一致，所以第 4 节的提案编号有效。线上代理的实现槽两条链都**没有变化**（仍是 `0x6686…6297`），现版 App 和用户不受影响；48 小时倒计时**还没开始**（要等 G2 提议）。
