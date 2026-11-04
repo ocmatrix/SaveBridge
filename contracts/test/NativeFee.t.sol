@@ -61,10 +61,11 @@ contract NativeFeeBscTest is BscFixture {
 
     function test_quoteFollowsGasPrice_sameForAnyAmount() public {
         _set(recipient, 10);
-        assertEq(vault.quoteNativeFee(FLOOR), 0.0001 ether); // 10x of ~200k gas at 0.05 gwei
+        assertEq(vault.quoteNativeFee(FLOOR), 0.0005 ether); // 10x gives 0.0001, the floor lifts it to 0.0005
         assertEq(vault.quoteNativeFee(0.5 gwei), 0.001 ether);
-        assertEq(vault.quoteNativeFee(0.25 gwei), 0.0005 ether);
-        assertEq(vault.quoteNativeFee(0), 0.0001 ether); // floor
+        assertEq(vault.quoteNativeFee(0.25 gwei), 0.0005 ether); // exactly the floor
+        assertEq(vault.quoteNativeFee(0.35 gwei), 0.0007 ether);
+        assertEq(vault.quoteNativeFee(0), 0.0005 ether); // gas price 0 cannot dodge the fee
         assertEq(vault.quoteNativeFee(100 gwei), 0.002 ether); // cap
         (address r, uint256 m) = vault.nativeFeeConfig();
         assertEq(r, recipient);
@@ -108,7 +109,7 @@ contract NativeFeeBscTest is BscFixture {
         vm.startPrank(alice);
         token.approve(address(vault), 300 * U);
         vm.expectRevert(BscVaultV2.NativeFeeTransferFailed.selector);
-        vault.deposit{value: 0.0001 ether}(300 * U, alice);
+        vault.deposit{value: 0.0005 ether}(300 * U, alice);
         vm.stopPrank();
         assertEq(vault.depositNonce(), 0);
     }
@@ -120,7 +121,7 @@ contract NativeFeeBscTest is BscFixture {
         vm.deal(address(this), 1 ether);
         vm.expectRevert(BscVaultV2.NativeFeeTransferFailed.selector);
         d.go{value: 0.5 ether}(vault, token, 100 * U);
-        d.go{value: 0.0001 ether}(vault, token, 100 * U); // exact payment needs no refund
+        d.go{value: 0.0005 ether}(vault, token, 100 * U); // exact payment needs no refund
         assertEq(vault.depositNonce(), 1);
     }
 
