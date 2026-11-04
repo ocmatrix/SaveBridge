@@ -121,7 +121,8 @@ fee = clamp( tx.gasprice × FEE_GAS × multiplier , MIN_FEE , MAX_FEE )     （m
 1. 并入重新部署（`REDEPLOY-PLAN-20261103.md`）：合并 `native-fee-20261103` 与 `redeploy-20261103`，重算哈希、预测地址、`vectors.json`；若桥已上线则改走 48h UUPS 升级并重新审计。
 2. 部署演练（WANTON 或副本）：确认 WANTOS 链合约大小上限、收费、退款、总开关。
 3. 时间锁（48h）写入：BSC `setNativeFeeConfig(0xADCD…6957, 50)`；WANTOS `setNativeFeeTiers`（§2.2 上线值）。
-4. 上线前核对两项（独立审查提示）：① WANTOS-USDT 没有转账扣费（档位按到账额计，扣费币会让报价与实际档位错位而回滚）；② WANTOS 最低档 `f0`（1.2 WANT 起）远小于 `w2bMinAmount`（否则最小单的手续费超过本金；上线值 2.5 WANT ≈ 1.25 美元 < 10 USDT）。
+4. 上线前核对两项（独立审查提示）：① WANTOS-USDT 没有转账扣费（档位按到账额计，扣费币会让报价与实际档位错位而回滚）——**已核对（2026-11-04，只读）**：在 rpc.wantos.io 的本地分叉里用最大持币地址模拟 `transfer`（1、123.456…、1000 USDT）与 `transferFrom`（500 USDT），收款方增量与发送方减量都精确等于转账额，总供给不变；该代币非代理合约（4,507 字节，仅 ERC20 + `owner` + `mint`，无手续费相关函数）；
+   ② WANTOS 最低档 `f0`（1.2 WANT 起）远小于 `w2bMinAmount`（否则最小单的手续费超过本金；上线值 2.5 WANT ≈ 1.25 美元 < 10 USDT）。
 5. 验收：各档各发一笔测试交易，核对收款地址到账、合约余额为 0、事件齐全、关闭再开启生效。
 
 每步链上写入都需要负责人在对话里明确授权，授权不外推。
