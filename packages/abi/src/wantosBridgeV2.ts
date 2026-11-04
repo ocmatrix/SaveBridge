@@ -132,6 +132,45 @@ export const wantosBridgeV2Abi = [
   },
   {
     "type": "function",
+    "name": "WL_DOMAIN_NAME",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "WL_DOMAIN_TYPEHASH",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "WL_DOMAIN_VERSION",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "WL_RECOVERY_DELAY",
     "inputs": [],
     "outputs": [
@@ -296,7 +335,7 @@ export const wantosBridgeV2Abi = [
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "nonpayable"
+    "stateMutability": "payable"
   },
   {
     "type": "function",
@@ -398,6 +437,13 @@ export const wantosBridgeV2Abi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "disableNativeFee",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -512,6 +558,19 @@ export const wantosBridgeV2Abi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "feeRecipient",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -732,6 +791,61 @@ export const wantosBridgeV2Abi = [
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "nativeFeeTiers",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct WantosBridgeV2.FeeStorage",
+        "components": [
+          {
+            "name": "feeRecipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "l0",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "l1",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "l2",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "f0",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "f1",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "f2",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "f3",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
       }
     ],
     "stateMutability": "view"
@@ -983,6 +1097,25 @@ export const wantosBridgeV2Abi = [
   },
   {
     "type": "function",
+    "name": "quoteNativeFee",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "renounceRole",
     "inputs": [
       {
@@ -1056,6 +1189,61 @@ export const wantosBridgeV2Abi = [
         "name": "account",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setNativeFeeTiers",
+    "inputs": [
+      {
+        "name": "n",
+        "type": "tuple",
+        "internalType": "struct WantosBridgeV2.FeeStorage",
+        "components": [
+          {
+            "name": "feeRecipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "l0",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "l1",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "l2",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "f0",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "f1",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "f2",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "f3",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
       }
     ],
     "outputs": [],
@@ -1414,6 +1602,50 @@ export const wantosBridgeV2Abi = [
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "NativeFeeCollected",
+    "inputs": [
+      {
+        "name": "payer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "recipient",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "fee",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "NativeFeeConfigUpdated",
+    "inputs": [
+      {
+        "name": "recipient",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -2351,6 +2583,11 @@ export const wantosBridgeV2Abi = [
   },
   {
     "type": "error",
+    "name": "NativeFeeTransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NoRecovery",
     "inputs": []
   },
@@ -2557,6 +2794,11 @@ export const wantosBridgeV2Abi = [
   {
     "type": "error",
     "name": "WhitelistWritesBlocked",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WrongNativeFee",
     "inputs": []
   },
   {

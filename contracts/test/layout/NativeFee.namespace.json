@@ -1,0 +1,46 @@
+{
+ "namespace": "wantos.bridge.v2.NativeFee",
+ "base": "0x996f0b223ec5eab56d57394bbc730586711d10f12e551944355aff15072b3a00",
+ "fields": {
+  "feeRecipient": {
+   "slot": 0,
+   "offset": 0,
+   "bytes": 20
+  },
+  "l0": {
+   "slot": 1,
+   "offset": 0,
+   "bytes": 32
+  },
+  "l1": {
+   "slot": 2,
+   "offset": 0,
+   "bytes": 32
+  },
+  "l2": {
+   "slot": 3,
+   "offset": 0,
+   "bytes": 32
+  },
+  "f0": {
+   "slot": 4,
+   "offset": 0,
+   "bytes": 32
+  },
+  "f1": {
+   "slot": 5,
+   "offset": 0,
+   "bytes": 32
+  },
+  "f2": {
+   "slot": 6,
+   "offset": 0,
+   "bytes": 32
+  },
+  "f3": {
+   "slot": 7,
+   "offset": 0,
+   "bytes": 32
+  }
+ }
+}

@@ -51,6 +51,39 @@ contract BscEdgeCasesTest is BscFixture {
         assertEq(cooldown, 0);
     }
 
+    /// ERC-5267 must describe the whitelist domain actually used for signing: name, version and
+    /// verifyingContract only (fields 0x0b), no chainId - so one signature works on both chains.
+    function test_eip712Domain_describesTheChainlessWhitelistDomain() public view {
+        (
+            bytes1 fields,
+            string memory name,
+            string memory version,
+            uint256 chainId,
+            address verifyingContract,
+            bytes32 salt,
+            uint256[] memory extensions
+        ) = vault.eip712Domain();
+        assertEq(fields, hex"0b");
+        assertEq(name, "SaveBridgeWhitelist");
+        assertEq(version, "1");
+        assertEq(chainId, 0);
+        assertEq(verifyingContract, address(vault));
+        assertEq(salt, bytes32(0));
+        assertEq(extensions.length, 0);
+        // and the advertised fields hash to the separator the contract really verifies against
+        assertEq(
+            vault.domainSeparator(),
+            keccak256(
+                abi.encode(
+                    keccak256("EIP712Domain(string name,string version,address verifyingContract)"),
+                    keccak256(bytes(name)),
+                    keccak256(bytes(version)),
+                    verifyingContract
+                )
+            )
+        );
+    }
+
     function test_depositEventKey() public view {
         assertEq(
             vault.depositEventKey(4),

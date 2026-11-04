@@ -179,6 +179,7 @@ contract BscVaultV2 is BridgeBase {
     // ------------------------------------------------------------------ B2W deposits
     function deposit(uint256 amount, address wantosRecipient)
         external
+        payable
         whenNotPaused
         nonReentrant
         returns (uint256 nonce)
@@ -192,6 +193,91 @@ contract BscVaultV2 is BridgeBase {
         $.deposits[nonce] =
             Deposit({from: msg.sender, amount: uint128(received), refundRequestedAt: 0, refundStatus: D_NONE});
         emit Deposited(nonce, msg.sender, wantosRecipient, received);
+        _collectNativeFee();
+    }
+
+    // ------------------------------------------------------------------ native fee (BNB, attached by the client)
+    /// @custom:storage-location erc7201:wantos.bridge.v2.BscNativeFee
+    struct FeeStorage {
+        address feeRecipient; // receives every fee at once; the contract never holds native coin
+        uint256 multiplier; // fee = gasPrice * FEE_GAS * multiplier; 0 = off
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("wantos.bridge.v2.BscNativeFee")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant FEE_STORAGE = 0xda0cb208263a332850054218d87c370a3978ccc2c5835848c161d1a30a2e7c00;
+
+    /// @dev Gas of one approve + deposit (about 200k); times the multiplier this is "N x the user's own BSC gas".
+    uint256 public constant FEE_GAS = 200_000;
+    uint256 public constant MIN_FEE = 0.0005 ether; // = fee at BSC's 0.05 gwei floor and multiplier 50: gas price 0 cannot dodge
+    uint256 public constant MAX_FEE = 0.002 ether; // 4x the fee at today's 0.05 gwei and multiplier 50
+    uint256 public constant MAX_MULTIPLIER = 100;
+
+    error WrongNativeFee();
+    error NativeFeeTransferFailed();
+
+    event NativeFeeCollected(address indexed payer, address indexed recipient, uint256 fee);
+    event NativeFeeConfigUpdated(address indexed recipient, uint256 multiplier, address indexed by);
+
+    function _f() private pure returns (FeeStorage storage $) {
+        assembly {
+            $.slot := FEE_STORAGE
+        }
+    }
+
+    /// @notice The fee a client should attach for a deposit at gas price `gasPrice` (wei): a flat multiple of the
+    ///         user's own gas, the same for every amount, clamped to [MIN_FEE, MAX_FEE]. 0 when switched off. A
+    ///         client passes the high end of its gas-price estimate and attaches exactly the result.
+    function quoteNativeFee(uint256 gasPrice) public view returns (uint256 fee) {
+        uint256 m = _f().multiplier;
+        if (m == 0) return 0;
+        fee = gasPrice * FEE_GAS * m;
+        if (fee < MIN_FEE) return MIN_FEE;
+        if (fee > MAX_FEE) return MAX_FEE;
+    }
+
+    /// @notice Where fees go and the current multiplier, for the admin UI and the watcher to verify.
+    function nativeFeeConfig() external view returns (address recipient, uint256 multiplier) {
+        FeeStorage storage $ = _f();
+        return ($.feeRecipient, $.multiplier);
+    }
+
+    /// @notice Timelock only (A-class, not while paused): set recipient and multiplier (0 = off).
+    function setNativeFeeConfig(address recipient, uint256 multiplier) external onlyTimelockA whenNotPaused {
+        if (multiplier > MAX_MULTIPLIER) revert ParamOutOfRange(0);
+        if (multiplier != 0 && recipient == address(0)) revert ZeroAddress();
+        FeeStorage storage $ = _f();
+        ($.feeRecipient, $.multiplier) = (recipient, multiplier);
+        emit NativeFeeConfigUpdated(recipient, multiplier, msg.sender);
+    }
+
+    /// @notice Admin wallet kill switch: multiplier to 0, effective at once.
+    function disableNativeFee() external onlyAdmin {
+        FeeStorage storage $ = _f();
+        $.multiplier = 0;
+        emit NativeFeeConfigUpdated($.feeRecipient, 0, msg.sender);
+    }
+
+    /// @dev Called last in deposit. The client attaches the fee it computed from its own gas estimate (the same
+    ///      formula as `quoteNativeFee`, at the high end of the estimated gas price). The contract does not look at
+    ///      tx.gasprice, so a wallet that prices gas differently cannot make the fee "too low": it only checks that the
+    ///      value is within [MIN_FEE, MAX_FEE] and forwards all of it to the recipient at once. The floor is enforced
+    ///      on chain; the exact multiple of gas is the client's job (an honest client lands near it, a caller that
+    ///      skips the client pays the floor). Fee off (multiplier 0): any value is sent back, so a client that quoted
+    ///      just before the switch-off still succeeds. No native coin is ever kept by the bridge.
+    function _collectNativeFee() private {
+        FeeStorage storage $ = _f();
+        if ($.multiplier == 0) {
+            if (msg.value != 0) {
+                (bool back,) = msg.sender.call{value: msg.value}("");
+                if (!back) revert NativeFeeTransferFailed();
+            }
+            return;
+        }
+        if (msg.value < MIN_FEE || msg.value > MAX_FEE) revert WrongNativeFee();
+        address to = $.feeRecipient;
+        (bool ok,) = to.call{value: msg.value}("");
+        if (!ok) revert NativeFeeTransferFailed();
+        emit NativeFeeCollected(msg.sender, to, msg.value);
     }
 
     /// @notice Admin requests a refund of deposit `nonce` (WANTOS side must have voided its eventKey first).

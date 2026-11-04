@@ -38,6 +38,10 @@ export const ERROR_KEYS: Record<string, I18nKey> = {
   AddrDailyCapExceeded: "err.addrDailyCapExceeded",
   DailyCapExceeded: "err.dailyCapExceeded",
   ContractCaller: "err.contractCaller",
+  WrongNativeFee: "err.wrongNativeFee",
+  NativeFeeTransferFailed: "err.nativeFeeTransfer",
+  InsufficientNativeForFee: "err.insufficientNativeForFee", // preflight only: not a contract error
+  FeeChanged: "err.feeChanged", // preflight only: the quoted fee moved while the user was approving
   ZeroAmount: "err.zeroAmount",
   ZeroAddress: "err.zeroAddress",
   SafeERC20FailedOperation: "err.tokenTransfer",

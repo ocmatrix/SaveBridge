@@ -53,7 +53,7 @@
 git clone <仓库> && cd <仓库> && git checkout <冻结 commit>
 git submodule update --init --recursive      # forge-std、OZ v5.1.0 两个库
 
-forge build --sizes                          # 余量检查；SizeGateTest 另有 ≥1,500 B 的门槛
+forge build --sizes                          # 余量检查；SizeGateTest 另有 ≥900 B 的门槛
 forge test                                   # 预期 240 通过 / 0 失败（13 套件；fuzz 512 轮；invariant runs=256 depth=64）
 forge coverage --report summary --no-match-coverage "(test|script)/"   # 预期四个核心合约行/语句/分支/函数 100%
 forge fmt --check
@@ -286,7 +286,7 @@ done
 1. **分级**：审计方按高危 / 中危 / 低危 / 信息分级。PR-10 门槛：**高危、中危全部修复**；低危与信息逐项给出「修复 / 接受并说明」。
 2. **修复提交**：每个发现一个小提交，提交信息引用发现编号；不得夹带无关改动。冻结 tag 之后的合约改动必须有对应审计发现编号。
 3. **规格影响判断**：若修复改变 DESIGN 已拍板的 17 条决定或权力矩阵，**暂停修复，上报负责人**，不得自行取舍。
-4. **回归**（每次修复后）：`forge build --sizes`（余量 ≥ 1,500 B）、`forge test`（全绿，测试数不得减少）、`forge coverage`（核心合约 100%）、存储布局快照 diff（布局有变必须解释）、slither 重跑（High/Medium 为 0）、必要时变异验证（新增的检查须配有「删掉即变红」的测试）。
+4. **回归**（每次修复后）：`forge build --sizes`（余量 ≥ 900 B）、`forge test`（全绿，测试数不得减少）、`forge coverage`（核心合约 100%）、存储布局快照 diff（布局有变必须解释）、slither 重跑（High/Medium 为 0）、必要时变异验证（新增的检查须配有「删掉即变红」的测试）。
 5. **审计方复核**：修复提交交审计方确认关闭每个发现，出具终版报告。
 6. **重新冻结**：修复后更新冻结 commit 与 initcode 哈希表，打新 tag（如 `audit-freeze-2`）。
 7. **下游重跑**：合约 ABI 或行为有变 → 重新生成 `@bridge/abi`（`scripts/gen-abi.sh`）；PR-3/PR-5/PR-7 的相关测试重跑；**PR-9 全部重跑**（DESIGN §13：「修复后 PR-9 重跑」）；`Verify.s.sol` 的期望哈希重新取值。

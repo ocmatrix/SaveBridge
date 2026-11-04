@@ -30,9 +30,9 @@ export function assertAllowedTarget(cfg: AppConfig, chainId: number, to: string 
 
 /**
  * Function-level allow-list on top of the target check: USDT → only `approve(bridge, amount)`;
- * WANTOS bridge → only `bridgeOut`; BSC bridge → only `deposit`.
+ * WANTOS bridge → only `bridgeOut`; BSC bridge → only `deposit`. A non-zero `value` (the native fee) is allowed only on the bridges.
  */
-export function assertAllowedCall(cfg: AppConfig, chainId: number, to: string | undefined | null, functionName: string, args: readonly unknown[]): void {
+export function assertAllowedCall(cfg: AppConfig, chainId: number, to: string | undefined | null, functionName: string, args: readonly unknown[], value?: bigint): void {
   assertAllowedTarget(cfg, chainId, to);
   const c = chainById(cfg, chainId)!;
   const t = to!.toLowerCase();
@@ -42,5 +42,6 @@ export function assertAllowedCall(cfg: AppConfig, chainId: number, to: string | 
       : chainId === cfg.wantos.id
         ? functionName === "bridgeOut"
         : functionName === "deposit";
-  if (!ok) throw new TargetNotAllowedError(chainId, to ?? undefined);
+  // native coin only goes to the bridge entry points (the fee), never to a token contract
+  if (!ok || (value !== undefined && value > 0n && t === c.usdt.toLowerCase())) throw new TargetNotAllowedError(chainId, to ?? undefined);
 }

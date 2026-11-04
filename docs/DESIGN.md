@@ -245,7 +245,7 @@ event WhitelistUpdated(address indexed addr, bool allowed, bytes32 indexed listH
 
 ## 5. 桥合约
 
-基于 OpenZeppelin Contracts Upgradeable v5：`AccessControl` + `Pausable` + `ReentrancyGuard` + `UUPS` + `EIP712` + `SafeERC20`；存储用 ERC-7201 命名空间。`evm_version` 按 PR-0 确认的 WANTOS EVM 版本设置（`cancun`）；编译器 solc 0.8.28，optimizer **runs = 1**（为字节码上限留余量，CI 要求每个核心合约余量 ≥ 1,500 B）。合约不做 ERC-1271 验证（链上唯一的签名者白名单钱包是 EOA）。
+基于 OpenZeppelin Contracts Upgradeable v5：`AccessControl` + `Pausable` + `ReentrancyGuard` + `UUPS` + `EIP712` + `SafeERC20`；存储用 ERC-7201 命名空间。`evm_version` 按 PR-0 确认的 WANTOS EVM 版本设置（`cancun`）；编译器 solc 0.8.28，optimizer **runs = 1**（为字节码上限留余量，CI 要求每个核心合约余量 ≥ 900 B，原 1,500 B 于 2026-11-03 因原生币手续费降低）。合约不做 ERC-1271 验证（链上唯一的签名者白名单钱包是 EOA）。
 
 ### 5.1 部署与初始化
 

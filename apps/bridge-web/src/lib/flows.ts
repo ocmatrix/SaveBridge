@@ -1,9 +1,10 @@
-import { erc20Abi, parseEventLogs, zeroAddress, type Abi, type Account, type Address, type Hex, type WalletClient } from "viem";
+import { erc20Abi, parseEventLogs, zeroAddress, type Abi, type Account, type Address, type Hex, type PublicClient, type WalletClient } from "viem";
 import { bscVaultV2Abi, wantosBridgeV2Abi } from "@bridge/abi";
 import type { AppConfig } from "../config";
 import { clientFor, type Clients } from "./clients";
 import { assertAllowedCall, assertAllowedTarget } from "./guard";
 import { buildExactApprove } from "./approve";
+import { quoteBridgeOutFee, quoteDepositFee } from "./fee";
 
 export interface TxContext {
   cfg: AppConfig;
@@ -93,6 +94,8 @@ export interface GuardedRequest {
   abi: Abi;
   functionName: string;
   args: readonly unknown[];
+  /** Native coin sent with the call: the bridge fee (bridgeOut / deposit only). */
+  value?: bigint;
 }
 
 /**
@@ -100,7 +103,7 @@ export interface GuardedRequest {
  * USDT contracts of that chain (DESIGN §8.1), that the wallet is on that chain, and simulates first.
  */
 export async function sendGuarded(ctx: TxContext, chainId: number, req: GuardedRequest): Promise<Hex> {
-  assertAllowedCall(ctx.cfg, chainId, req.address, req.functionName, req.args);
+  assertAllowedCall(ctx.cfg, chainId, req.address, req.functionName, req.args, req.value);
   const actual = await ctx.wallet.getChainId();
   if (actual !== chainId) throw new WrongNetworkError(chainId, actual);
   const pc = clientFor(ctx.cfg, ctx.clients, chainId);
@@ -146,6 +149,16 @@ async function balanceCheck(ctx: TxContext, chainId: number, token: Address, amo
   if (bal < amount) throw new PreflightError("ERC20InsufficientBalance", [owner, bal, amount]);
 }
 
+/** A fresh BSC fee may be at most this percent of the one the user saw (the gas price drifts a little during an approval). */
+const FEE_JUMP_LIMIT_PCT = 125n;
+
+/** The wallet must hold the native fee (the network gas is checked by the wallet itself). */
+async function nativeCheck(pc: PublicClient, owner: Address, needed: bigint) {
+  if (needed === 0n) return;
+  const bal = await pc.getBalance({ address: owner });
+  if (bal < needed) throw new PreflightError("InsufficientNativeForFee", [owner, bal, needed]);
+}
+
 /** WANTOS → BSC: preflight (§5.3 checks) → exact approve → bridgeOut → orderId. */
 export async function bridgeOutFlow(ctx: TxContext, amount: bigint, onStep: StepFn) {
   const c = ctx.cfg.wantos;
@@ -175,10 +188,12 @@ export async function bridgeOutFlow(ctx: TxContext, amount: bigint, onStep: Step
     throw new PreflightError("AddrDailyCapExceeded", [user, used + amount, params.w2bPerAddrDailyCap]);
   }
   await balanceCheck(ctx, c.id, c.usdt, amount);
+  const fee = await quoteBridgeOutFee(pc, ctx.cfg, amount);
+  await nativeCheck(pc, user, fee);
 
   const approveTxHash = await ensureAllowance(ctx, c.id, amount, onStep);
   onStep("send");
-  const txHash = await sendGuarded(ctx, c.id, { ...W, abi: wantosBridgeV2Abi as Abi, functionName: "bridgeOut", args: [amount] });
+  const txHash = await sendGuarded(ctx, c.id, { ...W, abi: wantosBridgeV2Abi as Abi, functionName: "bridgeOut", args: [amount], value: fee });
   onStep("confirming", txHash);
   const r = await confirm(ctx, c.id, txHash, "send");
   const ev = parseEventLogs({ abi: wantosBridgeV2Abi, logs: r.logs, eventName: "BridgeOut" }).find(
@@ -212,10 +227,17 @@ export async function depositFlow(ctx: TxContext, amount: bigint, recipient: Add
   if (amount < params.minDeposit) throw new PreflightError("AmountBelowMinimum", [amount, params.minDeposit]);
   if (amount > params.maxDepositPerTx) throw new PreflightError("AmountAboveLimit", [amount, params.maxDepositPerTx]);
   await balanceCheck(ctx, c.id, c.usdt, amount);
+  const seenFee = await quoteDepositFee(pc, ctx.cfg); // what the user was shown when they pressed the button
+  await nativeCheck(pc, account(ctx).address, seenFee);
 
   const approveTxHash = await ensureAllowance(ctx, c.id, amount, onStep);
+  // quoted again right before sending: the gas price may have moved during the approval
+  const fee = await quoteDepositFee(pc, ctx.cfg);
+  // the fee follows the gas price: never charge much more than the user agreed to, ask them to look again instead
+  if (fee * 100n > seenFee * FEE_JUMP_LIMIT_PCT) throw new PreflightError("FeeChanged", [seenFee, fee]);
+  await nativeCheck(pc, account(ctx).address, fee);
   onStep("send");
-  const txHash = await sendGuarded(ctx, c.id, { ...B, abi: bscVaultV2Abi as Abi, functionName: "deposit", args: [amount, recipient] });
+  const txHash = await sendGuarded(ctx, c.id, { ...B, abi: bscVaultV2Abi as Abi, functionName: "deposit", args: [amount, recipient], value: fee });
   onStep("confirming", txHash);
   const r = await confirm(ctx, c.id, txHash, "send");
   const ev = parseEventLogs({ abi: bscVaultV2Abi, logs: r.logs, eventName: "Deposited" }).find(

@@ -12,6 +12,8 @@ export const ROLE_LABEL: Record<string, string> = {
 /** What each A-class operation means (DESIGN §4.3 A). */
 export const KIND: Record<string, string> = {
   upgradeToAndCall: "升级桥合约",
+  setNativeFeeConfig: "手续费配置（BSC）",
+  setNativeFeeTiers: "手续费档位（WANTOS）",
   withdraw: "提取储备",
   setParams: "参数调整",
   setSupplyCeiling: "提高发行上限",
