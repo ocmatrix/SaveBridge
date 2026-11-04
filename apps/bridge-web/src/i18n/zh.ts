@@ -26,7 +26,7 @@ export const zh = {
   "info.w2b": "今日剩余额度 {amount} USDT · 单笔 {min} ~ {max}",
   "info.b2w": "≥{min} USDT 起跨链",
   "info.feeW2b": "跨链手续费 {fee} {symbol}，随交易一并支付",
-  "info.feeB2w": "跨链手续费约 {fee} {symbol}，多付的部分会退回",
+  "info.feeB2w": "跨链手续费约 {fee} {symbol}，随当前 gas 价小幅浮动",
   "steps.hint": "第 1 步 授权 › 第 2 步 提交跨链",
   "amount.approveNote": "授权只用本次金额 {amount} USDT。",
   "amount.receive": "接收金额（USDT）",

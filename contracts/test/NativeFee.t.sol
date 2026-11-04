@@ -22,7 +22,7 @@ contract NoReceiveDepositor {
     }
 }
 
-// =================================================================== BSC: fee follows the gas price
+// =================================================================== BSC: client attaches the fee, the contract keeps it within [MIN_FEE, MAX_FEE]
 contract NativeFeeBscTest is BscFixture {
     address recipient = address(0xADCDe89431978C79ef66956Cfed67ac925426957);
     uint256 constant GWEI = 1e9;
@@ -72,34 +72,55 @@ contract NativeFeeBscTest is BscFixture {
         assertEq(m, 10);
     }
 
-    function test_floatingFee_chargedAtTxGasPrice() public {
+    function test_attachedFeeForwardedWhole_noDependenceOnTxGasPrice() public {
         _set(recipient, 10);
-        vm.txGasPrice(0.5 gwei);
-        uint256 before = recipient.balance;
-        _dep(alice, 300 * U, 0.001 ether);
-        assertEq(recipient.balance - before, 0.001 ether);
-        assertEq(address(vault).balance, 0);
-        assertEq(vault.depositNonce(), 1);
+        uint256 fee = vault.quoteNativeFee(0.5 gwei); // the client quotes at the gas price it estimated
+        assertEq(fee, 0.001 ether);
+        uint256[3] memory prices = [uint256(0), 0.05 gwei, 100 gwei]; // whatever price the wallet actually uses
+        for (uint256 k; k < prices.length; ++k) {
+            vm.txGasPrice(prices[k]);
+            uint256 r0 = recipient.balance;
+            _dep(alice, 300 * U, fee);
+            assertEq(recipient.balance - r0, fee);
+            assertEq(address(vault).balance, 0);
+            assertEq(1 ether - alice.balance, fee); // _dep deals 1 ether first: she paid the fee and nothing else
+        }
+        assertEq(vault.depositNonce(), 3);
     }
 
-    function test_underpaymentReverts_overpaymentReturned() public {
+    function test_anyValueInTheBandIsKeptWhole_noRefund() public {
         _set(recipient, 10);
-        vm.txGasPrice(0.5 gwei);
+        uint256 v = 0.0012 ether; // between the floor and the cap, not a quote
+        uint256 r0 = recipient.balance;
+        token.mint(alice, 300 * U);
+        vm.deal(alice, 1 ether);
+        vm.startPrank(alice);
+        token.approve(address(vault), 300 * U);
+        vault.deposit{value: v}(300 * U, alice);
+        vm.stopPrank();
+        assertEq(recipient.balance - r0, v);
+        assertEq(1 ether - alice.balance, v); // nothing came back
+        assertEq(address(vault).balance, 0);
+    }
+
+    function test_valueOutsideTheBandReverts() public {
+        _set(recipient, 10);
         token.mint(alice, 400 * U);
         vm.deal(alice, 1 ether);
         vm.startPrank(alice);
         token.approve(address(vault), 400 * U);
+        uint256 lo = vault.MIN_FEE(); // read before expectRevert: it applies to the very next external call
+        uint256 hi = vault.MAX_FEE();
         vm.expectRevert(BscVaultV2.WrongNativeFee.selector);
-        vault.deposit{value: 0.001 ether - 1}(300 * U, alice);
+        vault.deposit(300 * U, alice); // nothing attached
         vm.expectRevert(BscVaultV2.WrongNativeFee.selector);
-        vault.deposit(300 * U, alice);
-        uint256 before = alice.balance;
-        uint256 r0 = recipient.balance;
-        vault.deposit{value: 0.003 ether}(300 * U, alice);
+        vault.deposit{value: lo - 1}(300 * U, alice);
+        vm.expectRevert(BscVaultV2.WrongNativeFee.selector);
+        vault.deposit{value: hi + 1}(300 * U, alice); // a buggy client cannot overpay
+        vault.deposit{value: lo}(300 * U, alice); // both ends are accepted
+        vault.deposit{value: hi}(100 * U, alice);
         vm.stopPrank();
-        assertEq(recipient.balance - r0, 0.001 ether);
-        assertEq(before - alice.balance, 0.001 ether); // paid the fee, the rest came back
-        assertEq(address(vault).balance, 0);
+        assertEq(vault.depositNonce(), 2);
     }
 
     function test_rejectingRecipientRevertsWholeDeposit() public {
@@ -114,14 +135,22 @@ contract NativeFeeBscTest is BscFixture {
         assertEq(vault.depositNonce(), 0);
     }
 
-    function test_depositorThatCannotReceiveRefundReverts() public {
+    function test_contractWalletDepositsWhenFeeOn_noRefundNeeded() public {
         _set(recipient, 10);
         NoReceiveDepositor d = new NoReceiveDepositor();
         token.mint(address(d), 100 * U);
         vm.deal(address(this), 1 ether);
+        d.go{value: 0.0005 ether}(vault, token, 100 * U); // the whole value is the fee: nothing to send back
+        assertEq(vault.depositNonce(), 1);
+    }
+
+    function test_feeOff_contractWalletThatCannotReceiveRefundReverts() public {
+        NoReceiveDepositor d = new NoReceiveDepositor();
+        token.mint(address(d), 100 * U);
+        vm.deal(address(this), 1 ether);
         vm.expectRevert(BscVaultV2.NativeFeeTransferFailed.selector);
-        d.go{value: 0.5 ether}(vault, token, 100 * U);
-        d.go{value: 0.0005 ether}(vault, token, 100 * U); // exact payment needs no refund
+        d.go{value: 0.5 ether}(vault, token, 100 * U); // off: a value is sent back, and this wallet cannot take it
+        d.go(vault, token, 100 * U);
         assertEq(vault.depositNonce(), 1);
     }
 
@@ -157,6 +186,9 @@ contract NativeFeeBscTest is BscFixture {
         assertEq(r, recipient);
         assertEq(m, 0);
         _dep(alice, 100 * U, 0);
+        _dep(bob, 100 * U, 0.0006 ether); // a client that quoted just before the switch-off still succeeds: its value comes back
+        assertEq(bob.balance, 1 ether);
+        assertEq(vault.depositNonce(), 2);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.NotAdmin.selector, alice));
         vault.disableNativeFee();

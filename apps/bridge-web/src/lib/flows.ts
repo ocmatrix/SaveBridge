@@ -89,9 +89,6 @@ function account(ctx: TxContext): Account {
   return ctx.wallet.account;
 }
 
-/** Gas limit used only for the simulation of a call that carries a gas price (a deposit costs well under this). */
-const SIMULATION_GAS = 1_000_000n;
-
 export interface GuardedRequest {
   address: Address;
   abi: Abi;
@@ -99,8 +96,6 @@ export interface GuardedRequest {
   args: readonly unknown[];
   /** Native coin sent with the call: the bridge fee (bridgeOut / deposit only). */
   value?: bigint;
-  /** Set only for deposit, so the transaction is legacy at the price the fee was quoted at. */
-  gasPrice?: bigint;
 }
 
 /**
@@ -112,16 +107,11 @@ export async function sendGuarded(ctx: TxContext, chainId: number, req: GuardedR
   const actual = await ctx.wallet.getChainId();
   if (actual !== chainId) throw new WrongNetworkError(chainId, actual);
   const pc = clientFor(ctx.cfg, ctx.clients, chainId);
-  // With a gas price set, some RPCs check balance >= gas * price where gas defaults to their cap (tens of millions):
-  // a small but sufficient balance would be rejected. Give the simulation a realistic gas limit, and leave the real
-  // gas limit to the wallet (it is not passed on).
-  const { request } = await pc.simulateContract({ ...req, ...(req.gasPrice !== undefined ? { gas: SIMULATION_GAS } : {}), account: account(ctx) } as never);
+  const { request } = await pc.simulateContract({ ...req, account: account(ctx) } as never);
   const to = (request as { address: Address }).address;
   assertAllowedTarget(ctx.cfg, chainId, to);
-  const { gas: _simulationGas, ...forWallet } = request as { gas?: bigint };
-  void _simulationGas;
   try {
-    return await ctx.wallet.writeContract({ ...(forWallet as object), account: account(ctx), chain: pc.chain } as never);
+    return await ctx.wallet.writeContract({ ...(request as object), account: account(ctx), chain: pc.chain } as never);
   } catch (e) {
     throw isWalletTimeout(e) ? new WalletTimeoutError(e) : e;
   }
@@ -234,13 +224,13 @@ export async function depositFlow(ctx: TxContext, amount: bigint, recipient: Add
   if (amount < params.minDeposit) throw new PreflightError("AmountBelowMinimum", [amount, params.minDeposit]);
   if (amount > params.maxDepositPerTx) throw new PreflightError("AmountAboveLimit", [amount, params.maxDepositPerTx]);
   await balanceCheck(ctx, c.id, c.usdt, amount);
-  await nativeCheck(pc, account(ctx).address, (await quoteDepositFee(pc, ctx.cfg, account(ctx).address)).fee);
+  await nativeCheck(pc, account(ctx).address, await quoteDepositFee(pc, ctx.cfg));
 
   const approveTxHash = await ensureAllowance(ctx, c.id, amount, onStep);
   // quoted again right before sending: the gas price may have moved during the approval
-  const q = await quoteDepositFee(pc, ctx.cfg, account(ctx).address);
+  const fee = await quoteDepositFee(pc, ctx.cfg);
   onStep("send");
-  const txHash = await sendGuarded(ctx, c.id, { ...B, abi: bscVaultV2Abi as Abi, functionName: "deposit", args: [amount, recipient], value: q.value, gasPrice: q.gasPrice });
+  const txHash = await sendGuarded(ctx, c.id, { ...B, abi: bscVaultV2Abi as Abi, functionName: "deposit", args: [amount, recipient], value: fee });
   onStep("confirming", txHash);
   const r = await confirm(ctx, c.id, txHash, "send");
   const ev = parseEventLogs({ abi: bscVaultV2Abi, logs: r.logs, eventName: "Deposited" }).find(

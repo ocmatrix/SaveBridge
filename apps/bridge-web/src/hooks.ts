@@ -36,12 +36,11 @@ export function useBridgeOutFee(amount: bigint | undefined) {
 }
 
 /** BNB fee of a deposit at the current gas price (0 = off). */
-export function useDepositFee(owner: Address | undefined) {
+export function useDepositFee() {
   const { cfg, clients } = useDeps();
   return useQuery({
-    queryKey: ["fee-b2w", owner ?? null],
-    queryFn: () => quoteDepositFee(clients.bsc, cfg, owner!),
-    enabled: !!owner,
+    queryKey: ["fee-b2w"],
+    queryFn: () => quoteDepositFee(clients.bsc, cfg),
     refetchInterval: 15_000,
   });
 }

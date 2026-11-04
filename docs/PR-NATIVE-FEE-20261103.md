@@ -11,9 +11,9 @@
 | | BSC 方向（跨进来，欢迎方向） | WANTOS 方向（出金） |
 |---|---|---|
 | 入口 | `BscVaultV2.deposit`（`payable`） | `WantosBridgeV2.bridgeOut`（`payable`） |
-| 费用 | **一笔固定倍数的 gas 费，与存入金额无关**：`fee = tx.gasprice × 200,000 × multiplier`，夹在 [0.0005, 0.002] BNB。上线建议 `multiplier` = **50**（11-04 负责人定：收用户 BSC 自付 gas 的 50 倍） | 按存入金额分 4 档固定值（见下表） |
+| 费用 | **前端按「预估 gas 价高端 × 20 万 × 倍数」算出一个金额附带**，与存入金额无关，合约强制其落在 [0.0005, 0.002] BNB（`MIN_FEE`/`MAX_FEE`）。**合约不读 `tx.gasprice`**。上线建议 `multiplier` = **50**（11-04 负责人定：收用户 BSC 自付 gas 的 50 倍） | 按存入金额分 4 档固定值（见下表） |
 | 浮动 | 随用户交易的 gas 价轻微浮动，像正常转账一样；BSC gas 价 0.05 gwei（现价）时 = 0.0005 BNB，约 0.3 美元 | 不浮动 |
-| 付款 | `msg.value ≥ fee`，多付的**退回**发起人（钱包无法精确到 wei） | `msg.value` 必须恰好等于该档费用 |
+| 付款 | `MIN_FEE ≤ msg.value ≤ MAX_FEE`，**全额**转给收款地址，不退款（费用关闭时附带的 `value` 原路退回） | `msg.value` 必须恰好等于该档费用 |
 | 转账 | 状态写入之后转给 `feeRecipient`，合约不留余额；转账失败整笔回滚；`nonReentrant` | 同左 |
 | 配置 | `setNativeFeeConfig(recipient, multiplier)`：仅时间锁（48h），`multiplier ≤ 100`，0 = 关 | `setNativeFeeTiers`：仅时间锁，最低档 ≥ 1.2 WANT、每档 ≤ 250 WANT、档位不降、限额升序 |
 | 总开关 | `disableNativeFee()`：管理钱包立即把 `multiplier` 置 0 | 管理钱包立即把四档清零 |
@@ -23,9 +23,11 @@
 
 两条路径的代码分别放在各自合约里，`BridgeBase` 不变（避免 BSC 合约背上用不到的阶梯代码）。未配置时两边默认不收费。
 
-### 为什么 BSC 用 `tx.gasprice` 而不是固定数
+### 为什么 BSC 的手续费由前端算、合约只夹上下限（2026-11-04 改）
 
-20 万 gas 是一次 approve 加 deposit 的消耗，单笔交易的 gas 用量基本固定，真正浮动的是 gas 价；所以「实际 gas 的 N 倍」就是 `gas 价 × 20 万 × N`。BSC gas 价波动时，固定值会偏离"10 倍"；用 `tx.gasprice` 则自动跟随，不需要预言机、不需要人工调价。用户设更高的 gas 价会多付，设最低价就付下限，夹在上下限内。
+最初版本由合约按 `tx.gasprice` 重新计算，要求 `msg.value ≥ fee` 并退回多付部分。问题：前端无法知道钱包最终用什么 gas 价，钱包一旦改价，实际手续费高于附带的 `value`，交易就回滚；为了避免失败只能多附带再退款，钱包确认页上显示的金额偏高，智能合约钱包还可能收不了退款。
+
+改为：**前端按预估 gas 价的高端 × 倍数算出手续费，附带恰好这个数；合约只检查它在 [MIN_FEE, MAX_FEE] 内并全额转走**。真实 gas 照常付给网络，附加手续费是独立的一笔。效果：入金不会因手续费问题回滚、不需要退款、确认页显示真实金额。代价：合约只能强制最低值，不能强制「恰好 50 倍」；负责人确认允许误差（见规范 §2.1）。
 
 ### WANTOS 档位（WANT 按 0.5 美元估算）
 
@@ -49,7 +51,7 @@
 
 ## 4. 测试
 
-整套 `forge test` 260 项通过；`BridgeBase`、`BscVaultV2`、`WantosBridgeV2` 覆盖率 100%。`contracts/test/NativeFee.t.sol` 覆盖：BSC 的 gas 价浮动、不付够回滚、多付退回、收款方拒收回滚、发起人无法收退款回滚、配置边界与权限、总开关；WANTOS 的档位边界、金额不符回滚、下限/上限/顺序/零地址校验、总开关；两个命名空间的存储布局核对。改坏验证：忽略 gas 价、去掉不足检查、去掉退款、去掉上限夹取，用例均变红（WANTOS 侧此前已验证）。
+整套 `forge test` 268 项通过；`BridgeBase`、`BscVaultV2`、`WantosBridgeV2` 覆盖率 100%。`contracts/test/NativeFee.t.sol` 覆盖：BSC 的附带金额在 [MIN_FEE, MAX_FEE] 内全额转走且与 `tx.gasprice` 无关、区间外回滚、费用关闭时附带的 `value` 原路退回、收款方拒收回滚、智能合约钱包可入金、配置边界与权限、总开关；WANTOS 的档位边界、金额不符回滚、下限/上限/顺序/零地址校验、总开关；两个命名空间的存储布局核对。改坏验证：忽略 gas 价、去掉不足检查、去掉退款、去掉上限夹取，用例均变红（WANTOS 侧此前已验证）。
 
 ## 5. 部署方式
 
@@ -59,7 +61,7 @@
 
 ## 6. 待办 / 待确认
 
-- 前端：BSC 方向读取当前 gas 价，调 `quoteNativeFee(gasPrice)`，发送时多附约 20% 余量（多付部分合约会退回）；WANTOS 方向调 `quoteNativeFee(amount)`。重新生成 `packages/abi`。
+- 前端：BSC 方向读取节点当前 gas 价，调 `quoteNativeFee(gasPrice)`，附带恰好这个数（合约不退款、不看 `tx.gasprice`）；WANTOS 方向调 `quoteNativeFee(amount)`。重新生成 `packages/abi`。
 - slither 未跑；WANTOS 链的合约大小上限未实测（设计按 24,576），演练时验证。
 - 上线价格：`multiplier` = 50。BSC gas 价长期贴近最低价 0.05 gwei，只有轻微波动，此时手续费 = 0.0005 BNB（约 0.3 美元，BNB 按 600 美元估算），随 gas 价小幅上下。
 
@@ -70,7 +72,7 @@
 
 | 不做 | 少了什么 | 缓解 | 何时再做 |
 |---|---|---|---|
-| 价格预言机 / 自动调价 | BNB、WANT 价格大变时 WANTOS 档位偏离 | 档位是时间锁参数；BSC 已用 `tx.gasprice` 自动浮动 | 每周需调多次时 |
+| 价格预言机 / 自动调价 | BNB、WANT 价格大变时 WANTOS 档位偏离 | 档位是时间锁参数；BSC 由前端按当前 gas 价报价，随 gas 价浮动 | 每周需调多次时 |
 | BSC 按存入金额比例收费 | 大额存入与小额付同样的费 | 欢迎入金的策略取向，费用低 | 需要时 |
 | 失败/退款订单退手续费 | 被拒订单的手续费不退 | 界面写明；此类订单极少 | 出现投诉时 |
 | 手续费自动换成 gas 币 | 币种需人工平衡 | 手续费进离线钱包，油箱由负责人补 | 一个方向长期失衡时 |

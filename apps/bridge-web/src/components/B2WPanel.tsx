@@ -58,8 +58,8 @@ export function B2WPanel({ state, onDeposit, wallet, onFlip }: { state: BridgeSt
   const canSubmit = !!address && !!state && !wrongNet && !blocker && recipientOk && !!parsed?.ok && !problem && !flow.busy && !flow.pending;
   const maxAmount = state ? [state.b2wRemaining, state.bsc.balance, state.bsc.maxDepositPerTx].reduce((a, b) => (a < b ? a : b)) : null;
   const amountText = parsed?.ok ? f(parsed.value) : "";
-  const feeQuery = useDepositFee(address);
-  const fee = feeQuery.data?.fee ?? 0n;
+  const feeQuery = useDepositFee();
+  const fee = feeQuery.data ?? 0n;
   const customRecipient = !!address && recipientOk && getAddress(recipient) !== getAddress(address);
 
   async function submit() {

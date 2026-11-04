@@ -16,31 +16,33 @@
 
 ### 2.1 BSC 方向（用户跨进来，欢迎方向）
 
-**一笔固定倍数的 gas 费，与存入金额无关，随用户交易的 gas 价轻微浮动。**
+**两部分各管各的：** ①用户照常付给网络的**真实 gas**（合约不参与）；②**附加手续费**：由前端按「预估 gas 的高端 × 倍数」算出一个金额，作为 `value` 附带，合约只检查它在 [MIN_FEE, MAX_FEE] 内，然后**全额**转给收款地址。合约**不读 `tx.gasprice`**，所以钱包怎么定价 gas，都不会让附加费「不够」而回滚。
 
 ```
-fee = clamp( tx.gasprice × FEE_GAS × multiplier , MIN_FEE , MAX_FEE )     （multiplier = 0 时 fee = 0）
+前端：fee = quoteNativeFee( 预估 gas 价的高端 )
+      = clamp( gasPrice × FEE_GAS × multiplier , MIN_FEE , MAX_FEE )     （multiplier = 0 时为 0）
+合约：multiplier ≠ 0：要求 MIN_FEE ≤ msg.value ≤ MAX_FEE，全额转给 feeRecipient
+      multiplier = 0：任何 msg.value 原路退回，手续费为 0
 ```
 
 | 参数 | 值 | 位置 | 修改方式 |
 |---|---|---|---|
-| `FEE_GAS` | 200,000（一次 approve + deposit 的 gas） | 代码常量 | 升级 |
-| `MIN_FEE` | **0.0005 BNB**（= 现价费用；gas 价为 0 也不能少付，只会随 gas 价往上浮） | 代码常量 | 升级 |
-| `MAX_FEE` | 0.002 BNB（现价费用的 4 倍） | 代码常量 | 升级 |
+| `FEE_GAS` | 200,000（一次 approve + deposit 的 gas，用于报价公式） | 代码常量 | 升级 |
+| `MIN_FEE` | **0.0005 BNB**（= 现价下 50 倍 gas；**合约强制的最低收费**） | 代码常量 | 升级 |
+| `MAX_FEE` | 0.002 BNB（现价费用的 4 倍；防止前端出错多付） | 代码常量 | 升级 |
 | `MAX_MULTIPLIER` | 100 | 代码常量 | 升级 |
-| `multiplier` | **上线值 50** | 链上参数 | 仅时间锁（48h）；管理钱包可立即置 0 |
+| `multiplier` | **上线值 50**（供前端报价用，也是「开/关」） | 链上参数 | 仅时间锁（48h）；管理钱包可立即置 0 |
 | `feeRecipient` | 负责人离线钱包 `0xADCDe89431978C79ef66956Cfed67ac925426957` | 链上参数 | 仅时间锁（48h） |
 
 - 现价（BSC gas 0.05 gwei）：0.05 gwei × 200,000 × 50 = **0.0005 BNB**（约 0.3 美元，BNB 按 600 美元估算）。
-- 下限等于现价费用：BSC gas 价最低 0.05 gwei，所以正常用户不受影响；`tx.gasprice` 为 0 的打包渠道也只能付下限，不能打折。
-- 上限只防 gas 价异常或用户乱设高 gas 价；正常波动不会碰到。
-- 下限 = 倍数 50 时的现价费用，所以倍数低于 50 时下限生效，等于不降价；要降价需先改下限常量（升级）。
+- **强制的是最低值，倍数是前端的责任：** 合约保证每笔至少收 `MIN_FEE`、至多 `MAX_FEE`；诚实的前端会按 gas 价的高端 × 50 报价，gas 价上涨时多收一些。绕过我们前端直接调合约的人，只需要付 `MIN_FEE`。负责人 2026-11-04 确认：不必严格 50 倍，大概收到即可。
+- 收费口径允许有误差：附加费大致是用户自付 gas 的 50 倍（现价下恰好是下限）。
 
-付款与退回：
+付款：
 
-1. `msg.value < fee` → 整笔回滚（`WrongNativeFee`）。
-2. 费用转给 `feeRecipient`；转账失败 → 整笔回滚（`NativeFeeTransferFailed`）。
-3. `msg.value − fee` 当场退回 `msg.sender`；退回失败 → 整笔回滚。
+1. 金额不在 [MIN_FEE, MAX_FEE]（含没附带）→ 整笔回滚（`WrongNativeFee`）。
+2. 手续费全额转给 `feeRecipient`；转账失败 → 整笔回滚（`NativeFeeTransferFailed`）。
+3. **没有退款**（费用关闭时除外：此时附带的任何 `value` 原路退回，所以刚好在关闭瞬间发出的交易仍然成功）。因此智能合约钱包也能正常入金。
 4. 正常流程下合约不留 BNB（强行转入如 selfdestruct 可能留下零头，无害，也无提取函数；不要把「合约余额恒为 0」当链上不变量）。
 
 ### 2.2 WANTOS 方向（出金）
@@ -66,7 +68,8 @@ fee = clamp( tx.gasprice × FEE_GAS × multiplier , MIN_FEE , MAX_FEE )     （m
 | 函数 | 权限 | 说明 |
 |---|---|---|
 | `deposit(uint256 amount, address wantosRecipient) payable` | 任何人 | 原有入口，现为 `payable` |
-| `quoteNativeFee(uint256 gasPrice) view → uint256` | 任何人 | 按给定 gas 价（wei）报价；前端传将使用的 gas 价 |
+| `quoteNativeFee(uint256 gasPrice) view → uint256` | 任何人 | 按给定 gas 价（wei）报价，公式见 §2.1；前端传「预估 gas 价的高端」，附带恰好这个数 |
+| `MIN_FEE()`、`MAX_FEE()` view | 任何人 | 合约强制的最低、最高手续费（常量） |
 | `nativeFeeConfig() view → (address recipient, uint256 multiplier)` | 任何人 | 核对收款地址与倍数 |
 | `setNativeFeeConfig(address recipient, uint256 multiplier)` | 仅时间锁；非暂停；A 类 | `multiplier ≤ 100`（否则 `ParamOutOfRange(0)`）；`multiplier ≠ 0` 时收款地址非零（`ZeroAddress`） |
 | `disableNativeFee()` | 仅管理钱包 | `multiplier = 0`，立即生效；收款地址保留 |
@@ -104,7 +107,7 @@ fee = clamp( tx.gasprice × FEE_GAS × multiplier , MIN_FEE , MAX_FEE )     （m
 
 ## 5. 前端集成
 
-- **BSC**：取当前 gas 价 `p`；`fee = quoteNativeFee(p)`；`deposit` 附 `msg.value = fee × 1.2`（多付部分合约会退回）；界面显示"将收取约 `fee` BNB"。发交易时 gas 价必须与报价所用一致。
+- **BSC**：取节点当前 gas 价 `p`；`fee = quoteNativeFee(p)`；`deposit` 附 `msg.value = fee`（恰好这个数，合约不退款）；界面显示"将收取约 `fee` BNB"。**不需要**自己设置 gas 价或 gas 上限，交给钱包。授权完成后、发送前重新报价一次。
 - **WANTOS**：`fee = quoteNativeFee(amount)`；`bridgeOut` 附 `msg.value = fee`（必须恰好）。
 - 用户余额需覆盖"手续费 + 自身 gas"；不足时提前提示。
 - 手续费与退回的说明文案：手续费不可退；被拒绝或退款的订单，已收手续费不退。

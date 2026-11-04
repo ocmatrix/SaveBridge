@@ -28,7 +28,7 @@ export const en: Dict = {
   "info.w2b": "Left today {amount} USDT · per tx {min} ~ {max}",
   "info.b2w": "Minimum {min} USDT to bridge",
   "info.feeW2b": "Bridge fee {fee} {symbol}, paid with the transaction",
-  "info.feeB2w": "Bridge fee about {fee} {symbol}; any extra is refunded",
+  "info.feeB2w": "Bridge fee about {fee} {symbol}, it moves slightly with the current gas price",
   "steps.hint": "Step 1 approve › Step 2 submit",
   "amount.approveNote": "The approval covers this amount only: {amount} USDT.",
   "amount.receive": "Amount received (USDT)",
