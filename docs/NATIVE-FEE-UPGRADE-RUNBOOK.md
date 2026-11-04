@@ -102,7 +102,7 @@
 | 角色 | 用在哪一步 | 说明 |
 |---|---|---|
 | **部署者（开发用地址）** | P1 | 继续使用之前的开发用部署者 `0x5AEB9689655Baf4D29002952C101A0b4407ABC8e`（钥匙文件 `~/.savebridge-deployer-new/deployer-20261103`，口令由负责人自己输入终端）。它在两条链上的 nonce 不同（BSC 3、WANTOS 7，2026-11-04 读取），所以**两条链上的新实现地址不同，这是正常的**（见 `NATIVE-FEE-DEPLOY-PREP-20261104.md`）。gas 不够时由负责人转入 |
-| 管理钱包（硬件钱包） | P2；紧急关闭费用 | 只由负责人本人签名，我不接触 |
+| 管理钱包（手机钱包 App，**不是硬件钱包**，负责人 2026-11-05 更正） | P2；紧急关闭费用 | 只由负责人本人在手机钱包里确认，我不接触私钥。命令行 `cast` 的硬件钱包参数（`--ledger` 等）**不适用**；提议用一次性页面 `tools/fee-batch-page`（部署在 `savebridge-feebatch.pages.dev`），紧急关闭用同类页面 `tools/disable-fee-page` |
 | 任意有 gas 的账号 | P4 | 时间锁的执行人角色是开放的，可用管理钱包，也可用别的账号 |
 | 白名单钱包 | 可选：发现问题时取消提案 | 在 TP 手机钱包里 |
 
@@ -215,9 +215,9 @@ node scripts/compare-impl.mjs <RPC> $NEW out/<合约>.sol/<合约>.json   # BscV
 ## 5. P2：提议批量提案【G2】
 
 ### 5.1 提议方式
-时间锁的 `scheduleBatch` 只有管理钱包（硬件钱包）能调用。管理页现在只能提议「参数、交接、提取」等固定几类，**不能提议升级和手续费配置**；但时间锁页面能**列出、解码、取消、执行**任何提案。所以：
+时间锁的 `scheduleBatch` 只有管理钱包（手机钱包 App）能调用。管理页现在只能提议「参数、交接、提取」等固定几类，**不能提议升级和手续费配置**；但时间锁页面能**列出、解码、取消、执行**任何提案。所以：
 
-- **提议**：用 `cast` 加管理钱包签名（`--ledger` 只是示例，签名工具由负责人决定）。
+- **提议**：管理钱包在手机钱包 App 里，所以**不用 `cast` 签名**，而是用一次性页面 `tools/fee-batch-page`（在钱包内置浏览器里打开，只发两笔固定交易，页面检查连接的是管理钱包）。下面带 `--ledger` 的命令只是等价写法供核对，**不要照着在命令行签**；`scripts/schedule-fee-batch.sh` 只用于 `--dry` 演练。
 - **查看 / 核对 / 执行 / 取消**：用管理页的时间锁页面（需先按新 ABI 重新构建发布，否则新函数可能显示「无法解码」）；也可以全部用 `cast`。
 
 ### 5.2 生成提案内容（任何人可复核）
@@ -478,7 +478,7 @@ cast send $PROXY "disableNativeFee()" --rpc-url https://rpc3.wantos.io --ledger 
 | G4 | 真实小额验证 | 两笔真实小额验证交易（BSC 入金、WANTOS 出金）；**手续费已在到期时刻对所有人生效，不是这一步才生效** |
 
 ### 待确认（需要你回答）
-1. **管理钱包的签名方式：** 提议和紧急关闭要用管理钱包签名，具体用什么工具由负责人决定（命令里的 `--ledger` 只是示例）。
+1. **管理钱包的签名方式：已确定**——手机钱包 App（TP/MetaMask 一类）。提议用 `tools/fee-batch-page`；紧急关闭用 `tools/disable-fee-page`。
 2. **部署者：** 已定，继续用开发用地址 `0x5AEB…7ABC`，gas 不够时负责人转入。
 3. **App 覆盖率标准**与上架计划（App 是整个流程里最不可控的一环）。
 4. **WANTOS 链分叉演练：** 是否需要在独立沙盒里做（rpc3 限流会让公共节点分叉失败）。
@@ -502,12 +502,12 @@ cast send $PROXY "disableNativeFee()" --rpc-url https://rpc3.wantos.io --ledger 
 | 冻结源码提交号 / 目录哈希（分支 `fee-web-20261104`） | 合约与代码冻结于 `5d9b084`，文档更新至 `05c8241`；`contracts/src` 目录哈希 `83622d3723de875156aad7fc5651988089c7260cc239ae704424678c1bf3118a`（2026-11-04 在完整检出 `/Volumes/Projects/SaveBridge-deploy` 重新计算，`forge test` 292 项通过） |
 | 编译指纹（运行时字节码） | BscVaultV2 23,548 B，keccak `0x93dbbf3a819e0df67584846230a62ff27c3ebe19767f369d51efb9b4546399a4`；WantosBridgeV2 23,037 B，keccak `0x430b75a2dbdff961314e7b74d5cbc4f7f2a56ac3bc5a181da9fe56cd37c13385`（部署后链上字节码与它的差异只允许 3 处各 20 字节 immutable 地址，以及可能出现的 1 处 32 字节元数据哈希（用 `scripts/compare-impl.mjs` 核对）） |
 | 重新审查（BSC 手续费改动）：审查人 / 日期 / 结论 | 2026-11-04，**AI 独立代码审查（只读，不是人工或外部审计）**：无严重/高/中；3 个低、2 个信息项，处理见 §14.1。是否还要人工/外部审计由负责人决定 |
-| 部署者地址（开发用地址 `0x5AEB…7ABC`）/ 部署前 nonce / 余额 | |
+| 部署者地址（开发用地址 `0x5AEB…7ABC`）/ 部署前 nonce / 余额 | `0x5AEB9689655Baf4D29002952C101A0b4407ABC8e`；部署前 nonce BSC 3 / WANTOS 7，余额 0.001586 BNB / 1.9208 WANT；部署后 nonce 4 / 8，余额 0.001327 BNB / 1.7500 WANT |
 | 新实现地址 | **BSC：`0xdfeE8c9bc21d2a7bf9f0c8d55115135aF5634A59`（已部署）；WANTOS：`0xcBa30ff023f576ffa915bA322b34D6A835F330B7`（已部署）**，两个都与按 nonce 预测的地址一致，所以 PREP 文档里预先算好的提案编号有效 |
 | 部署交易哈希（BSC / WANTOS） | BSC：`0x923d200d64b3d8f14a1f5c228854c2b52cd087a3e982d4acc8967c0fb3632bfb`，区块 131651638，状态成功，gas 5,172,010，部署者 nonce 3→4；核对：`scripts/compare-impl.mjs` 输出 OK（除 3 处 immutable 外逐字节一致，元数据哈希也相同），`proxiableUUID` 正确，对实现直接调用 `initialize` 被拒（`InvalidInitialization`），线上代理实现槽未变。终端 forge 打印了 `contract was not deployed` 属误报（见 P1-2 说明）。WANTOS：`0x1df88c636f5449f4b24593b4359a883499e23dda6327e421dc1a4d87da2eb688`，区块 3498560，状态成功，gas 5,061,472（33.75 gwei，约 0.17 WANT），部署者 nonce 7→8；核对同样全部通过：`compare-impl.mjs` OK（除 3 处 immutable 外逐字节一致）、`proxiableUUID` 正确、对实现调用 `initialize` 被拒（`InvalidInitialization`）、线上代理实现槽未变。这一笔用了 `--offline`，终端正常打印了 `Deployed to`，没有再出现 BSC 那次的误报 |
-| 批量提案编号（BSC / WANTOS） | |
-| 提议交易哈希（BSC / WANTOS） | |
-| 最早可执行时间 / 有效期截止 | |
+| 批量提案编号（BSC / WANTOS） | **已提议（G2，2026-11-05，负责人在手机钱包里确认）**：BSC `0x10868fc9571a399a12b30d117f6af6f1b844d1077266a7540c25284009a7457b`，WANTOS `0x0c755dfaefab596b0983c5343282c7d0d47683a97ed5c5c30b8032d021e98d8f`（都与预期一致） |
+| 提议交易哈希（BSC / WANTOS） | BSC `0x907a9f2014eb706d86100a133746f739c0d360cc56032be5f70bb66665f3c63f`（区块 131716710，gas 75,749）；WANTOS `0x6f9fa84d541ef8f68c7f3262e2d96002f4af433b26f568db79c83c3f8f06c101`（区块 3503386，gas 78,794）。核对：两笔状态成功、发起人是管理钱包 `0x860f…5669`、目标是时间锁、**交易输入与预先模拟成功的数据逐字节一致**、`isOperation`/`isOperationPending` 为 true、`isOperationReady` 为 false、提案纪元 0 = 时间锁纪元 0 |
+| 最早可执行时间 / 有效期截止 | **BSC `2026-11-07 07:57:26 +08`（时间戳 1794009446），WANTOS `07:57:41 +08`（1794009461），两条链只差 15 秒。** 有效期到可执行后 14 天（约 2026-11-21 07:57 +08）。到期会自动执行（付款程序 60 秒内）。**检查点：到期前 24 小时即 2026-11-06 约 07:57 +08（会收到 Telegram 提醒），那时 §7 放行条件要全部满足，其中新版 App 是否覆盖用户由负责人告知；不满足就取消重提或改走方案 B** |
 | 用户页发布：部署编号 / 回退锚点 | **已发布（G3，2026-11-05）**：`451cdb6c-6b81-42e0-9cbd-a66e87a0826b`（main `85b31de`）；回退锚点 `d53baf5f-03db-402a-b08e-9fee1a57c56e`。核对：`savebridge.wanto.pro`、`safebridge.wanto.pro` 和部署域名上的脚本与本地构建逐字节一致，含 `quoteNativeFee`，桥地址是新桥 `0x41e9…1E44`（没有旧桥），WANTOS RPC `https://rpc.wantos.io`、BSC 起始块与线上原配置一致，安全响应头在；浏览器打开能正常渲染并读到额度（今日剩余额度 20,000 USDT），手续费一行不出现（合约还是旧版）；控制台只有一条 Cloudflare 统计脚本被 CSP 拦截的提示，不是这次引入的 |
 | 管理页发布：部署编号 / 回退锚点 | **已发布（G3，2026-11-05）**：`b92776f7-2c8a-401d-a6d6-7122d01e0239`（main `85b31de`）；回退锚点 `1a7eb11c-c34f-4b78-860f-a1ffe4c9931e`。从 `apps/admin-web` 目录发布（带 Pages Function）。核对：`admin.wanto.pro` 脚本与本地构建一致、含手续费函数中文标签；`POST /api/whitelist` 带无效签名返回 400「签名无法解析」（不是 404），错误来源返回 403；两个 secret（`SUBMITTER_KEY`、`BSC_RPC_KEYED`）仍在 |
 | 监控版本 | |
