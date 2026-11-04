@@ -69,6 +69,28 @@ describe("quoteDepositFee (BSC, follows the gas price)", () => {
   });
 });
 
+describe("old contract without quoteNativeFee (the page is published before the upgrade runs)", () => {
+  const revertErr = () => Object.assign(new Error("reverted"), { name: "ContractFunctionExecutionError", cause: Object.assign(new Error("execution reverted"), { name: "ContractFunctionRevertedError" }) });
+  const netErr = () => Object.assign(new Error("fetch failed"), { name: "HttpRequestError" });
+  it("a reverting quote means no fee (WANTOS)", async () => {
+    const { w } = setup({});
+    w.raw.readContract.mockRejectedValueOnce(revertErr());
+    expect(await quoteBridgeOutFee(w.client, testConfig, 500n)).toBe(0n);
+  });
+  it("a reverting quote means no fee, no value, no gas price override (BSC)", async () => {
+    const { b } = setup({});
+    b.raw.readContract.mockRejectedValueOnce(revertErr());
+    expect(await quoteDepositFee(b.client, testConfig)).toEqual({ fee: 0n, value: 0n, gasPrice: undefined });
+  });
+  it("a network error is NOT treated as 'no fee': it propagates", async () => {
+    const { w, b } = setup({});
+    w.raw.readContract.mockRejectedValueOnce(netErr());
+    await expect(quoteBridgeOutFee(w.client, testConfig, 500n)).rejects.toMatchObject({ name: "HttpRequestError" });
+    b.raw.readContract.mockRejectedValueOnce(netErr());
+    await expect(quoteDepositFee(b.client, testConfig)).rejects.toMatchObject({ name: "HttpRequestError" });
+  });
+});
+
 describe("guard: value only goes to the bridge entry points", () => {
   it("rejects value on a USDT approve", () => {
     expect(() => assertAllowedCall(testConfig, 56, B_USDT, "approve", [BRIDGE], 1n)).toThrow(TargetNotAllowedError);

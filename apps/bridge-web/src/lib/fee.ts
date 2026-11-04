@@ -6,9 +6,30 @@ import type { AppConfig } from "../config";
 const BSC_VALUE_NUM = 12n;
 const BSC_VALUE_DEN = 10n;
 
+/**
+ * The page may be published before the contracts are upgraded: an old bridge has no `quoteNativeFee`, so the call
+ * reverts. That (and only that) means "no fee yet". A network or RPC error is not an answer and must propagate.
+ */
+function isQuoteMissing(e: unknown): boolean {
+  for (let cur: unknown = e, i = 0; cur && typeof cur === "object" && i < 10; cur = (cur as { cause?: unknown }).cause, i++) {
+    const n = (cur as { name?: string }).name;
+    if (n === "ContractFunctionRevertedError" || n === "ContractFunctionZeroDataError") return true;
+  }
+  return false;
+}
+
+async function quoteOrZero(read: () => Promise<unknown>): Promise<bigint> {
+  try {
+    return (await read()) as bigint;
+  } catch (e) {
+    if (isQuoteMissing(e)) return 0n;
+    throw e;
+  }
+}
+
 /** WANT fee of a bridgeOut of `amount` (tiered by amount; 0 when the fee is switched off). The wallet must send exactly this. */
 export async function quoteBridgeOutFee(pc: PublicClient, cfg: AppConfig, amount: bigint): Promise<bigint> {
-  return (await pc.readContract({ address: cfg.wantos.bridge, abi: wantosBridgeV2Abi, functionName: "quoteNativeFee", args: [amount] })) as bigint;
+  return quoteOrZero(() => pc.readContract({ address: cfg.wantos.bridge, abi: wantosBridgeV2Abi, functionName: "quoteNativeFee", args: [amount] }));
 }
 
 export interface DepositFeeQuote {
@@ -22,7 +43,7 @@ export interface DepositFeeQuote {
 
 export async function quoteDepositFee(pc: PublicClient, cfg: AppConfig): Promise<DepositFeeQuote> {
   const gasPrice = await pc.getGasPrice();
-  const fee = (await pc.readContract({ address: cfg.bsc.bridge, abi: bscVaultV2Abi, functionName: "quoteNativeFee", args: [gasPrice] })) as bigint;
+  const fee = await quoteOrZero(() => pc.readContract({ address: cfg.bsc.bridge, abi: bscVaultV2Abi, functionName: "quoteNativeFee", args: [gasPrice] }));
   if (fee === 0n) return { fee: 0n, value: 0n, gasPrice: undefined };
   return { fee, value: (fee * BSC_VALUE_NUM) / BSC_VALUE_DEN, gasPrice };
 }
