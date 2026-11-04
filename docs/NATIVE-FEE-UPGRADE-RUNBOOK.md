@@ -507,8 +507,8 @@ cast send $PROXY "disableNativeFee()" --rpc-url https://rpc3.wantos.io --ledger 
 | 批量提案编号（BSC / WANTOS） | |
 | 提议交易哈希（BSC / WANTOS） | |
 | 最早可执行时间 / 有效期截止 | |
-| 用户页发布：部署编号 / 回退锚点 | |
-| 管理页发布：部署编号 / 回退锚点 | |
+| 用户页发布：部署编号 / 回退锚点 | **已发布（G3，2026-11-05）**：`451cdb6c-6b81-42e0-9cbd-a66e87a0826b`（main `85b31de`）；回退锚点 `d53baf5f-03db-402a-b08e-9fee1a57c56e`。核对：`savebridge.wanto.pro`、`safebridge.wanto.pro` 和部署域名上的脚本与本地构建逐字节一致，含 `quoteNativeFee`，桥地址是新桥 `0x41e9…1E44`（没有旧桥），WANTOS RPC `https://rpc.wantos.io`、BSC 起始块与线上原配置一致，安全响应头在；浏览器打开能正常渲染并读到额度（今日剩余额度 20,000 USDT），手续费一行不出现（合约还是旧版）；控制台只有一条 Cloudflare 统计脚本被 CSP 拦截的提示，不是这次引入的 |
+| 管理页发布：部署编号 / 回退锚点 | **已发布（G3，2026-11-05）**：`b92776f7-2c8a-401d-a6d6-7122d01e0239`（main `85b31de`）；回退锚点 `1a7eb11c-c34f-4b78-860f-a1ffe4c9931e`。从 `apps/admin-web` 目录发布（带 Pages Function）。核对：`admin.wanto.pro` 脚本与本地构建一致、含手续费函数中文标签；`POST /api/whitelist` 带无效签名返回 400「签名无法解析」（不是 404），错误来源返回 403；两个 secret（`SUBMITTER_KEY`、`BSC_RPC_KEYED`）仍在 |
 | 监控版本 | |
 | App 版本与覆盖率 | |
 | 执行前快照（存档位置） | |
