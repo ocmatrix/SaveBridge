@@ -111,6 +111,21 @@ describe("sendGuarded passes value and gasPrice to the simulation and the wallet
     expect(s.b.simulate).toHaveBeenCalledWith(expect.objectContaining({ value: 7n, gasPrice: 9n }));
     expect(s.write).toHaveBeenCalledWith(expect.objectContaining({ value: 7n, gasPrice: 9n }));
   });
+  it("with a gas price, the simulation carries an explicit gas limit (some RPCs charge the 50M gas cap x price otherwise and reject small balances), and the wallet gets none of it", async () => {
+    const s = setup({});
+    await expect(
+      sendGuarded(s.make(56), 56, { address: BRIDGE, abi: [], functionName: "deposit", args: [1n, USER], value: 7n, gasPrice: 9n }),
+    ).rejects.toBe(STOP);
+    const simArgs = s.b.simulate.mock.calls[0]![0] as { gas?: bigint };
+    expect(simArgs.gas).toBe(1_000_000n);
+    const sent = s.write.mock.calls[0]![0] as { gas?: bigint };
+    expect(sent.gas).toBeUndefined();
+  });
+  it("without a gas price the simulation has no gas override", async () => {
+    const s = setup({});
+    await expect(sendGuarded(s.make(56), 56, { address: B_USDT, abi: [], functionName: "approve", args: [BRIDGE, 1n] })).rejects.toBe(STOP);
+    expect((s.b.simulate.mock.calls[0]![0] as { gas?: bigint }).gas).toBeUndefined();
+  });
   it("without value the request carries none (old behaviour)", async () => {
     const s = setup({});
     await expect(sendGuarded(s.make(56), 56, { address: B_USDT, abi: [], functionName: "approve", args: [BRIDGE, 1n] })).rejects.toBe(STOP);

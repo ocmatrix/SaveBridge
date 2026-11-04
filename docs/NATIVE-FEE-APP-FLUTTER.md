@@ -106,6 +106,8 @@ App 不必调用它们；做「手续费收款地址展示」或自检时才需�
 
 估 gas：`eth_estimateGas` 必须**带上 `value`**，否则估算会因 `WrongNativeFee` 失败。
 
+**模拟调用要显式给 `gas`（BSC 入金，复审补充）：** 做 `eth_call` 模拟或预检时，如果同时设置了 `gasPrice`，请**同时指定 `gas`（建议 1,000,000）**。部分 BSC 节点（如 `rpc-bsc.48.club`、`bsc-dataseed1.bnbchain.org`）在没给 `gas` 时会按它们的 gas 上限（数千万）乘以价格去检查余额，余额不多的用户会被误报「余额不足」，实测加上 `gas` 后正常。这个 `gas` 只用于模拟，**发给钱包的交易里不要带它**，让钱包自己估算。网页版已按此实现，可参考 `apps/bridge-web/src/lib/flows.ts` 的 `sendGuarded`。
+
 ## 5. 错误处理
 
 | 合约自定义错误 | 选择器 | 含义 | 建议提示（中文） |

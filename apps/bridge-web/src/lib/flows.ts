@@ -89,6 +89,9 @@ function account(ctx: TxContext): Account {
   return ctx.wallet.account;
 }
 
+/** Gas limit used only for the simulation of a call that carries a gas price (a deposit costs well under this). */
+const SIMULATION_GAS = 1_000_000n;
+
 export interface GuardedRequest {
   address: Address;
   abi: Abi;
@@ -109,11 +112,16 @@ export async function sendGuarded(ctx: TxContext, chainId: number, req: GuardedR
   const actual = await ctx.wallet.getChainId();
   if (actual !== chainId) throw new WrongNetworkError(chainId, actual);
   const pc = clientFor(ctx.cfg, ctx.clients, chainId);
-  const { request } = await pc.simulateContract({ ...req, account: account(ctx) } as never);
+  // With a gas price set, some RPCs check balance >= gas * price where gas defaults to their cap (tens of millions):
+  // a small but sufficient balance would be rejected. Give the simulation a realistic gas limit, and leave the real
+  // gas limit to the wallet (it is not passed on).
+  const { request } = await pc.simulateContract({ ...req, ...(req.gasPrice !== undefined ? { gas: SIMULATION_GAS } : {}), account: account(ctx) } as never);
   const to = (request as { address: Address }).address;
   assertAllowedTarget(ctx.cfg, chainId, to);
+  const { gas: _simulationGas, ...forWallet } = request as { gas?: bigint };
+  void _simulationGas;
   try {
-    return await ctx.wallet.writeContract({ ...(request as object), account: account(ctx), chain: pc.chain } as never);
+    return await ctx.wallet.writeContract({ ...(forWallet as object), account: account(ctx), chain: pc.chain } as never);
   } catch (e) {
     throw isWalletTimeout(e) ? new WalletTimeoutError(e) : e;
   }
