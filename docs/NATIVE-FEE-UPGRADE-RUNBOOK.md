@@ -190,6 +190,8 @@ forge create contracts/src/WantosBridgeV2.sol:WantosBridgeV2 \
 
 **WANTOS 部署失败的处理：** 新实现23,037 B（WANTOS 侧）（BSC 侧约 23.6 KB），都低于 EVM 默认上限 24,576 字节；但 WANTOS 链自己的合约大小上限和区块 gas 上限我没有实测。如果 WANTOS 部署因「code size」或 gas 失败，**立即停下**：此时线上没有任何变化，把错误原文发给我再决定（例如拆分合约），不要硬改参数重试。
 
+**终端输出不能当作结果：** BSC 那一笔部署成功了，但 forge 打印了 `Error: contract was not deployed`（它还因为 `lib` 不是 git 子模块去尝试联网装依赖并失败了）。链上才是事实：交易哈希 `0x923d200d…2bfb`，区块 131651638，状态成功，合约地址就是预测的 `0xdfeE8c9b…4A59`。**每一笔部署之后都用链上数据核对：** 部署者 nonce 是否加 1、预测地址上有没有代码、交易回执的状态和 `contractAddress`。第二笔起加 `--offline`，避免它去装依赖。
+
 ### P1-3 部署后核对（必须全部通过）
 ```bash
 NEW=<该链上的新实现地址>   # 两条链各自不同（部署者 nonce 不同），分别生成 D1
