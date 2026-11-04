@@ -65,7 +65,7 @@ contract NativeFeeBscTest is BscFixture {
         assertEq(vault.quoteNativeFee(0.5 gwei), 0.001 ether);
         assertEq(vault.quoteNativeFee(0.25 gwei), 0.0005 ether);
         assertEq(vault.quoteNativeFee(0), 0.0001 ether); // floor
-        assertEq(vault.quoteNativeFee(100 gwei), 0.01 ether); // cap
+        assertEq(vault.quoteNativeFee(100 gwei), 0.002 ether); // cap
         (address r, uint256 m) = vault.nativeFeeConfig();
         assertEq(r, recipient);
         assertEq(m, 10);

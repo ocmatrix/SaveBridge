@@ -208,8 +208,8 @@ contract BscVaultV2 is BridgeBase {
 
     /// @dev Gas of one approve + deposit (about 200k); times the multiplier this is "N x the user's own BSC gas".
     uint256 public constant FEE_GAS = 200_000;
-    uint256 public constant MIN_FEE = 0.0001 ether; // = 10x at BSC's 0.05 gwei floor
-    uint256 public constant MAX_FEE = 0.01 ether;
+    uint256 public constant MIN_FEE = 0.0001 ether;
+    uint256 public constant MAX_FEE = 0.002 ether; // 4x the fee at today's 0.05 gwei and multiplier 50
     uint256 public constant MAX_MULTIPLIER = 100;
 
     error WrongNativeFee();

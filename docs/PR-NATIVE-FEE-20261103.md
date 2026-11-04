@@ -11,7 +11,7 @@
 | | BSC 方向（跨进来，欢迎方向） | WANTOS 方向（出金） |
 |---|---|---|
 | 入口 | `BscVaultV2.deposit`（`payable`） | `WantosBridgeV2.bridgeOut`（`payable`） |
-| 费用 | **一笔固定倍数的 gas 费，与存入金额无关**：`fee = tx.gasprice × 200,000 × multiplier`，夹在 [0.0001, 0.01] BNB。上线建议 `multiplier` = **50**（11-04 负责人定：收用户 BSC 自付 gas 的 50 倍） | 按存入金额分 4 档固定值（见下表） |
+| 费用 | **一笔固定倍数的 gas 费，与存入金额无关**：`fee = tx.gasprice × 200,000 × multiplier`，夹在 [0.0001, 0.002] BNB。上线建议 `multiplier` = **50**（11-04 负责人定：收用户 BSC 自付 gas 的 50 倍） | 按存入金额分 4 档固定值（见下表） |
 | 浮动 | 随用户交易的 gas 价轻微浮动，像正常转账一样；BSC gas 价 0.05 gwei（现价）时 = 0.0005 BNB，约 0.3 美元 | 不浮动 |
 | 付款 | `msg.value ≥ fee`，多付的**退回**发起人（钱包无法精确到 wei） | `msg.value` 必须恰好等于该档费用 |
 | 转账 | 状态写入之后转给 `feeRecipient`，合约不留余额；转账失败整笔回滚；`nonReentrant` | 同左 |
@@ -61,17 +61,17 @@
 
 - 前端：BSC 方向读取当前 gas 价，调 `quoteNativeFee(gasPrice)`，发送时多附约 20% 余量（多付部分合约会退回）；WANTOS 方向调 `quoteNativeFee(amount)`。重新生成 `packages/abi`。
 - slither 未跑；WANTOS 链的合约大小上限未实测（设计按 24,576），演练时验证。
-- 上线价格：`multiplier` = 50。费用随 BSC gas 价变化（BNB 按 600 美元估算）：
+- 上线价格：`multiplier` = 50。BSC gas 价实际长期贴近最低价 0.05 gwei，只有轻微波动（BNB 按 600 美元估算）：
 
   | BSC gas 价 | 手续费 | 约合美元 |
   |---|---|---|
   | 0.05 gwei（现价） | 0.0005 BNB | 0.3 |
+  | 0.06 gwei | 0.0006 BNB | 0.36 |
+  | 0.075 gwei | 0.00075 BNB | 0.45 |
   | 0.1 gwei | 0.001 BNB | 0.6 |
-  | 0.25 gwei | 0.0025 BNB | 1.5 |
-  | 0.5 gwei | 0.005 BNB | 3 |
-  | ≥ 1 gwei | 封顶 0.01 BNB | 6 |
+  | ≥ 0.2 gwei | 封顶 0.002 BNB | 1.2 |
 
-  BNB 与 WANT 价格以真实行情为准；封顶 0.01 BNB 在 1 gwei 时触发，如需让高 gas 时继续浮动，需把 `MAX_FEE` 常量调高（改合约）。
+  上下限收紧为 [0.0001, 0.002] BNB：上限是现价费用的 4 倍，只防 gas 价异常或用户乱设高 gas 价的极端情况，正常波动不会碰到。BNB 与 WANT 价格以真实行情为准。
 - 任何链上写入需负责人明确授权。
 
 ## 7. 刻意不做的
