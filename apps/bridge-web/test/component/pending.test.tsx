@@ -4,7 +4,7 @@ import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import type { Hex } from "viem";
 import { KEYS, startEnv, whitelist, snapshot, type Env } from "../support/anvil";
 import { renderApp } from "./renderApp";
-import { T, connect, flaky, panel, typeAmount } from "./helpers";
+import { T, connect, flaky, panel, submit, typeAmount } from "./helpers";
 
 let env: Env;
 let revert: () => Promise<void>;
@@ -30,10 +30,10 @@ const hashIn = (el: HTMLElement) => el.textContent!.match(/0x[0-9a-f]{64}/)![0] 
 async function alicePending(okWaits = 1) {
   const r = renderApp(env.cfg, [KEYS.alice.address, KEYS.bob.address], { clients: flaky(env.cfg, "wantos", okWaits) });
   const user = await connect();
-  await screen.findByText(/本地址今日可跨出/, {}, T);
+  await screen.findByText(/今日剩余额度/, {}, T);
   const w2b = panel("WANTOS → BSC");
   await typeAmount(user, w2b, "100");
-  const btn = within(w2b).getByRole("button", { name: "跨出" });
+  const btn = submit(w2b);
   await waitFor(() => expect(btn).toBeEnabled(), T);
   await user.click(btn);
   const msg = await within(w2b).findByText(/暂未确认结果/, {}, T);
@@ -43,12 +43,12 @@ async function alicePending(okWaits = 1) {
 describe("unconfirmed lock scope (A1)", () => {
   it("survives switching tabs: still disabled, hash still shown", async () => {
     const { user, hash } = await alicePending();
-    await user.click(screen.getByRole("tab", { name: "BSC → WANTOS" }));
-    await user.click(screen.getByRole("tab", { name: "WANTOS → BSC" }));
+    await user.click(screen.getByRole("button", { name: "切换方向" }));
+    await user.click(screen.getByRole("button", { name: "切换方向" }));
     const w2b = panel("WANTOS → BSC");
     expect(within(w2b).getByText(new RegExp(hash))).toBeInTheDocument();
     await typeAmount(user, w2b, "100");
-    expect(within(w2b).getByRole("button", { name: "跨出" })).toBeDisabled();
+    expect(submit(w2b)).toBeDisabled();
   });
 
   it("is per account: another account is not blocked and does not see the hash; switching back restores it", async () => {
@@ -60,12 +60,12 @@ describe("unconfirmed lock scope (A1)", () => {
     const w2b = panel("WANTOS → BSC");
     await waitFor(() => expect(within(w2b).queryByText(new RegExp(hash))).toBeNull(), T);
     await typeAmount(user, w2b, "100");
-    await waitFor(() => expect(within(w2b).getByRole("button", { name: "跨出" })).toBeEnabled(), T);
+    await waitFor(() => expect(submit(w2b)).toBeEnabled(), T);
     await act(async () => {
       connector.emitter.emit("change", { accounts: [KEYS.alice.address] });
     });
     await within(w2b).findByText(new RegExp(hash), {}, T);
-    expect(within(w2b).getByRole("button", { name: "跨出" })).toBeDisabled();
+    expect(submit(w2b)).toBeDisabled();
   });
 
   it("survives a reload (unmount + remount reading session storage)", async () => {
@@ -75,9 +75,9 @@ describe("unconfirmed lock scope (A1)", () => {
     const user = await connect();
     const w2b = panel("WANTOS → BSC");
     await within(w2b).findByText(new RegExp(hash), {}, T);
-    await screen.findByText(/本地址今日可跨出/, {}, T);
+    await screen.findByText(/今日剩余额度/, {}, T);
     await typeAmount(user, w2b, "100");
-    expect(within(w2b).getByRole("button", { name: "跨出" })).toBeDisabled();
+    expect(submit(w2b)).toBeDisabled();
   });
 
   it("an unconfirmed APPROVE, once confirmed, says 'approval confirmed, submit again' — never 交易已确认", async () => {
@@ -86,6 +86,6 @@ describe("unconfirmed lock scope (A1)", () => {
     await user.click(within(w2b).getByRole("button", { name: "重新检查" }));
     await within(w2b).findByText("授权已确认，请再次点击提交以完成跨链", {}, T);
     expect(w2b.textContent).not.toContain("交易已确认");
-    await waitFor(() => expect(within(w2b).getByRole("button", { name: "跨出" })).toBeEnabled(), T);
+    await waitFor(() => expect(submit(w2b)).toBeEnabled(), T);
   });
 });

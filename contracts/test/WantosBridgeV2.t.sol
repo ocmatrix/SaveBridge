@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import {W} from "./utils/Windows.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {WantosFixture} from "./utils/WantosFixture.sol";
@@ -89,13 +90,12 @@ contract WantosBridgeV2Test is WantosFixture {
         }
     }
 
-    function test_domainNameIsWantosBridgeV2() public view {
+    function test_domainIsChainlessWhitelistDomain() public view {
         bytes32 domain = keccak256(
             abi.encode(
-                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                keccak256("WantosBridgeV2"),
+                keccak256("EIP712Domain(string name,string version,address verifyingContract)"),
+                keccak256("SaveBridgeWhitelist"),
                 keccak256("1"),
-                WANTOS_CHAIN,
                 address(bridge)
             )
         );
@@ -214,7 +214,7 @@ contract WantosBridgeV2Test is WantosFixture {
         uint256 ts = token.totalSupply();
         bytes memory data = abi.encodeCall(WantosBridgeV2.setSupplyCeiling, (ts + 1_000_000 * U));
         bytes32 salt = _propose(address(bridge), data);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.prank(pauser);
         bridge.pause();
         vm.expectRevert();
@@ -226,7 +226,7 @@ contract WantosBridgeV2Test is WantosFixture {
         // timelock also cannot go below supply
         data = abi.encodeCall(WantosBridgeV2.setSupplyCeiling, (ts - 1));
         salt = _propose(address(bridge), data);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert();
         _execute(address(bridge), data, salt);
     }
@@ -242,12 +242,12 @@ contract WantosBridgeV2Test is WantosFixture {
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.NotAdmin.selector, wl));
         bridge.requestRefund(id);
         vm.expectEmit(address(bridge));
-        emit WantosBridgeV2.RefundRequested(id, expectedKey, alice, 800 * U, block.timestamp + 24 hours);
+        emit WantosBridgeV2.RefundRequested(id, expectedKey, alice, 800 * U, block.timestamp + W.REFUND_DELAY);
         vm.prank(admin);
         bridge.requestRefund(id);
         (,,, uint8 st,) = bridge.orders(id);
         assertEq(st, O_REFUNDING);
-        vm.warp(block.timestamp + 24 hours - 1);
+        vm.warp(block.timestamp + W.REFUND_DELAY - 1);
         vm.expectRevert();
         bridge.executeRefund(id);
         vm.warp(block.timestamp + 1);
@@ -277,7 +277,7 @@ contract WantosBridgeV2Test is WantosFixture {
         bridge.cancelRefund(id);
         (,,, uint8 st,) = bridge.orders(id);
         assertEq(st, O_LOCKED);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + W.REFUND_DELAY);
         vm.expectRevert();
         bridge.executeRefund(id);
         vm.prank(admin);
@@ -297,7 +297,7 @@ contract WantosBridgeV2Test is WantosFixture {
         bridge.pause();
         vm.prank(admin); // request allowed while paused
         bridge.requestRefundBatch(ids);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + W.REFUND_DELAY);
         vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         bridge.executeRefund(ids[0]);
         vm.prank(wl);
@@ -329,6 +329,46 @@ contract WantosBridgeV2Test is WantosFixture {
         bridge.executeRelease(9);
         assertEq(token.balanceOf(carol), 700 * U);
         assertEq(_bstatus(9), RELEASED);
+    }
+
+    /// Inbound (BSC -> WANTOS) without a waiting period: with `b2wDelay = 0` a release is paid in the same block.
+    /// Turns red if the lower bound of `b2wDelay` is restored (the setParams below would revert).
+    function test_b2w_zeroDelay_releasesInSameBlock() public {
+        WantosBridgeV2.Params memory p = bridge.params();
+        p.b2wDelay = 0;
+        _viaTimelock(address(bridge), abi.encodeCall(WantosBridgeV2.setParams, (p)));
+        assertEq(bridge.params().b2wDelay, 0);
+
+        vm.prank(relayer);
+        bridge.queueRelease(11, carol, 700 * U);
+        vm.prank(relayer);
+        bridge.executeRelease(11); // no warp: same block
+        assertEq(token.balanceOf(carol), 700 * U);
+        assertEq(_bstatus(11), RELEASED);
+
+        // the same source event can never be paid twice
+        bytes32 k = _bkey(11);
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(BridgeBase.BadPayoutStatus.selector, k, RELEASED));
+        bridge.queueRelease(11, carol, 700 * U);
+        assertEq(token.balanceOf(carol), 700 * U);
+    }
+
+    /// With `b2wDelay = 0` the admin wallet can still re-introduce a delay at once, but never lower it again.
+    function test_b2w_zeroDelay_adminCanOnlyRaise() public {
+        WantosBridgeV2.Params memory p = bridge.params();
+        p.b2wDelay = 0;
+        _viaTimelock(address(bridge), abi.encodeCall(WantosBridgeV2.setParams, (p)));
+
+        p.b2wDelay = 15 minutes;
+        vm.prank(admin);
+        bridge.setParams(p);
+        assertEq(bridge.params().b2wDelay, 15 minutes);
+
+        p.b2wDelay = 0;
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(BridgeBase.NotTightening.selector, 3));
+        bridge.setParams(p);
     }
 
     function test_b2w_capReplayVoid() public {

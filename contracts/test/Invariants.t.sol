@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {W} from "./utils/Windows.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -111,7 +112,7 @@ contract BscInvariantsTest is BscFixture {
         vm.stopPrank();
         vm.prank(admin);
         vault.requestDepositRefund(n);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + 1 days);
         // new UTC day after warp, so used resets; re-fill to 4,000 today then try
         vm.startPrank(relayer);
         vault.queueRelease(4, alice, 2_000 * U);
@@ -233,14 +234,14 @@ contract BscInvariantsTest is BscFixture {
         bytes memory data = abi.encodeCall(BridgeBase.withdraw, (bob, 1 * U));
         bytes32 salt = _propose(address(vault), data);
         bytes32 id = tl.hashOperation(address(vault), 0, data, 0, salt);
-        vm.warp(block.timestamp + 48 hours - 1);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY - 1);
         vm.expectRevert(
             abi.encodeWithSelector(
                 TimelockController.TimelockUnexpectedOperationState.selector, id, bytes32(uint256(1) << 2)
             )
         ); // expected state: Ready
         _execute(address(vault), data, salt);
-        vm.warp(block.timestamp + 1 + 14 days + 1);
+        vm.warp(block.timestamp + 1 + W.TL_EXPIRY + 1);
         vm.expectRevert(abi.encodeWithSelector(BridgeTimelock.OperationExpired.selector, id));
         _execute(address(vault), data, salt);
     }
@@ -257,7 +258,7 @@ contract BscInvariantsTest is BscFixture {
         bytes32 s2 = _propose(address(vault), wd);
         bytes32 s3 = _propose(address(vault), ls);
         bytes32 s4 = _propose(address(vault), gr);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.prank(pauser);
         vault.pause();
         _execute(address(vault), up, s1); // upgrade OK while paused
@@ -272,7 +273,7 @@ contract BscInvariantsTest is BscFixture {
     function test_inv04_neg_nothingExecutesDuringRecovery() public {
         bytes memory up = abi.encodeCall(vault.upgradeToAndCall, (address(new BscVaultV2Next()), ""));
         bytes32 s1 = _propose(address(vault), up);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.prank(wl);
         tl.startAdminRecovery(makeAddr("admin2"));
         vm.expectRevert(BridgeTimelock.RecoveryInProgress.selector);
@@ -285,7 +286,7 @@ contract BscInvariantsTest is BscFixture {
     function test_inv04_neg_timelockLayerRejectsDuringWhitelistRecovery() public {
         bytes memory data = abi.encodeCall(BridgeTimelock.transferAdmin, (makeAddr("admin2")));
         bytes32 salt = _propose(address(tl), data);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.prank(admin);
         vault.startWhitelistRecovery(makeAddr("wl2"));
         vm.expectRevert(BridgeTimelock.RecoveryInProgress.selector);
@@ -305,7 +306,7 @@ contract BscInvariantsTest is BscFixture {
         address wl2 = makeAddr("wl2");
         vm.prank(admin);
         vault.startWhitelistRecovery(wl2);
-        vm.warp(block.timestamp + 7 days);
+        vm.warp(block.timestamp + W.WL_RECOVERY);
         vm.prank(wl2);
         vault.acceptWhitelistRecovery();
         vm.prank(wl);
@@ -326,7 +327,7 @@ contract BscInvariantsTest is BscFixture {
         bytes32 s2 = _propose(address(tl), p);
         bytes memory d = abi.encodeCall(IAccessControl.grantRole, (bytes32(0), admin));
         bytes32 s3 = _propose(address(vault), d);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.KeyConflict.selector, wl));
         _execute(address(vault), g, s);
         vm.expectRevert(BridgeTimelock.RoleChangeForbidden.selector);
@@ -383,7 +384,8 @@ contract BscInvariantsTest is BscFixture {
         bytes32 slot =
             keccak256(abi.encode(uint256(keccak256("wantos.bridge.v2.BridgeBase")) - 1)) & ~bytes32(uint256(0xff));
         assertEq(address(uint160(uint256(vm.load(address(vault), slot)))), address(tl));
-        // the queued payout still executes after the upgrade
+        // the queued payout still executes after the upgrade (once its own releaseDelay has passed)
+        vm.warp(block.timestamp + 12 hours);
         vm.prank(relayer);
         vault.executeRelease(2);
         assertEq(token.balanceOf(bob), 1_500 * U);
@@ -393,7 +395,7 @@ contract BscInvariantsTest is BscFixture {
         NotUups bad = new NotUups();
         bytes memory up = abi.encodeCall(vault.upgradeToAndCall, (address(bad), ""));
         bytes32 salt = _propose(address(vault), up);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert(abi.encodeWithSelector(ERC1967Utils.ERC1967InvalidImplementation.selector, address(bad)));
         _execute(address(vault), up, salt);
     }
@@ -411,7 +413,7 @@ contract BscInvariantsTest is BscFixture {
         vm.stopPrank();
         vm.prank(admin);
         vault.requestDepositRefund(n);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + W.REFUND_DELAY);
         vm.prank(pauser);
         vault.pause();
         vm.startPrank(relayer);
@@ -469,7 +471,7 @@ contract BscInvariantsTest is BscFixture {
 
     function test_inv08_neg_replayExpiredFrozenUnsorted() public {
         address[] memory a = _one(alice);
-        uint256 dl = block.timestamp + 1 hours;
+        uint256 dl = block.timestamp + W.SIG_TTL / 24;
         bytes memory sig = _signBatch(vault, wlKey, a, true, 0, dl);
         vault.applyWhitelistBatch(a, true, 0, dl, sig);
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.BadNonce.selector, 1, 0));
@@ -491,7 +493,7 @@ contract BscInvariantsTest is BscFixture {
         address wl2 = makeAddr("wl2");
         vm.prank(admin);
         vault.startWhitelistRecovery(wl2);
-        vm.warp(block.timestamp + 7 days);
+        vm.warp(block.timestamp + W.WL_RECOVERY);
         vm.prank(wl2);
         vault.acceptWhitelistRecovery();
         assertEq(vault.whitelistManager(), wl2);
@@ -499,7 +501,7 @@ contract BscInvariantsTest is BscFixture {
         address admin2 = makeAddr("admin2");
         vm.prank(wl2);
         tl.startAdminRecovery(admin2);
-        vm.warp(block.timestamp + 14 days);
+        vm.warp(block.timestamp + W.TL_ADMIN_RECOVERY);
         vm.prank(admin2);
         tl.acceptAdmin();
         assertEq(vault.adminWallet(), admin2);
@@ -525,11 +527,11 @@ contract BscInvariantsTest is BscFixture {
         tl.cancelAdminRecovery();
         // the cancelled WL recovery put its initiator (admin) on a 3-day cooldown
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(BridgeBase.RecoveryCooldown.selector, block.timestamp + 3 days));
+        vm.expectRevert(abi.encodeWithSelector(BridgeBase.RecoveryCooldown.selector, block.timestamp + W.WL_COOLDOWN));
         vault.startWhitelistRecovery(makeAddr("wl2"));
         // and the cancelled admin recovery put the WL side on cooldown too
         vm.prank(wl);
-        vm.expectRevert(abi.encodeWithSelector(BridgeTimelock.RecoveryCooldown.selector, block.timestamp + 3 days));
+        vm.expectRevert(abi.encodeWithSelector(BridgeTimelock.RecoveryCooldown.selector, block.timestamp + W.TL_COOLDOWN));
         tl.startAdminRecovery(makeAddr("admin2"));
     }
 
@@ -571,7 +573,7 @@ contract BscInvariantsTest is BscFixture {
         // full timelock path as well
         bytes memory data = abi.encodeCall(BscVaultV2.setParams, (p));
         bytes32 salt = _propose(address(vault), data);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert(BridgeBase.ParamConstraint.selector);
         _execute(address(vault), data, salt);
     }

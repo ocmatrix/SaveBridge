@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {W} from "./utils/Windows.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {BridgeTimelock} from "../src/BridgeTimelock.sol";
@@ -34,7 +35,7 @@ contract BridgeTimelockTest is Test {
     function _schedule(address target, bytes memory data, bytes32 salt) internal returns (bytes32 id) {
         id = tl.hashOperation(target, 0, data, bytes32(0), salt);
         vm.prank(admin);
-        tl.schedule(target, 0, data, bytes32(0), salt, 48 hours);
+        tl.schedule(target, 0, data, bytes32(0), salt, W.TL_MIN_DELAY);
     }
 
     function _bumpOp(bytes32 salt) internal returns (bytes32) {
@@ -48,57 +49,57 @@ contract BridgeTimelockTest is Test {
     function _proposeTransferAdmin(address to, bytes32 salt) internal {
         bytes memory data = abi.encodeCall(BridgeTimelock.transferAdmin, (to));
         _schedule(address(tl), data, salt);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         tl.execute(address(tl), 0, data, bytes32(0), salt);
     }
 
     // ---------- spec 1: delay ----------
     function test_minDelayIsImmutable48h() public view {
-        assertEq(tl.MIN_DELAY(), 48 hours);
-        assertEq(tl.getMinDelay(), 48 hours);
+        assertEq(tl.MIN_DELAY(), W.TL_MIN_DELAY);
+        assertEq(tl.getMinDelay(), W.TL_MIN_DELAY);
     }
 
     function test_scheduleBelowMinDelayReverts() public {
         vm.prank(admin);
         vm.expectRevert();
-        tl.schedule(address(bridge), 0, "", bytes32(0), bytes32(0), 48 hours - 1);
+        tl.schedule(address(bridge), 0, "", bytes32(0), bytes32(0), W.TL_MIN_DELAY - 1);
     }
 
     function test_updateDelayCannotGoBelowMin() public {
-        bytes memory data = abi.encodeCall(TimelockController.updateDelay, (47 hours));
+        bytes memory data = abi.encodeCall(TimelockController.updateDelay, (W.TL_MIN_DELAY - 1));
         _schedule(address(tl), data, bytes32("d"));
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert();
         tl.execute(address(tl), 0, data, bytes32(0), bytes32("d"));
     }
 
     function test_updateDelayCanIncrease() public {
-        bytes memory data = abi.encodeCall(TimelockController.updateDelay, (72 hours));
+        bytes memory data = abi.encodeCall(TimelockController.updateDelay, (W.TL_MIN_DELAY * 3 / 2));
         _schedule(address(tl), data, bytes32("d"));
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         tl.execute(address(tl), 0, data, bytes32(0), bytes32("d"));
-        assertEq(tl.getMinDelay(), 72 hours);
+        assertEq(tl.getMinDelay(), W.TL_MIN_DELAY * 3 / 2);
     }
 
     function test_updateDelayUpperBound7Days() public {
-        bytes memory bad = abi.encodeCall(TimelockController.updateDelay, (7 days + 1));
+        bytes memory bad = abi.encodeCall(TimelockController.updateDelay, (W.TL_MAX_DELAY + 1));
         _schedule(address(tl), bad, bytes32("big"));
-        bytes memory ok = abi.encodeCall(TimelockController.updateDelay, (7 days));
+        bytes memory ok = abi.encodeCall(TimelockController.updateDelay, (W.TL_MAX_DELAY));
         _schedule(address(tl), ok, bytes32("max"));
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert(
-            abi.encodeWithSelector(BridgeTimelock.DelayAboveMaximum.selector, uint256(7 days + 1), uint256(7 days))
+            abi.encodeWithSelector(BridgeTimelock.DelayAboveMaximum.selector, uint256(W.TL_MAX_DELAY + 1), uint256(W.TL_MAX_DELAY))
         );
         tl.execute(address(tl), 0, bad, bytes32(0), bytes32("big"));
         tl.execute(address(tl), 0, ok, bytes32(0), bytes32("max"));
-        assertEq(tl.getMinDelay(), 7 days);
-        assertEq(tl.MAX_DELAY(), 7 days);
+        assertEq(tl.getMinDelay(), W.TL_MAX_DELAY);
+        assertEq(tl.MAX_DELAY(), W.TL_MAX_DELAY);
     }
 
     function test_updateDelayDirectCallReverts() public {
         vm.prank(admin);
         vm.expectRevert();
-        tl.updateDelay(72 hours);
+        tl.updateDelay(W.TL_MIN_DELAY * 3 / 2);
     }
 
     // ---------- spec 2: construction ----------
@@ -132,7 +133,7 @@ contract BridgeTimelockTest is Test {
     function test_grantRoleForbiddenEvenViaTimelock() public {
         bytes memory data = abi.encodeCall(IAccessControl.grantRole, (PROPOSER, stranger));
         _schedule(address(tl), data, bytes32("g"));
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert();
         tl.execute(address(tl), 0, data, bytes32(0), bytes32("g"));
         assertFalse(tl.hasRole(PROPOSER, stranger));
@@ -141,7 +142,7 @@ contract BridgeTimelockTest is Test {
     function test_revokeRoleForbiddenEvenViaTimelock() public {
         bytes memory data = abi.encodeCall(IAccessControl.revokeRole, (PROPOSER, admin));
         _schedule(address(tl), data, bytes32("r"));
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert();
         tl.execute(address(tl), 0, data, bytes32(0), bytes32("r"));
         assertTrue(tl.hasRole(PROPOSER, admin));
@@ -156,7 +157,7 @@ contract BridgeTimelockTest is Test {
     function test_onlyAdminCanSchedule() public {
         vm.prank(wl);
         vm.expectRevert();
-        tl.schedule(address(bridge), 0, "", bytes32(0), bytes32(0), 48 hours);
+        tl.schedule(address(bridge), 0, "", bytes32(0), bytes32(0), W.TL_MIN_DELAY);
     }
 
     // ---------- spec 4: cancel ----------
@@ -224,7 +225,7 @@ contract BridgeTimelockTest is Test {
         tl.cancel(id);
         vm.prank(admin);
         vm.expectRevert();
-        tl.schedule(address(bridge), 0, "", bytes32(0), bytes32("z"), 48 hours);
+        tl.schedule(address(bridge), 0, "", bytes32(0), bytes32("z"), W.TL_MIN_DELAY);
         vm.prank(newAdmin);
         tl.cancel(id);
     }
@@ -238,7 +239,7 @@ contract BridgeTimelockTest is Test {
 
     function test_acceptAdminExpiresAfter7Days() public {
         _proposeTransferAdmin(newAdmin, "t");
-        vm.warp(block.timestamp + 7 days + 1);
+        vm.warp(block.timestamp + W.TL_PENDING_ADMIN_TTL + 1);
         vm.prank(newAdmin);
         vm.expectRevert(BridgeTimelock.PendingAdminExpired.selector);
         tl.acceptAdmin();
@@ -251,7 +252,7 @@ contract BridgeTimelockTest is Test {
         _schedule(address(tl), d1, "1");
         bytes memory d2 = abi.encodeCall(BridgeTimelock.transferAdmin, (wl));
         _schedule(address(tl), d2, "2");
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.expectRevert();
         tl.execute(address(tl), 0, d0, bytes32(0), "0");
         vm.expectRevert();
@@ -271,7 +272,7 @@ contract BridgeTimelockTest is Test {
     function test_transferAdminBlockedWhilePaused() public {
         bytes memory data = abi.encodeCall(BridgeTimelock.transferAdmin, (newAdmin));
         _schedule(address(tl), data, "p");
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         bridge.setPaused(true);
         vm.expectRevert();
         tl.execute(address(tl), 0, data, bytes32(0), "p");
@@ -288,7 +289,7 @@ contract BridgeTimelockTest is Test {
     // ---------- spec 6: expiry ----------
     function test_executeWithinGrace() public {
         _bumpOp("e");
-        vm.warp(block.timestamp + 48 hours + 14 days);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY + W.TL_EXPIRY);
         _execBump("e");
         assertEq(bridge.counter(), 1);
     }
@@ -296,24 +297,24 @@ contract BridgeTimelockTest is Test {
     function test_executeAfterExpiryRevertsAndNeedsNewSalt() public {
         bytes32 id = _bumpOp("e");
         assertFalse(tl.isOperationExpired(id));
-        vm.warp(block.timestamp + 48 hours + 14 days + 1);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY + W.TL_EXPIRY + 1);
         assertTrue(tl.isOperationExpired(id));
         vm.expectRevert(abi.encodeWithSelector(BridgeTimelock.OperationExpired.selector, id));
         _execBump("e");
         // same salt cannot be re-proposed
         vm.prank(admin);
         vm.expectRevert();
-        tl.schedule(address(bridge), 0, abi.encodeCall(MockBridge.bump, ()), bytes32(0), "e", 48 hours);
+        tl.schedule(address(bridge), 0, abi.encodeCall(MockBridge.bump, ()), bytes32(0), "e", W.TL_MIN_DELAY);
         // new salt works
         _bumpOp("e2");
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         _execBump("e2");
         assertEq(bridge.counter(), 1);
     }
 
     function test_notReadyBefore48h() public {
         _bumpOp("n");
-        vm.warp(block.timestamp + 48 hours - 1);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY - 1);
         vm.expectRevert();
         _execBump("n");
     }
@@ -321,7 +322,7 @@ contract BridgeTimelockTest is Test {
     function test_isOperationExpiredFalseForUnsetAndDone() public {
         assertFalse(tl.isOperationExpired(bytes32("nope")));
         bytes32 id = _bumpOp("d");
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         _execBump("d");
         vm.warp(block.timestamp + 30 days);
         assertFalse(tl.isOperationExpired(id));
@@ -335,9 +336,9 @@ contract BridgeTimelockTest is Test {
         p[0] = abi.encodeCall(MockBridge.bump, ());
         bytes32 id = tl.hashOperationBatch(t, v, p, bytes32(0), "b");
         vm.prank(admin);
-        tl.scheduleBatch(t, v, p, bytes32(0), "b", 48 hours);
+        tl.scheduleBatch(t, v, p, bytes32(0), "b", W.TL_MIN_DELAY);
         assertEq(tl.proposalEpoch(id), 0);
-        vm.warp(block.timestamp + 48 hours + 14 days + 1);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY + W.TL_EXPIRY + 1);
         vm.expectRevert(abi.encodeWithSelector(BridgeTimelock.OperationExpired.selector, id));
         tl.executeBatch(t, v, p, bytes32(0), "b");
     }
@@ -351,8 +352,8 @@ contract BridgeTimelockTest is Test {
         p[0] = abi.encodeCall(MockBridge.bump, ());
         p[1] = p[0];
         vm.prank(admin);
-        tl.scheduleBatch(t, v, p, bytes32(0), "b", 48 hours);
-        vm.warp(block.timestamp + 48 hours);
+        tl.scheduleBatch(t, v, p, bytes32(0), "b", W.TL_MIN_DELAY);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         tl.executeBatch(t, v, p, bytes32(0), "b");
         assertEq(bridge.counter(), 2);
     }
@@ -360,7 +361,7 @@ contract BridgeTimelockTest is Test {
     // ---------- A-1: post-execution self-check, exactly one condition broken at a time ----------
     function _scheduleBumpAndWait(bytes32 salt) internal {
         _bumpOp(salt);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
     }
 
     function test_selfCheck_timelockViewMismatch() public {
@@ -406,7 +407,7 @@ contract BridgeTimelockTest is Test {
     // ---------- recovery blocks execution ----------
     function test_executeBlockedDuringBridgeWhitelistRecovery() public {
         _bumpOp("w");
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         bridge.setWhitelistRecoveryActive(true);
         vm.expectRevert(BridgeTimelock.RecoveryInProgress.selector);
         _execBump("w");
@@ -416,7 +417,7 @@ contract BridgeTimelockTest is Test {
 
     function test_executeBlockedDuringAdminRecovery() public {
         _bumpOp("w");
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         vm.prank(wl);
         tl.startAdminRecovery(newAdmin);
         vm.expectRevert(BridgeTimelock.RecoveryInProgress.selector);
@@ -430,7 +431,7 @@ contract BridgeTimelockTest is Test {
         tl.startAdminRecovery(newAdmin);
         assertTrue(tl.adminRecoveryActive());
         assertEq(tl.adminRecoveryCandidate(), newAdmin);
-        vm.warp(block.timestamp + 14 days - 1);
+        vm.warp(block.timestamp + W.TL_ADMIN_RECOVERY - 1);
         vm.prank(newAdmin);
         vm.expectRevert();
         tl.acceptAdmin();
@@ -448,8 +449,8 @@ contract BridgeTimelockTest is Test {
         _execBump("old");
         // new proposals work
         vm.prank(newAdmin);
-        tl.schedule(address(bridge), 0, abi.encodeCall(MockBridge.bump, ()), bytes32(0), "new", 48 hours);
-        vm.warp(block.timestamp + 48 hours);
+        tl.schedule(address(bridge), 0, abi.encodeCall(MockBridge.bump, ()), bytes32(0), "new", W.TL_MIN_DELAY);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         _execBump("new");
         assertEq(bridge.counter(), 1);
     }
@@ -490,7 +491,7 @@ contract BridgeTimelockTest is Test {
         vm.prank(wl);
         vm.expectRevert();
         tl.startAdminRecovery(newAdmin);
-        vm.warp(block.timestamp + 3 days);
+        vm.warp(block.timestamp + W.TL_COOLDOWN);
         vm.prank(wl);
         tl.startAdminRecovery(newAdmin);
         assertTrue(tl.adminRecoveryActive());
@@ -536,7 +537,7 @@ contract BridgeTimelockTest is Test {
         vm.prank(wl);
         tl.startAdminRecovery(newAdmin);
         bridge.setKeyHolder(newAdmin, true);
-        vm.warp(block.timestamp + 14 days);
+        vm.warp(block.timestamp + W.TL_ADMIN_RECOVERY);
         vm.prank(newAdmin);
         vm.expectRevert(abi.encodeWithSelector(BridgeTimelock.KeyConflict.selector, newAdmin));
         tl.acceptAdmin();

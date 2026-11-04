@@ -33,8 +33,8 @@
 //
 // 哈希（与合约 BridgeBase / PR1-NOTES §5.4 相同）：
 //   listHash   = keccak256(abi.encode(address[] sorted))
-//   domainHash = keccak256(abi.encode(EIP712Domain typehash, keccak(name), keccak("1"), chainId, verifyingContract))
-//                name = "BscVaultV2"（BSC）| "WantosBridgeV2"（WANTOS）
+//   domainHash = keccak256(abi.encode(EIP712Domain typehash, keccak("SaveBridgeWhitelist"), keccak("1"), verifyingContract))
+//                域里没有 chainId，两条链同名：一份签名两条链都有效（两链桥地址相同）
 //   messageHash= keccak256(abi.encode(WhitelistBatch typehash, listHash, uint32 count, bool allowed, nonce, deadline))
 //   digest     = keccak256(0x1901 ‖ domainHash ‖ messageHash)
 
@@ -206,14 +206,13 @@ export function listHash(sorted) {
 
 // ---------------------------------------------------------------- EIP-712
 
-export const DOMAIN_TYPEHASH = keccakHex(utf8("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"));
+// Whitelist domain has no chainId and one name on both chains: one signature serves BSC and WANTOS (REDEPLOY-PLAN D3).
+export const DOMAIN_TYPEHASH = keccakHex(utf8("EIP712Domain(string name,string version,address verifyingContract)"));
+export const WL_DOMAIN_NAME = "SaveBridgeWhitelist";
 export const BATCH_TYPEHASH = keccakHex(utf8("WhitelistBatch(bytes32 listHash,uint32 count,bool allowed,uint256 nonce,uint256 deadline)"));
-export const CONTRACT_NAME = { bsc: "BscVaultV2", wantos: "WantosBridgeV2" };
 
-export function domainHash({ name, chainId, verifyingContract }) {
-  return keccakHex(
-    concat(fromHex(DOMAIN_TYPEHASH), keccak256(utf8(name)), keccak256(utf8("1")), word(chainId), addrWord(verifyingContract)),
-  );
+export function domainHash({ verifyingContract }) {
+  return keccakHex(concat(fromHex(DOMAIN_TYPEHASH), keccak256(utf8(WL_DOMAIN_NAME)), keccak256(utf8("1")), addrWord(verifyingContract)));
 }
 
 export function messageHash({ listHash: lh, count, allowed, nonce, deadline }) {
@@ -246,7 +245,7 @@ export function computeBatches(text, opts) {
     const lh = listHash(addrs);
     const perChain = {};
     for (const c of chains) {
-      const d = domainHash({ name: CONTRACT_NAME[c.key], chainId: c.chainId, verifyingContract: opts.contract });
+      const d = domainHash({ verifyingContract: opts.contract });
       const nonce = c.nonce === undefined ? undefined : BigInt(c.nonce) + (opts.batch !== undefined ? 0n : BigInt(i));
       const m =
         nonce === undefined || opts.deadline === undefined

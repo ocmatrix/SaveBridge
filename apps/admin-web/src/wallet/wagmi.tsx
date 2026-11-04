@@ -32,7 +32,10 @@ export function wagmiSigner(config: AdminWagmiConfig, address: Address): Signer 
       return wc.writeContract({ address: req.address, abi: req.abi, functionName: req.functionName, args: req.args ?? [], account: address, chain: wc.chain });
     },
     async signTypedData(chainId: number, td: TypedDataDefinition): Promise<Hex> {
-      const wc = await onChain(chainId);
+      // A domain without chainId (the whitelist batch) is valid on any chain: sign where the wallet already is, so
+      // wallets that cannot switch networks (in-app browsers) still work.
+      const chainless = (td.domain as { chainId?: unknown } | undefined)?.chainId === undefined;
+      const wc = chainless ? await getWalletClient(config, { account: address }) : await onChain(chainId);
       return wc.signTypedData({ ...(td as Parameters<typeof wc.signTypedData>[0]), account: address });
     },
     async signMessage(message: string): Promise<Hex> {

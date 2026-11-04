@@ -11,3 +11,8 @@ dist/
 *.key
 .vite/
 coverage/
+
+# PR-9 testnet-fast variant: generated at build time (scripts/make-fast-variant.mjs)
+contracts/testnet-fast/
+out-fast/
+cache-fast/

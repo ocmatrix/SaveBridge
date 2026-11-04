@@ -18,7 +18,9 @@ export interface Clients {
 
 /** Read-only clients talk only to the configured RPCs (never to the wallet's RPC). */
 export function makeClients(cfg: AppConfig): Clients {
-  const mk = (c: ChainConf) => createPublicClient({ chain: toViemChain(c), transport: http(c.rpcUrl, { retryCount: 1 }) }) as PublicClient;
+  // Reads of one refresh go out as a few batched requests (≤ 20 calls each; nodes cap a batch at 50): the public RPC
+  // rate-limits per request, and wallets behind one carrier IP would otherwise hit it with a burst of single calls.
+  const mk = (c: ChainConf) => createPublicClient({ chain: toViemChain(c), transport: http(c.rpcUrl, { retryCount: 1, batch: { batchSize: 20, wait: 16 } }) }) as PublicClient;
   return { wantos: mk(cfg.wantos), bsc: mk(cfg.bsc) };
 }
 

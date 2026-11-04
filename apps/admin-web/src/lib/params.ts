@@ -28,7 +28,7 @@ export const FIELDS: Record<Side, FieldSpec[]> = {
     { key: "w2bMinAmount", label: "最小跨出", kind: "amount", tighten: "up", min: 10n, max: 20_000n },
     { key: "w2bPerAddrDailyCap", label: "每地址日额度（单笔上限）", kind: "amount", tighten: "down", min: 10n, max: 20_000n },
     { key: "b2wDailyCap", label: "B2W 日额度", kind: "amount", tighten: "down", min: 500n, max: 100_000_000n },
-    { key: "b2wDelay", label: "B2W 排队延迟", kind: "seconds", tighten: "up", min: 10n * 60n, max: 24n * H },
+    { key: "b2wDelay", label: "B2W 排队延迟", kind: "seconds", tighten: "up", min: 0n, max: 24n * H },
   ],
 };
 

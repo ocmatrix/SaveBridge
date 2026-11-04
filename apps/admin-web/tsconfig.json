@@ -8,5 +8,5 @@
     "declaration": false,
     "allowJs": false
   },
-  "include": ["src", "test", "worker", "vite.config.ts", "vitest.config.ts"]
+  "include": ["src", "test", "worker", "functions", "vite.config.ts", "vitest.config.ts"]
 }

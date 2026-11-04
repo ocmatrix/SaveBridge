@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWalletClient, decodeFunctionData, erc20Abi, http, maxUint256, parseEventLogs, type Address } from "viem";
 import { bscVaultV2Abi } from "@bridge/abi";
 import { KEYS, U, startEnv, whitelist, pause, relayerRelease, relayerCredit, relayerQueue, mintWantosUsdt, snapshot, type Env } from "../support/anvil";
@@ -30,6 +30,16 @@ function ctxFor(side: "wantos" | "bsc", user = KEYS.alice) {
 }
 
 describe("state reads (DESIGN §8.1)", () => {
+  it("one refresh goes out as a few batched requests, not one request per call (public RPCs rate-limit per request)", async () => {
+    const clients = makeClients(env.cfg);
+    const spy = vi.spyOn(globalThis, "fetch");
+    await readBridgeState(env.cfg, clients, KEYS.alice.address);
+    const posts = spy.mock.calls.filter(([, init]) => init?.method === "POST");
+    spy.mockRestore();
+    expect(posts.length).toBeGreaterThan(0); // the spy does see the transport
+    expect(posts.length).toBeLessThanOrEqual(4); // 13 calls: one batch per chain (two if a batch fills up)
+  });
+
   it("not whitelisted anywhere → closed; quotas and limits come from chain", async () => {
     const st = await readBridgeState(env.cfg, makeClients(env.cfg), KEYS.alice.address);
     expect(st.wl).toBe("closed");
@@ -58,7 +68,7 @@ describe("state reads (DESIGN §8.1)", () => {
 });
 
 describe("W2B bridgeOut (acceptance: 未开通被拒 / 方向一 / 订单状态)", () => {
-  it("not whitelisted → rejected with '跨链未开通' before anything is sent", async () => {
+  it("not whitelisted → rejected with '未开通跨出' before anything is sent", async () => {
     const ctx = ctxFor("wantos");
     const before = await env.wantos.anvil.pc.getTransactionCount({ address: KEYS.alice.address });
     const err = await bridgeOutFlow(ctx, 100n * U, () => {}).catch((e) => e);

@@ -1,0 +1,406 @@
+{
+  "_comment": "PR-9 testnet-fast variant: the ONLY differences allowed between contracts/{src,test,script} and contracts/testnet-fast/. Each 'old' must occur exactly 'count' times. Testnet only (WANTON 1345 / BSC testnet 97 / anvil 31337,31338); never mainnet.",
+  "allowedChainIds": [
+    1345,
+    97,
+    31337,
+    31338
+  ],
+  "overlay": [
+    "script/DeployFast.s.sol",
+    "test/FastGuards.t.sol"
+  ],
+  "residualWindowLiterals": [
+    "p.releaseDelay > 7 days",
+    "p.b2wDelay > 24 hours",
+    "block.timestamp / 1 days",
+    "p.queuedAt / 1 days"
+  ],
+  "entries": [
+    {
+      "id": "T1",
+      "file": "src/BridgeTimelock.sol",
+      "kind": "window",
+      "old": "TimelockController(48 hours, ",
+      "new": "TimelockController(2 minutes, ",
+      "count": 1,
+      "oldValue": "48h",
+      "newValue": "2min",
+      "note": "timelock base minDelay (constructor arg)"
+    },
+    {
+      "id": "T2",
+      "file": "src/BridgeTimelock.sol",
+      "kind": "window",
+      "old": "MIN_DELAY = 48 hours;",
+      "new": "MIN_DELAY = 2 minutes;",
+      "count": 1,
+      "oldValue": "48h",
+      "newValue": "2min",
+      "note": "MIN_DELAY immutable"
+    },
+    {
+      "id": "T3",
+      "file": "src/BridgeTimelock.sol",
+      "kind": "window",
+      "old": "_delay = 48 hours;",
+      "new": "_delay = 2 minutes;",
+      "count": 1,
+      "oldValue": "48h",
+      "newValue": "2min",
+      "note": "initial getMinDelay()"
+    },
+    {
+      "id": "T4",
+      "file": "src/BridgeTimelock.sol",
+      "kind": "window",
+      "old": "MAX_DELAY = 7 days;",
+      "new": "MAX_DELAY = 7 minutes;",
+      "count": 1,
+      "oldValue": "7d",
+      "newValue": "7min",
+      "note": "updateDelay upper bound (keeps 3.5x MIN_DELAY)"
+    },
+    {
+      "id": "T5",
+      "file": "src/BridgeTimelock.sol",
+      "kind": "window",
+      "old": "EXPIRY_PERIOD = 14 days;",
+      "new": "EXPIRY_PERIOD = 14 minutes;",
+      "count": 1,
+      "oldValue": "14d",
+      "newValue": "14min",
+      "note": "proposal expiry after ready"
+    },
+    {
+      "id": "T6",
+      "file": "src/BridgeTimelock.sol",
+      "kind": "window",
+      "old": "PENDING_ADMIN_TTL = 7 days;",
+      "new": "PENDING_ADMIN_TTL = 7 minutes;",
+      "count": 1,
+      "oldValue": "7d",
+      "newValue": "7min",
+      "note": "acceptAdmin window"
+    },
+    {
+      "id": "T7",
+      "file": "src/BridgeTimelock.sol",
+      "kind": "window",
+      "old": "ADMIN_RECOVERY_DELAY = 14 days;",
+      "new": "ADMIN_RECOVERY_DELAY = 14 minutes;",
+      "count": 1,
+      "oldValue": "14d",
+      "newValue": "14min",
+      "note": "admin-wallet recovery"
+    },
+    {
+      "id": "T8",
+      "file": "src/BridgeTimelock.sol",
+      "kind": "window",
+      "old": "RECOVERY_COOLDOWN = 3 days;",
+      "new": "RECOVERY_COOLDOWN = 3 minutes;",
+      "count": 1,
+      "oldValue": "3d",
+      "newValue": "3min",
+      "note": "admin recovery cooldown"
+    },
+    {
+      "id": "G1",
+      "file": "src/BridgeTimelock.sol",
+      "kind": "guard",
+      "old": "    {\n        if (adminWallet_ == address(0) || bridge_ == address(0)) revert ZeroAddress();\n",
+      "new": "    {\n        require(\n            block.chainid == 1345 || block.chainid == 97 || block.chainid == 31337 || block.chainid == 31338,\n            \"TESTNET_FAST_ONLY\"\n        ); // PR-9 testnet-fast guard: WANTON 1345 / BSC testnet 97 / local anvil only\n        if (adminWallet_ == address(0) || bridge_ == address(0)) revert ZeroAddress();\n",
+      "count": 1,
+      "oldValue": "-",
+      "newValue": "chainid guard",
+      "note": "BridgeTimelock constructor reverts off 1345/97/31337/31338"
+    },
+    {
+      "id": "B1",
+      "file": "src/BridgeBase.sol",
+      "kind": "window",
+      "old": "MAX_SIGNATURE_TTL = 24 hours;",
+      "new": "MAX_SIGNATURE_TTL = 10 minutes;",
+      "count": 1,
+      "oldValue": "24h",
+      "newValue": "10min",
+      "note": "WL batch deadline cap; kept long enough for a hardware-wallet signature + two submissions"
+    },
+    {
+      "id": "B2",
+      "file": "src/BridgeBase.sol",
+      "kind": "window",
+      "old": "WL_TRANSFER_DELAY = 48 hours;",
+      "new": "WL_TRANSFER_DELAY = 2 minutes;",
+      "count": 1,
+      "oldValue": "48h",
+      "newValue": "2min",
+      "note": "whitelist-wallet handover delay"
+    },
+    {
+      "id": "B3",
+      "file": "src/BridgeBase.sol",
+      "kind": "window",
+      "old": "WL_TRANSFER_TTL = 7 days;",
+      "new": "WL_TRANSFER_TTL = 7 minutes;",
+      "count": 1,
+      "oldValue": "7d",
+      "newValue": "7min",
+      "note": "handover accept window"
+    },
+    {
+      "id": "B4",
+      "file": "src/BridgeBase.sol",
+      "kind": "window",
+      "old": "WL_RECOVERY_DELAY = 7 days;",
+      "new": "WL_RECOVERY_DELAY = 7 minutes;",
+      "count": 1,
+      "oldValue": "7d",
+      "newValue": "7min",
+      "note": "whitelist-wallet recovery"
+    },
+    {
+      "id": "B5",
+      "file": "src/BridgeBase.sol",
+      "kind": "window",
+      "old": "RECOVERY_COOLDOWN = 3 days;",
+      "new": "RECOVERY_COOLDOWN = 3 minutes;",
+      "count": 1,
+      "oldValue": "3d",
+      "newValue": "3min",
+      "note": "WL recovery cooldown"
+    },
+    {
+      "id": "B6",
+      "file": "src/BridgeBase.sol",
+      "kind": "window",
+      "old": "REFUND_DELAY = 24 hours;",
+      "new": "REFUND_DELAY = 3 minutes;",
+      "count": 1,
+      "oldValue": "24h",
+      "newValue": "3min",
+      "note": "W2B refund / B2W deposit refund wait"
+    },
+    {
+      "id": "G2",
+      "file": "src/BridgeBase.sol",
+      "kind": "guard",
+      "old": "    constructor() {\n        _disableInitializers();\n",
+      "new": "    constructor() {\n        require(\n            block.chainid == 1345 || block.chainid == 97 || block.chainid == 31337 || block.chainid == 31338,\n            \"TESTNET_FAST_ONLY\"\n        ); // PR-9 testnet-fast guard: WANTON 1345 / BSC testnet 97 / local anvil only\n        _disableInitializers();\n",
+      "count": 1,
+      "oldValue": "-",
+      "newValue": "chainid guard",
+      "note": "implementation constructor (BscVaultV2 + WantosBridgeV2) reverts off 1345/97/31337/31338"
+    },
+    {
+      "id": "R1",
+      "file": "src/BscVaultV2.sol",
+      "kind": "range",
+      "old": "p.releaseDelay < 6 hours ",
+      "new": "p.releaseDelay < 1 minutes ",
+      "count": 1,
+      "oldValue": "6h",
+      "newValue": "1min",
+      "note": "releaseDelay lower bound (upper 7d unchanged)"
+    },
+    {
+      "id": "X1",
+      "file": "test/utils/Windows.sol",
+      "kind": "test-constant",
+      "old": "TL_MIN_DELAY = 48 hours;",
+      "new": "TL_MIN_DELAY = 2 minutes;",
+      "count": 1,
+      "oldValue": "48h",
+      "newValue": "2min",
+      "note": "test mirror of TL_MIN_DELAY"
+    },
+    {
+      "id": "X2",
+      "file": "test/utils/Windows.sol",
+      "kind": "test-constant",
+      "old": "TL_MAX_DELAY = 7 days;",
+      "new": "TL_MAX_DELAY = 7 minutes;",
+      "count": 1,
+      "oldValue": "7d",
+      "newValue": "7min",
+      "note": "test mirror of TL_MAX_DELAY"
+    },
+    {
+      "id": "X3",
+      "file": "test/utils/Windows.sol",
+      "kind": "test-constant",
+      "old": "TL_EXPIRY = 14 days;",
+      "new": "TL_EXPIRY = 14 minutes;",
+      "count": 1,
+      "oldValue": "14d",
+      "newValue": "14min",
+      "note": "test mirror of TL_EXPIRY"
+    },
+    {
+      "id": "X4",
+      "file": "test/utils/Windows.sol",
+      "kind": "test-constant",
+      "old": "TL_PENDING_ADMIN_TTL = 7 days;",
+      "new": "TL_PENDING_ADMIN_TTL = 7 minutes;",
+      "count": 1,
+      "oldValue": "7d",
+      "newValue": "7min",
+      "note": "test mirror of TL_PENDING_ADMIN_TTL"
+    },
+    {
+      "id": "X5",
+      "file": "test/utils/Windows.sol",
+      "kind": "test-constant",
+      "old": "TL_ADMIN_RECOVERY = 14 days;",
+      "new": "TL_ADMIN_RECOVERY = 14 minutes;",
+      "count": 1,
+      "oldValue": "14d",
+      "newValue": "14min",
+      "note": "test mirror of TL_ADMIN_RECOVERY"
+    },
+    {
+      "id": "X6",
+      "file": "test/utils/Windows.sol",
+      "kind": "test-constant",
+      "old": "TL_COOLDOWN = 3 days;",
+      "new": "TL_COOLDOWN = 3 minutes;",
+      "count": 1,
+      "oldValue": "3d",
+      "newValue": "3min",
+      "note": "test mirror of TL_COOLDOWN"
+    },
+    {
+      "id": "X7",
+      "file": "test/utils/Windows.sol",
+      "kind": "test-constant",
+      "old": "SIG_TTL = 24 hours;",
+      "new": "SIG_TTL = 10 minutes;",
+      "count": 1,
+      "oldValue": "24h",
+      "newValue": "10min",
+      "note": "test mirror of SIG_TTL"
+    },
+    {
+      "id": "X8",
+      "file": "test/utils/Windows.sol",
+      "kind": "test-constant",
+      "old": "WL_TRANSFER_DELAY = 48 hours;",
+      "new": "WL_TRANSFER_DELAY = 2 minutes;",
+      "count": 1,
+      "oldValue": "48h",
+      "newValue": "2min",
+      "note": "test mirror of WL_TRANSFER_DELAY"
+    },
+    {
+      "id": "X9",
+      "file": "test/utils/Windows.sol",
+      "kind": "test-constant",
+      "old": "WL_TRANSFER_TTL = 7 days;",
+      "new": "WL_TRANSFER_TTL = 7 minutes;",
+      "count": 1,
+      "oldValue": "7d",
+      "newValue": "7min",
+      "note": "test mirror of WL_TRANSFER_TTL"
+    },
+    {
+      "id": "X10",
+      "file": "test/utils/Windows.sol",
+      "kind": "test-constant",
+      "old": "WL_RECOVERY = 7 days;",
+      "new": "WL_RECOVERY = 7 minutes;",
+      "count": 1,
+      "oldValue": "7d",
+      "newValue": "7min",
+      "note": "test mirror of WL_RECOVERY"
+    },
+    {
+      "id": "X11",
+      "file": "test/utils/Windows.sol",
+      "kind": "test-constant",
+      "old": "WL_COOLDOWN = 3 days;",
+      "new": "WL_COOLDOWN = 3 minutes;",
+      "count": 1,
+      "oldValue": "3d",
+      "newValue": "3min",
+      "note": "test mirror of WL_COOLDOWN"
+    },
+    {
+      "id": "X12",
+      "file": "test/utils/Windows.sol",
+      "kind": "test-constant",
+      "old": "REFUND_DELAY = 24 hours;",
+      "new": "REFUND_DELAY = 3 minutes;",
+      "count": 1,
+      "oldValue": "24h",
+      "newValue": "3min",
+      "note": "test mirror of REFUND_DELAY"
+    },
+    {
+      "id": "X13",
+      "file": "test/utils/Windows.sol",
+      "kind": "test-constant",
+      "old": "RELEASE_DELAY_MIN = 6 hours;",
+      "new": "RELEASE_DELAY_MIN = 1 minutes;",
+      "count": 1,
+      "oldValue": "6h",
+      "newValue": "1min",
+      "note": "test mirror of RELEASE_DELAY_MIN"
+    },
+    {
+      "id": "X15",
+      "file": "test/utils/Windows.sol",
+      "kind": "test-constant",
+      "old": "BSC_CHAIN = 56;",
+      "new": "BSC_CHAIN = 97;",
+      "count": 1,
+      "oldValue": "56",
+      "newValue": "97",
+      "note": "test mirror of BSC_CHAIN"
+    },
+    {
+      "id": "X16",
+      "file": "test/utils/Windows.sol",
+      "kind": "test-constant",
+      "old": "WANTOS_CHAIN = 13555;",
+      "new": "WANTOS_CHAIN = 1345;",
+      "count": 1,
+      "oldValue": "13555",
+      "newValue": "1345",
+      "note": "test mirror of WANTOS_CHAIN"
+    },
+    {
+      "id": "S1",
+      "file": "script/Verify.s.sol",
+      "kind": "script",
+      "old": "t.MIN_DELAY() == 48 hours && t.getMinDelay() == 48 hours",
+      "new": "t.MIN_DELAY() == 2 minutes && t.getMinDelay() == 2 minutes",
+      "count": 1,
+      "oldValue": "48h",
+      "newValue": "2min",
+      "note": "acceptance script expects the fast MIN_DELAY"
+    },
+    {
+      "id": "S2",
+      "file": "test/DeployScripts.t.sol",
+      "kind": "script",
+      "old": "import {Deploy} from \"../script/Deploy.s.sol\";\n",
+      "new": "import {Deploy} from \"../script/Deploy.s.sol\";\nimport {DeployFast} from \"../script/DeployFast.s.sol\";\n",
+      "count": 1,
+      "oldValue": "-",
+      "newValue": "+import DeployFast",
+      "note": "PR-1 deploy tests drive the chain-gated DeployFast (main Deploy refuses fast bytecode): import"
+    },
+    {
+      "id": "S3",
+      "file": "test/DeployScripts.t.sol",
+      "kind": "script",
+      "old": "deployer = new Deploy();",
+      "new": "deployer = new DeployFast();",
+      "count": 1,
+      "oldValue": "new Deploy()",
+      "newValue": "new DeployFast()",
+      "note": "PR-1 deploy tests drive the chain-gated DeployFast: instance"
+    }
+  ]
+}

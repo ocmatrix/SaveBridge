@@ -12,6 +12,8 @@ export interface ChainCfg {
   bridge: Address;
   /** First block to scan for events (deployment block). */
   fromBlock: bigint;
+  /** Max blocks per eth_getLogs request (the node's block-range cap). Unset → the generic default in `scanLogs`. */
+  logStep?: bigint;
 }
 
 export interface AppConfig {
@@ -21,6 +23,8 @@ export interface AppConfig {
   adminApi: string | null;
   /** Hostname the SIWE message binds to. */
   siweDomain: string;
+  /** One-signature whitelist submission endpoint (same-origin Pages Function, e.g. "/api/whitelist"). `null` → the page falls back to per-chain wallet writes. */
+  submitApi: string | null;
 }
 
 export class ConfigError extends Error {}
@@ -43,7 +47,10 @@ function chain(env: Record<string, string | undefined>, side: Side): ChainCfg {
   if (!isAddress(bridge, { strict: false })) throw new ConfigError(`${p}BRIDGE 不是地址`);
   const fb = env[`${p}FROM_BLOCK`]?.trim() || "0";
   if (!/^\d+$/.test(fb)) throw new ConfigError(`${p}FROM_BLOCK 无效`);
-  return { side, chainId, rpcUrl, bridge: getAddress(bridge), fromBlock: BigInt(fb) };
+  // rpc3's node caps eth_getLogs at 100 blocks (app.toml block-range-cap); BSC public RPCs accept far more.
+  const ls = env[`${p}LOG_STEP`]?.trim() || (side === "wantos" ? "100" : "50000");
+  if (!/^[1-9]\d*$/.test(ls)) throw new ConfigError(`${p}LOG_STEP 无效`);
+  return { side, chainId, rpcUrl, bridge: getAddress(bridge), fromBlock: BigInt(fb), logStep: BigInt(ls) };
 }
 
 /** Build-time configuration (Vite env). Only public values: chain ids, RPC URLs, contract addresses. */
@@ -57,7 +64,12 @@ export function parseConfig(env: Record<string, string | undefined>): AppConfig 
     const u = new URL(api);
     if (u.protocol !== "https:" && u.hostname !== "127.0.0.1" && u.hostname !== "localhost") throw new ConfigError("VITE_ADMIN_API 必须是 https");
   }
-  return { bsc, wantos, adminApi: api, siweDomain: env.VITE_SIWE_DOMAIN?.trim() || "admin.wanto.pro" };
+  const sub = env.VITE_WL_SUBMIT_URL?.trim() || null;
+  if (sub && !sub.startsWith("/")) {
+    const u = new URL(sub);
+    if (u.protocol !== "https:" && u.hostname !== "127.0.0.1" && u.hostname !== "localhost") throw new ConfigError("VITE_WL_SUBMIT_URL 必须是 https 或同源路径（以 / 开头）");
+  }
+  return { bsc, wantos, adminApi: api, siweDomain: env.VITE_SIWE_DOMAIN?.trim() || "admin.wanto.pro", submitApi: sub };
 }
 
 /** Placeholder builds (CI artifact without real addresses) use the dead address. */

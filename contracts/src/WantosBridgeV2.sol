@@ -336,7 +336,7 @@ contract WantosBridgeV2 is BridgeBase {
         if (p.w2bMinAmount < 10 * u || p.w2bMinAmount > 20_000 * u) revert ParamOutOfRange(0);
         if (p.w2bPerAddrDailyCap < 10 * u || p.w2bPerAddrDailyCap > 20_000 * u) revert ParamOutOfRange(1);
         if (p.b2wDailyCap < 500 * u || p.b2wDailyCap > 100_000_000 * u) revert ParamOutOfRange(2);
-        if (p.b2wDelay < 10 minutes || p.b2wDelay > 24 hours) revert ParamOutOfRange(3);
+        if (p.b2wDelay > 24 hours) revert ParamOutOfRange(3);
         if (p.w2bMinAmount > p.w2bPerAddrDailyCap) revert ParamConstraint();
     }
 }

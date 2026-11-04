@@ -13,6 +13,9 @@ import { invalidateNonce, readNonce } from "../../src/lib/whitelist";
 import { BSC_ID, WANTOS_ID } from "../support/world";
 import { getAddress } from "viem";
 import { vi } from "vitest";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { chainNow } from "../../src/lib/chain";
+import { submitWhitelist, type SubmitEnv } from "../../functions/_lib/submit";
 
 let w: World;
 beforeAll(async () => {
@@ -286,10 +289,10 @@ describe("whitelist page", () => {
       await prepared();
       const sorted = parseAddressList(two.join("\n")).addresses;
       const deadline = BigInt(/--deadline (\d+)/.exec(screen.getByTestId("offline-cmd").textContent!)![1]!);
-      for (const [side, name, chainId] of [["bsc", "BscVaultV2", BSC_ID], ["wantos", "WantosBridgeV2", WANTOS_ID]] as const) {
+      for (const [side, chainId] of [["bsc", BSC_ID], ["wantos", WANTOS_ID]] as const) {
         const nonce = await readNonce(w.chains[side]);
         expect(screen.getByTestId(`nonce-${side}`)).toHaveTextContent(new RegExp(`^${nonce}$`));
-        expect(screen.getByTestId(`domain-${side}`)).toHaveTextContent(tool.domainHash({ name, chainId, verifyingContract: w.bridge }));
+        expect(screen.getByTestId(`domain-${side}`)).toHaveTextContent(tool.domainHash({ verifyingContract: w.bridge }));
         expect(screen.getByTestId(`msg-${side}`)).toHaveTextContent(tool.messageHash({ listHash: tool.listHash(sorted), count: 2, allowed: true, nonce, deadline }));
         expect(screen.getByTestId(`chain-${side}`)).toHaveTextContent(`chainId ${chainId}`);
       }
@@ -346,5 +349,48 @@ describe("whitelist page", () => {
     await waitFor(() => expect(screen.getByTestId("progress")).toHaveTextContent(/BSC：已写入.*WANTOS：已写入/s), { timeout: 20_000 });
     expect(wl.log.filter((x) => x.startsWith("sign712")).length).toBe(2);
     expect(wl.log.filter((x) => x.startsWith("write:")).length).toBe(2);
+  });
+});
+
+describe("whitelist page: one-signature mode (submission service configured)", () => {
+  it("one wallet signature, no wallet transaction, both chains written by the service", async () => {
+    const key = generatePrivateKey();
+    const submitter = privateKeyToAccount(key);
+    for (const n of [w.node.bsc, w.node.wantos]) await n.test.setBalance({ address: submitter.address, value: 10n ** 21n });
+    const env: SubmitEnv = { BRIDGE: w.bridge, BSC_CHAIN_ID: String(BSC_ID), BSC_RPC_URL: w.cfg.bsc.rpcUrl, WANTOS_CHAIN_ID: String(WANTOS_ID), WANTOS_RPC_URL: w.cfg.wantos.rpcUrl, SUBMITTER_KEY: key };
+    // earlier tests in this file leave the two chains on different whitelist nonces on purpose; one signature needs equal nonces
+    for (let guard = 0; guard < 20; guard++) {
+      const [nb, nw] = [await readNonce(w.chains.bsc), await readNonce(w.chains.wantos)];
+      if (nb === nw) break;
+      await invalidateNonce(nb < nw ? w.chains.bsc : w.chains.wantos, localSigner(w, w.act.wl));
+    }
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (u: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      // only the submission endpoint is served in-process; everything else (viem's JSON-RPC) goes to the real fetch
+      if (String(u) !== "/api/whitelist") return realFetch(u, init);
+      const t = Number(await chainNow(w.chains.bsc)) * 1000;
+      const r = await submitWhitelist(env, JSON.parse(String(init?.body)), () => t);
+      return new Response(JSON.stringify(r.json), { status: r.status });
+    });
+    try {
+      const wl = localSigner(w, w.act.wl);
+      const list = [keccak256(toBytes("os1")).slice(0, 42), keccak256(toBytes("os2")).slice(0, 42)];
+      render(<App cfg={{ ...w.cfg, submitApi: "/api/whitelist" }} chains={w.chains} signer={wl} initialPath="/" />);
+      paste(["address", ...list].join("\n"));
+      await waitFor(() => expect(prepareBtn()).toBeEnabled());
+      fireEvent.click(prepareBtn());
+      await screen.findByTestId("listHash");
+      expect(screen.getByTestId("d1-note")).toHaveTextContent("只需在钱包里签名一次");
+      expect(screen.getByTestId("d1-note")).not.toHaveTextContent("共 4 次");
+      fireEvent.click(screen.getByRole("button", { name: "签名并写入两条链" }));
+      await waitFor(() => expect(screen.getByTestId("progress")).toHaveTextContent(/BSC：已写入.*WANTOS：已写入/s), { timeout: 20_000 });
+      expect(wl.log.filter((x) => x.startsWith("sign712"))).toHaveLength(1);
+      expect(wl.log.filter((x) => x.startsWith("write:"))).toEqual([]);
+      const selected = parseAddressList(list.join("\n")).addresses;
+      for (const side of ["bsc", "wantos"] as const) expect(await readWhitelisted(w.chains[side], selected)).toEqual([true, true]);
+    } finally {
+      vi.unstubAllGlobals();
+      cleanup();
+    }
   });
 });

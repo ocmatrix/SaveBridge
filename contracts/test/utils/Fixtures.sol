@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {W} from "./Windows.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {BridgeTimelock} from "../../src/BridgeTimelock.sol";
 import {BridgeBase} from "../../src/BridgeBase.sol";
@@ -10,8 +11,8 @@ import {MockToken} from "../mocks/MockToken.sol";
 
 abstract contract KeysAndTimelock is Test {
     uint256 constant U = 1e18;
-    uint256 constant BSC_CHAIN = 56;
-    uint256 constant WANTOS_CHAIN = 13555;
+    uint256 constant BSC_CHAIN = W.BSC_CHAIN;
+    uint256 constant WANTOS_CHAIN = W.WANTOS_CHAIN;
 
     address admin = makeAddr("admin");
     address wl;
@@ -36,7 +37,7 @@ abstract contract KeysAndTimelock is Test {
     function _propose(address target, bytes memory data) internal returns (bytes32 salt) {
         salt = bytes32(++saltCounter);
         vm.prank(tl.adminWallet());
-        tl.schedule(target, 0, data, bytes32(0), salt, 48 hours);
+        tl.schedule(target, 0, data, bytes32(0), salt, W.TL_MIN_DELAY);
     }
 
     function _execute(address target, bytes memory data, bytes32 salt) internal {
@@ -46,7 +47,7 @@ abstract contract KeysAndTimelock is Test {
     /// propose + wait 48h + execute
     function _viaTimelock(address target, bytes memory data) internal {
         bytes32 salt = _propose(target, data);
-        vm.warp(block.timestamp + 48 hours);
+        vm.warp(block.timestamp + W.TL_MIN_DELAY);
         _execute(target, data, salt);
     }
 
@@ -80,7 +81,7 @@ abstract contract KeysAndTimelock is Test {
     function _applyBatch(BridgeBase b, address[] memory addrs, bool allowed) internal {
         addrs = _sorted(addrs);
         uint256 nonce = b.whitelistNonce();
-        uint256 deadline = block.timestamp + 1 hours;
+        uint256 deadline = block.timestamp + W.SIG_TTL / 24;
         bytes memory sig = _signBatch(b, wlKey, addrs, allowed, nonce, deadline);
         vm.prank(stranger); // any account may submit
         b.applyWhitelistBatch(addrs, allowed, nonce, deadline, sig);

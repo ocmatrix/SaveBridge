@@ -23,6 +23,8 @@ export interface AppConfig {
   logLookback: bigint;
   /** Built from `.env.placeholder` (CI/build check only): the app renders an error and never connects a wallet. */
   placeholder: boolean;
+  /** Name of the host app, shown in "open this page in …" (VITE_APP_NAME, default "SafeBridge"). */
+  appName: string;
   /** `VITE_NETWORK=testnet` → testnet build (permanent banner, built into dist-testnet/). */
   network: "mainnet" | "testnet";
 }
@@ -105,6 +107,7 @@ export function parseConfig(env: Env): AppConfig {
     walletConnectProjectId: env.VITE_WC_PROJECT_ID?.trim() || null,
     logLookback: uint(env, "VITE_LOG_LOOKBACK_BLOCKS", "50000"),
     placeholder: env.VITE_CONFIG_PLACEHOLDER === "1",
+    appName: env.VITE_APP_NAME?.trim() || "SafeBridge",
     network: networkKind(env.VITE_NETWORK),
   };
 }
