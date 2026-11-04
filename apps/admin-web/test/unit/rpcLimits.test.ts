@@ -10,7 +10,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { parseConfig } from "../../src/lib/config";
 import { LOG_PARALLEL, LOG_RETRIES, scanLogs } from "../../src/lib/whitelist";
 import { batchTypedData } from "../../src/lib/normalize";
-import { errorLine, READ_BATCH, submitWhitelist, type SubmitEnv } from "../../functions/_lib/submit";
+import { CHAIN_FAILED, errorLine, READ_BATCH, submitWhitelist, type SubmitEnv } from "../../functions/_lib/submit";
 
 const BRIDGE = "0x41e9900BF09553C46b6b3F267626FDa2b4711E44";
 const baseEnv = {
@@ -176,5 +176,151 @@ describe("errorLine", () => {
     expect(t).toContain("Details: too many requests");
     expect(t).not.toContain("secret");
     expect(t).not.toContain("Request body");
+  });
+});
+
+describe("submit: a chain failure is answered with a status Cloudflare does not replace", () => {
+  const manager = privateKeyToAccount(generatePrivateKey());
+  let server: Server;
+  let url = "";
+  let mode: "revert" | "down" = "revert";
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      let raw = "";
+      req.on("data", (d) => (raw += d));
+      req.on("end", () => {
+        res.setHeader("content-type", "application/json");
+        if (mode === "down") {
+          res.statusCode = 500;
+          res.end("down");
+          return;
+        }
+        const calls = JSON.parse(raw) as Array<{ id: number; method: string; params?: Array<{ data?: string }> }> | { id: number; method: string; params?: Array<{ data?: string }> };
+        const one = (c: { id: number; method: string; params?: Array<{ data?: string }> }) => {
+          const data = c.params?.[0]?.data ?? "0x";
+          if (data.startsWith(toFunctionSelector("function whitelistManager()"))) return { jsonrpc: "2.0", id: c.id, result: encodeAbiParameters([{ type: "address" }], [manager.address]) };
+          if (data.startsWith(toFunctionSelector("function whitelisted(address)"))) return { jsonrpc: "2.0", id: c.id, result: pad("0x00", { size: 32 }) };
+          if (data.startsWith(toFunctionSelector("function whitelistNonce()"))) return { jsonrpc: "2.0", id: c.id, result: pad("0x02", { size: 32 }) };
+          return { jsonrpc: "2.0", id: c.id, error: { code: 3, message: "execution reverted: BadNonce", data: "0x" } }; // the simulation of applyWhitelistBatch
+        };
+        res.end(JSON.stringify(Array.isArray(calls) ? calls.map(one) : one(calls)));
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+  afterAll(() => server?.close());
+
+  const attempt = async () => {
+    const list: Address[] = [getAddress("0x0000000000000000000000000000000000000abc")];
+    const nowS = 1_800_000_000n;
+    const deadline = nowS + 3600n;
+    const signature = await manager.signTypedData(batchTypedData({ side: "bsc", chainId: 56, bridge: BRIDGE, addresses: list, allowed: true, nonce: 2n, deadline }) as Parameters<typeof manager.signTypedData>[0]);
+    const env: SubmitEnv = { BRIDGE, BSC_CHAIN_ID: "56", BSC_RPC_URL: url, WANTOS_CHAIN_ID: "13555", WANTOS_RPC_URL: url, SUBMITTER_KEY: generatePrivateKey() };
+    return submitWhitelist(env, { addresses: list, allowed: true, nonce: "2", deadline: String(deadline), signature }, () => Number(nowS) * 1000);
+  };
+
+  it("a failing simulation returns 424 with the reason and the per-chain runs, never 502", async () => {
+    mode = "revert";
+    const r = await attempt();
+    expect(r.status).toBe(CHAIN_FAILED);
+    expect([502, 503, 504]).not.toContain(r.status);
+    expect(r.json.error).toContain("BSC");
+    expect(r.json.error).toContain("BadNonce");
+    expect(r.json.runs!.bsc.status).toBe("failed");
+  });
+
+  it("an unreachable RPC also returns 424, never 503", async () => {
+    mode = "down";
+    const r = await attempt();
+    expect(r.status).toBe(CHAIN_FAILED);
+    expect(r.json.ok).toBe(false);
+  });
+});
+
+describe("submit: BSC fallback endpoints", () => {
+  const manager = privateKeyToAccount(generatePrivateKey());
+  let good: Server;
+  let limited: Server;
+  let goodUrl = "";
+  let limitedUrl = "";
+  const hits = { good: 0, limited: 0 };
+  beforeAll(async () => {
+    good = createServer((req, res) => {
+      let raw = "";
+      req.on("data", (d) => (raw += d));
+      req.on("end", () => {
+        hits.good++;
+        const calls = JSON.parse(raw) as Array<{ id: number; params?: Array<{ data?: string }> }> | { id: number; params?: Array<{ data?: string }> };
+        const one = (c: { id: number; params?: Array<{ data?: string }> }) => {
+          const data = c.params?.[0]?.data ?? "0x";
+          if (data.startsWith(toFunctionSelector("function whitelistManager()"))) return { jsonrpc: "2.0", id: c.id, result: encodeAbiParameters([{ type: "address" }], [manager.address]) };
+          return { jsonrpc: "2.0", id: c.id, result: pad("0x01", { size: 32 }) }; // whitelisted(address) = true → nothing to send
+        };
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(Array.isArray(calls) ? calls.map(one) : one(calls)));
+      });
+    });
+    limited = createServer((req, res) => {
+      hits.limited++;
+      req.resume();
+      res.statusCode = 429; // what publicnode answers to Cloudflare's shared IPs
+      res.end("Too Many Requests");
+    });
+    await Promise.all([good, limited].map((s) => new Promise<void>((r) => s.listen(0, "127.0.0.1", r))));
+    goodUrl = `http://127.0.0.1:${(good.address() as AddressInfo).port}`;
+    limitedUrl = `http://127.0.0.1:${(limited.address() as AddressInfo).port}`;
+  });
+  afterAll(() => {
+    good?.close();
+    limited?.close();
+  });
+
+  const run = async (fallbacks: string | undefined, keyed?: string) => {
+    const list: Address[] = [getAddress("0x0000000000000000000000000000000000000abc"), getAddress("0x0000000000000000000000000000000000000abd")];
+    const nowS = 1_800_000_000n;
+    const deadline = nowS + 3600n;
+    const signature = await manager.signTypedData(batchTypedData({ side: "bsc", chainId: 56, bridge: BRIDGE, addresses: list, allowed: true, nonce: 2n, deadline }) as Parameters<typeof manager.signTypedData>[0]);
+    const env: SubmitEnv = { BRIDGE, BSC_CHAIN_ID: "56", BSC_RPC_URL: limitedUrl, ...(fallbacks ? { BSC_RPC_FALLBACKS: fallbacks } : {}), ...(keyed ? { BSC_RPC_KEYED: keyed } : {}), WANTOS_CHAIN_ID: "13555", WANTOS_RPC_URL: goodUrl, SUBMITTER_KEY: generatePrivateKey() };
+    return submitWhitelist(env, { addresses: list, allowed: true, nonce: "2", deadline: String(deadline), signature }, () => Number(nowS) * 1000);
+  };
+
+  it("with a primary that answers 429, the next endpoint serves the request", async () => {
+    // the primary is only used for BSC; the manager is read from both chains, so BSC must fail over to succeed
+    const r = await run(goodUrl);
+    expect(r.json.error).toBeUndefined();
+    expect(r.status).toBe(200);
+    expect(r.json.runs!.bsc.status).toBe("skipped");
+    expect(hits.limited).toBeGreaterThan(0); // the primary was tried first
+  });
+
+  it("without a fallback the same 429 is reported as a chain failure (424) naming the status", async () => {
+    const r = await run(undefined);
+    expect(r.status).toBe(CHAIN_FAILED);
+  });
+
+  it("only https (or loopback http) fallbacks are accepted", async () => {
+    const r = await run("ftp://example.com,http://example.com");
+    expect(r.status).toBe(CHAIN_FAILED); // both ignored → no working endpoint
+  });
+
+  it("a keyed endpoint (secret) is tried first: the 429 primary is never touched", async () => {
+    const before = hits.limited;
+    const r = await run(undefined, goodUrl);
+    expect(r.json.error).toBeUndefined();
+    expect(r.status).toBe(200);
+    expect(r.json.runs!.bsc.status).toBe("skipped");
+    expect(hits.limited).toBe(before);
+  });
+
+  it("a keyed value that is not https is ignored", async () => {
+    const r = await run(undefined, "http://example.com/v2/abc");
+    expect(r.status).toBe(CHAIN_FAILED); // falls back to the 429 primary only
+  });
+
+  it("the key never appears in the error returned to the page", async () => {
+    const r = await run(undefined, `${limitedUrl}/v2/SECRETKEY123`);
+    expect(r.status).toBe(CHAIN_FAILED);
+    expect(JSON.stringify(r.json)).not.toContain("SECRETKEY123");
   });
 });
