@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {BscFixture} from "./utils/Fixtures.sol";
 import {WantosFixture} from "./utils/WantosFixture.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {BridgeBase} from "../src/BridgeBase.sol";
 import {BscVaultV2} from "../src/BscVaultV2.sol";
 import {WantosBridgeV2} from "../src/WantosBridgeV2.sol";
@@ -11,6 +12,53 @@ import {WantosBridgeV2} from "../src/WantosBridgeV2.sol";
 contract Rejector {
     receive() external payable {
         revert("no");
+    }
+}
+
+/// a recipient that burns all the gas it is given
+contract GasBurner {
+    receive() external payable {
+        assembly {
+            invalid()
+        }
+    }
+}
+
+/// a fee recipient that tries to re-enter deposit() from its receive hook and swallows the failure
+contract ReenteringRecipient {
+    BscVaultV2 public vault;
+    bytes public caught;
+    bool public attempted;
+
+    constructor(BscVaultV2 v) {
+        vault = v;
+    }
+
+    receive() external payable {
+        attempted = true;
+        try vault.deposit{value: msg.value}(1, address(this)) {}
+        catch (bytes memory r) {
+            caught = r;
+        }
+    }
+}
+
+/// a depositor that re-enters deposit() when its refund arrives (fee off) and swallows the failure
+contract ReenteringDepositor {
+    bool public attempted;
+    bytes public caught;
+
+    function go(BscVaultV2 v, IERC20 t, uint256 amt) external payable {
+        t.approve(address(v), amt);
+        v.deposit{value: msg.value}(amt, address(this));
+    }
+
+    receive() external payable {
+        attempted = true;
+        try BscVaultV2(payable(msg.sender)).deposit{value: msg.value}(1, address(this)) {}
+        catch (bytes memory r) {
+            caught = r;
+        }
     }
 }
 
@@ -158,20 +206,20 @@ contract NativeFeeBscTest is BscFixture {
         bytes memory data = abi.encodeCall(BscVaultV2.setNativeFeeConfig, (recipient, 101));
         bytes32 salt = _propose(address(vault), data);
         vm.warp(block.timestamp + 48 hours);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BridgeBase.ParamOutOfRange.selector, 0));
         _execute(address(vault), data, salt);
 
         data = abi.encodeCall(BscVaultV2.setNativeFeeConfig, (address(0), 10));
         salt = _propose(address(vault), data);
         vm.warp(block.timestamp + 48 hours);
-        vm.expectRevert();
+        vm.expectRevert(BridgeBase.ZeroAddress.selector);
         _execute(address(vault), data, salt);
 
         _set(address(0), 0); // off needs no recipient
         assertEq(vault.quoteNativeFee(FLOOR), 0);
 
         vm.prank(admin);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BridgeBase.NotTimelock.selector, admin));
         vault.setNativeFeeConfig(recipient, 10); // admin cannot set, only the timelock
     }
 
@@ -192,6 +240,128 @@ contract NativeFeeBscTest is BscFixture {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.NotAdmin.selector, alice));
         vault.disableNativeFee();
+    }
+
+    // ---- review follow-ups (independent review, 2026-11-04) ----
+
+    function test_configRevertsWhilePaused() public {
+        vm.prank(pauser);
+        vault.pause();
+        bytes memory data = abi.encodeCall(BscVaultV2.setNativeFeeConfig, (recipient, 10));
+        bytes32 salt = _propose(address(vault), data);
+        vm.warp(block.timestamp + 48 hours);
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+        _execute(address(vault), data, salt);
+    }
+
+    function test_configRevertsDuringRecovery() public {
+        vm.prank(admin);
+        vault.startWhitelistRecovery(makeAddr("wl2"));
+        vm.prank(address(tl));
+        vm.expectRevert(BridgeBase.RecoveryInProgress.selector);
+        vault.setNativeFeeConfig(recipient, 10);
+    }
+
+    function test_killSwitchWorksWhilePaused() public {
+        _set(recipient, 10);
+        vm.prank(pauser);
+        vault.pause();
+        vm.prank(admin);
+        vault.disableNativeFee();
+        (, uint256 m) = vault.nativeFeeConfig();
+        assertEq(m, 0);
+    }
+
+    function test_timelockCanSwitchOffWithZeroMultiplier_feeStaysOff() public {
+        _set(recipient, 10);
+        _set(recipient, 0);
+        assertEq(vault.quoteNativeFee(10 gwei), 0);
+        uint256 r0 = recipient.balance;
+        _dep(alice, 100 * U, 0.0007 ether); // value is sent back, nothing reaches the recipient
+        assertEq(recipient.balance, r0);
+        assertEq(alice.balance, 1 ether);
+    }
+
+    function test_gasBurningRecipientBlocksDeposits_killSwitchRecovers() public {
+        _set(address(new GasBurner()), 10);
+        token.mint(alice, 300 * U);
+        vm.deal(alice, 1 ether);
+        vm.startPrank(alice);
+        token.approve(address(vault), 300 * U);
+        vm.expectRevert(BscVaultV2.NativeFeeTransferFailed.selector);
+        vault.deposit{value: 0.0005 ether}(100 * U, alice);
+        vm.stopPrank();
+        vm.prank(admin);
+        vault.disableNativeFee(); // the multiplier-0 path never calls the recipient
+        vm.prank(alice);
+        vault.deposit(100 * U, alice);
+        assertEq(vault.depositNonce(), 1);
+    }
+
+    function test_recipientCannotReenterDeposit() public {
+        ReenteringRecipient rr = new ReenteringRecipient(vault);
+        _set(address(rr), 10);
+        _dep(alice, 100 * U, 0.0005 ether);
+        assertTrue(rr.attempted());
+        assertEq(bytes4(rr.caught()), bytes4(keccak256("ReentrancyGuardReentrantCall()")));
+        assertEq(vault.depositNonce(), 1); // only the outer deposit happened
+        assertEq(address(rr).balance, 0.0005 ether); // and it kept exactly the fee
+    }
+
+    function test_refundCallbackCannotReenterDeposit_feeOff() public {
+        ReenteringDepositor d = new ReenteringDepositor();
+        token.mint(address(d), 100 * U);
+        vm.deal(address(this), 1 ether);
+        d.go{value: 0.3 ether}(vault, token, 100 * U);
+        assertTrue(d.attempted());
+        assertEq(bytes4(d.caught()), bytes4(keccak256("ReentrancyGuardReentrantCall()")));
+        assertEq(vault.depositNonce(), 1);
+        assertEq(address(d).balance, 0.3 ether); // the value came back whole
+    }
+
+    function test_forcedBnbIsNeverUsedAsRefundOrFee() public {
+        vm.deal(address(vault), 1 ether); // what a selfdestruct would leave behind
+        // fee off: exactly msg.value comes back, not the vault balance
+        _dep(alice, 100 * U, 0.3 ether);
+        assertEq(alice.balance, 1 ether);
+        assertEq(address(vault).balance, 1 ether);
+        // fee on: exactly msg.value reaches the recipient
+        _set(recipient, 10);
+        uint256 r0 = recipient.balance;
+        _dep(bob, 100 * U, 0.0007 ether);
+        assertEq(recipient.balance - r0, 0.0007 ether);
+        assertEq(address(vault).balance, 1 ether);
+    }
+
+    function test_collectedEventAndExactBalances() public {
+        _set(recipient, 10);
+        uint256 fee = 0.0009 ether;
+        token.mint(alice, 100 * U);
+        vm.deal(alice, 1 ether);
+        uint256 r0 = recipient.balance;
+        vm.startPrank(alice);
+        token.approve(address(vault), 100 * U);
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit BscVaultV2.NativeFeeCollected(alice, recipient, fee);
+        vault.deposit{value: fee}(100 * U, alice);
+        vm.stopPrank();
+        assertEq(1 ether - alice.balance, fee);
+        assertEq(recipient.balance - r0, fee);
+        assertEq(address(vault).balance, 0);
+    }
+
+    function test_quoteExactEdgesForMultiplierExtremes() public {
+        _set(recipient, 50);
+        assertEq(vault.quoteNativeFee(0.05 gwei), vault.MIN_FEE()); // 5e7 * 2e5 * 50 = MIN_FEE exactly
+        assertEq(vault.quoteNativeFee(0.05 gwei + 1), vault.MIN_FEE() + 1e7); // one wei of gas price above the floor
+        assertEq(vault.quoteNativeFee(0.2 gwei), vault.MAX_FEE()); // 2e8 * 2e5 * 50 = MAX_FEE exactly
+        assertEq(vault.quoteNativeFee(0.2 gwei + 1), vault.MAX_FEE()); // clamped
+        _set(recipient, 1);
+        assertEq(vault.quoteNativeFee(100 gwei), vault.MAX_FEE()); // 100 gwei * 2e5 * 1 is far above the cap
+        assertEq(vault.quoteNativeFee(0), vault.MIN_FEE());
+        _set(recipient, 100);
+        assertEq(vault.quoteNativeFee(0.1 gwei), vault.MAX_FEE()); // 1e8 * 2e5 * 100 = MAX_FEE exactly
+        assertEq(vault.quoteNativeFee(0.1 gwei - 1), vault.MAX_FEE() - 2e7);
     }
 
     function test_storageMatchesLayoutSnapshot() public {
