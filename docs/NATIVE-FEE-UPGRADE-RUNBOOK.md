@@ -274,6 +274,7 @@ cast send $TL "schedule(address,uint256,bytes,bytes32,bytes32,uint256)" $PROXY 0
 ```
 
 ### 5.3 提交（先 BSC，再 WANTOS）
+**现成脚本（方案 A）：** `SIGN="<cast 签名参数>" bash scripts/schedule-fee-batch.sh bsc|wantos [--dry]`。它会先核对链上现场（旧实现、未暂停、纪元 0、无恢复流程、管理钱包、收款地址无合约代码），列出要提议的内容并解码，核对提案编号与预期一致，用管理钱包地址做一次无签名的模拟，然后要你输入 YES 才签名发送；`--dry` 只检查不发送。下面的手动命令是它的等价写法，供核对。
 ```bash
 cast send $TL "scheduleBatch(address[],uint256[],bytes[],bytes32,bytes32,uint256)" \
   "[$PROXY,$PROXY]" "[0,0]" "[$D1,$D2_BSC]" $ZERO32 $SALT $DELAY \
