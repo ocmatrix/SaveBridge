@@ -4,6 +4,8 @@ import { useDeps, useI18n } from "../context";
 import type { BridgeState } from "../lib/reader";
 import { formatAmount, parseAmountInput, validateW2B } from "../lib/amount";
 import { bridgeOutFlow } from "../lib/flows";
+import { formatNative } from "../lib/fee";
+import { useBridgeOutFee } from "../hooks";
 import type { I18nKey } from "../i18n";
 import type { WalletState } from "../wallet/useAutoConnect";
 import { AmountBox, FlipButton, short } from "./AmountBox";
@@ -52,6 +54,8 @@ export function W2BPanel({ state, onOrder, wallet, onFlip }: { state: BridgeStat
   const canSubmit = !!address && !!state && !wrongNet && !blocker && !!parsed?.ok && !problem && !flow.busy && !flow.pending;
   const maxAmount = state ? [state.w2bRemaining, state.wantos.balance, state.wantos.w2bPerAddrDailyCap].reduce((a, b) => (a < b ? a : b)) : null;
   const amountText = parsed?.ok ? f(parsed.value) : "";
+  const feeQuery = useBridgeOutFee(parsed?.ok && !problem ? parsed.value : undefined);
+  const fee = feeQuery.data ?? 0n;
 
   async function submit() {
     if (!address || !parsed?.ok) return;
@@ -112,6 +116,7 @@ export function W2BPanel({ state, onOrder, wallet, onFlip }: { state: BridgeStat
       />
       {state && <p className="info">{t("info.w2b", { amount: f(state.w2bRemaining), min: f(state.wantos.w2bMinAmount), max: f(state.wantos.w2bPerAddrDailyCap) })}</p>}
       {problem && <p className="error">{t(problem.key, problem.params)}</p>}
+      {fee > 0n && <p className="info" data-testid="fee">{t("info.feeW2b", { fee: formatNative(fee), symbol: cfg.wantos.nativeSymbol })}</p>}
       {canSubmit && !flow.step && (
         <p className="info">
           {t("steps.hint")}。{t("amount.approveNote", { amount: amountText })}

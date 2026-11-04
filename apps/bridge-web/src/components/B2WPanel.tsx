@@ -5,6 +5,8 @@ import { useDeps, useI18n } from "../context";
 import type { BridgeState } from "../lib/reader";
 import { formatAmount, parseAmountInput, validateB2W, validRecipient } from "../lib/amount";
 import { depositFlow } from "../lib/flows";
+import { formatNative } from "../lib/fee";
+import { useDepositFee } from "../hooks";
 import type { I18nKey } from "../i18n";
 import type { WalletState } from "../wallet/useAutoConnect";
 import { AmountBox, FlipButton, short } from "./AmountBox";
@@ -56,6 +58,8 @@ export function B2WPanel({ state, onDeposit, wallet, onFlip }: { state: BridgeSt
   const canSubmit = !!address && !!state && !wrongNet && !blocker && recipientOk && !!parsed?.ok && !problem && !flow.busy && !flow.pending;
   const maxAmount = state ? [state.b2wRemaining, state.bsc.balance, state.bsc.maxDepositPerTx].reduce((a, b) => (a < b ? a : b)) : null;
   const amountText = parsed?.ok ? f(parsed.value) : "";
+  const feeQuery = useDepositFee();
+  const fee = feeQuery.data?.fee ?? 0n;
   const customRecipient = !!address && recipientOk && getAddress(recipient) !== getAddress(address);
 
   async function submit() {
@@ -135,6 +139,7 @@ export function B2WPanel({ state, onDeposit, wallet, onFlip }: { state: BridgeSt
       )}
       {state && <p className="info">{t("info.b2w", { min: f(state.bsc.minDeposit) })}</p>}
       {problem && <p className="error">{t(problem.key, problem.params)}</p>}
+      {fee > 0n && <p className="info" data-testid="fee">{t("info.feeB2w", { fee: formatNative(fee), symbol: cfg.bsc.nativeSymbol })}</p>}
       {canSubmit && !flow.step && (
         <p className="info">
           {t("steps.hint")}。{t("amount.approveNote", { amount: amountText })} {t("b2w.eta")}
