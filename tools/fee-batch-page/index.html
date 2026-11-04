@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>手续费升级提议（一次性）</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <h1>手续费升级：提议（一次性页面）</h1>
+  <p class="warn">只发两笔固定的提议，没有任何可输入的内容。<b>在钱包里确认并发出的那一刻，48 小时倒计时开始</b>，到期后付款程序会自动执行，升级和手续费一起生效。用完这个页面会被删除。</p>
+
+  <section id="wallet">
+    <h2>1. 连接管理钱包</h2>
+    <p>必须用管理钱包 <code>0x860f…5669</code>，页面会检查。请在钱包 App 自带的浏览器里打开本页。</p>
+    <button id="connect">连接钱包</button>
+    <p id="account" class="status"></p>
+  </section>
+
+  <section id="bsc" class="card">
+    <h2>2. BSC 提议（先发这一笔）</h2>
+    <dl>
+      <dt>网络</dt><dd>BNB Smart Chain（链 56）</dd>
+      <dt>合约（时间锁）</dt><dd><code>0xE962600e3F9c608Cf7E0e80aB450ffE63b563618</code></dd>
+      <dt>动作 1</dt><dd>把桥升级到新实现 <code>0xdfeE8c9bc21d2a7bf9f0c8d55115135aF5634A59</code></dd>
+      <dt>动作 2</dt><dd>写入手续费：收款地址 <code>0xADCDe89431978C79ef66956Cfed67ac925426957</code>，倍数 50</dd>
+      <dt>延迟</dt><dd>172800 秒（48 小时）</dd>
+      <dt>预期提案编号</dt><dd><code>0x10868fc9571a399a12b30d117f6af6f1b844d1077266a7540c25284009a7457b</code></dd>
+    </dl>
+    <details><summary>钱包里会显示的交易数据（scheduleBatch，选择器 0x8f2a0bb0）</summary><code class="raw" id="raw-bsc"></code></details>
+    <button id="send-bsc" class="send" disabled>发送 BSC 提议</button>
+    <p id="out-bsc" class="status"></p>
+  </section>
+
+  <section id="wantos" class="card">
+    <h2>3. WANTOS 提议（BSC 发出后马上发这一笔）</h2>
+    <dl>
+      <dt>网络</dt><dd>WANTOS（链 13555）</dd>
+      <dt>合约（时间锁）</dt><dd><code>0xE962600e3F9c608Cf7E0e80aB450ffE63b563618</code></dd>
+      <dt>动作 1</dt><dd>把桥升级到新实现 <code>0xcBa30ff023f576ffa915bA322b34D6A835F330B7</code></dd>
+      <dt>动作 2</dt><dd>写入手续费档位：收款地址 <code>0xADCDe89431978C79ef66956Cfed67ac925426957</code>；金额分界 200 / 1000 / 5000 USDT；费用 2.5 / 12 / 50 / 120 WANT</dd>
+      <dt>延迟</dt><dd>172800 秒（48 小时）</dd>
+      <dt>预期提案编号</dt><dd><code>0x0c755dfaefab596b0983c5343282c7d0d47683a97ed5c5c30b8032d021e98d8f</code></dd>
+    </dl>
+    <details><summary>钱包里会显示的交易数据（scheduleBatch，选择器 0x8f2a0bb0）</summary><code class="raw" id="raw-wantos"></code></details>
+    <button id="send-wantos" class="send" disabled>发送 WANTOS 提议</button>
+    <p id="out-wantos" class="status"></p>
+  </section>
+
+  <p class="small">发出后把每一笔的交易哈希发给 Claude，Claude 会在链上核对提案编号和到期时间。</p>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
