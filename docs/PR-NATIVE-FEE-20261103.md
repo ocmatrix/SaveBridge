@@ -11,8 +11,8 @@
 | | BSC 方向（跨进来，欢迎方向） | WANTOS 方向（出金） |
 |---|---|---|
 | 入口 | `BscVaultV2.deposit`（`payable`） | `WantosBridgeV2.bridgeOut`（`payable`） |
-| 费用 | **一笔固定倍数的 gas 费，与存入金额无关**：`fee = tx.gasprice × 200,000 × multiplier`，夹在 [0.0001, 0.01] BNB。`multiplier` 默认建议 10 | 按存入金额分 4 档固定值（见下表） |
-| 浮动 | 随用户交易的 gas 价轻微浮动，像正常转账一样；BSC gas 价 0.05 gwei 时 = 0.0001 BNB | 不浮动 |
+| 费用 | **一笔固定倍数的 gas 费，与存入金额无关**：`fee = tx.gasprice × 200,000 × multiplier`，夹在 [0.0001, 0.01] BNB。上线建议 `multiplier` = **50**（11-04 负责人定：收用户 BSC 自付 gas 的 50 倍） | 按存入金额分 4 档固定值（见下表） |
+| 浮动 | 随用户交易的 gas 价轻微浮动，像正常转账一样；BSC gas 价 0.05 gwei（现价）时 = 0.0005 BNB，约 0.3 美元 | 不浮动 |
 | 付款 | `msg.value ≥ fee`，多付的**退回**发起人（钱包无法精确到 wei） | `msg.value` 必须恰好等于该档费用 |
 | 转账 | 状态写入之后转给 `feeRecipient`，合约不留余额；转账失败整笔回滚；`nonReentrant` | 同左 |
 | 配置 | `setNativeFeeConfig(recipient, multiplier)`：仅时间锁（48h），`multiplier ≤ 100`，0 = 关 | `setNativeFeeTiers`：仅时间锁，最低档 ≥ 1.2 WANT、每档 ≤ 250 WANT、档位不降、限额升序 |
@@ -25,7 +25,7 @@
 
 ### 为什么 BSC 用 `tx.gasprice` 而不是固定数
 
-`MIN_FEE` 0.0001 BNB = 0.05 gwei 下约 20 万 gas（一次 approve 加 deposit）的 10 倍。BSC gas 价波动时，固定值会偏离"10 倍"；用 `tx.gasprice` 则自动跟随，不需要预言机、不需要人工调价。用户设更高的 gas 价会多付，设最低价就付下限，夹在上下限内。
+20 万 gas 是一次 approve 加 deposit 的消耗，单笔交易的 gas 用量基本固定，真正浮动的是 gas 价；所以「实际 gas 的 N 倍」就是 `gas 价 × 20 万 × N`。BSC gas 价波动时，固定值会偏离"10 倍"；用 `tx.gasprice` 则自动跟随，不需要预言机、不需要人工调价。用户设更高的 gas 价会多付，设最低价就付下限，夹在上下限内。
 
 ### WANTOS 档位（WANT 按 0.5 美元估算）
 
@@ -61,7 +61,17 @@
 
 - 前端：BSC 方向读取当前 gas 价，调 `quoteNativeFee(gasPrice)`，发送时多附约 20% 余量（多付部分合约会退回）；WANTOS 方向调 `quoteNativeFee(amount)`。重新生成 `packages/abi`。
 - slither 未跑；WANTOS 链的合约大小上限未实测（设计按 24,576），演练时验证。
-- 上线价格：`multiplier` 建议 10（BSC gas 0.05 gwei 时约 0.06 美元）；BNB 与 WANT 价格以真实行情为准。
+- 上线价格：`multiplier` = 50。费用随 BSC gas 价变化（BNB 按 600 美元估算）：
+
+  | BSC gas 价 | 手续费 | 约合美元 |
+  |---|---|---|
+  | 0.05 gwei（现价） | 0.0005 BNB | 0.3 |
+  | 0.1 gwei | 0.001 BNB | 0.6 |
+  | 0.25 gwei | 0.0025 BNB | 1.5 |
+  | 0.5 gwei | 0.005 BNB | 3 |
+  | ≥ 1 gwei | 封顶 0.01 BNB | 6 |
+
+  BNB 与 WANT 价格以真实行情为准；封顶 0.01 BNB 在 1 gwei 时触发，如需让高 gas 时继续浮动，需把 `MAX_FEE` 常量调高（改合约）。
 - 任何链上写入需负责人明确授权。
 
 ## 7. 刻意不做的
