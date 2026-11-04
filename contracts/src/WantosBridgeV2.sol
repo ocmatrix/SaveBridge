@@ -59,7 +59,30 @@ contract WantosBridgeV2 is BridgeBase {
         }
     }
 
+    /// @custom:storage-location erc7201:wantos.bridge.v2.NativeFee
+    struct FeeStorage {
+        address feeRecipient; // receives every fee at once; the contract never holds native coin
+        uint256 l0; // ascending token-amount bounds between the 4 tiers
+        uint256 l1;
+        uint256 l2;
+        uint256 f0; // WANT fee per tier (amount < l0 -> f0 ...); all 0 = off
+        uint256 f1;
+        uint256 f2;
+        uint256 f3;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("wantos.bridge.v2.NativeFee")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant FEE_STORAGE = 0x996f0b223ec5eab56d57394bbc730586711d10f12e551944355aff15072b3a00;
+
+    function _f() private pure returns (FeeStorage storage $) {
+        assembly {
+            $.slot := FEE_STORAGE
+        }
+    }
+
     // ------------------------------------------------------------------ errors / events
+    error WrongNativeFee();
+    error NativeFeeTransferFailed();
     error ContractCaller(address caller);
     error SupplyCeilingExceeded(uint256 totalSupply, uint256 ceiling);
     error CeilingBelowSupply(uint256 ceiling, uint256 totalSupply);
@@ -68,6 +91,8 @@ contract WantosBridgeV2 is BridgeBase {
     event ParamsUpdated(Params params, address indexed by);
     event SupplyCeilingUpdated(uint256 previous, uint256 current, address indexed by);
     event BridgeOut(uint256 indexed orderId, address indexed user, uint256 amount);
+    event NativeFeeCollected(address indexed payer, address indexed recipient, uint256 fee);
+    event NativeFeeConfigUpdated(address indexed recipient, address indexed by);
     event RefundRequested(
         uint256 indexed orderId, bytes32 indexed eventKey, address indexed user, uint256 amount, uint256 executableAt
     );
@@ -144,9 +169,55 @@ contract WantosBridgeV2 is BridgeBase {
         _collectNativeFee(received);
     }
 
+    // ------------------------------------------------------------------ native fee (WANT, tiered by amount)
     /// @dev WANT (0.5 USD): lowest tier >= 1.2 WANT (= 0.001 BNB at BNB 600 USD), no tier above 250 WANT.
-    function _nativeFeeBounds() internal pure override returns (uint256, uint256) {
-        return (1.2 ether, 250 ether);
+    uint256 private constant MIN_FEE = 1.2 ether;
+    uint256 private constant MAX_FEE = 250 ether;
+
+    /// @notice WANT fee a bridgeOut of `amount` pays (tiered by amount).
+    function quoteNativeFee(uint256 amount) public view returns (uint256) {
+        FeeStorage storage $ = _f();
+        if (amount < $.l0) return $.f0;
+        if (amount < $.l1) return $.f1;
+        return amount < $.l2 ? $.f2 : $.f3;
+    }
+
+    /// @notice Where fees go, for the admin UI and the watcher to verify.
+    function feeRecipient() external view returns (address) {
+        return _f().feeRecipient;
+    }
+
+    /// @notice Timelock only (A-class, not while paused): set tiers and recipient.
+    function setNativeFeeTiers(FeeStorage calldata n) external onlyTimelockA whenNotPaused {
+        if (n.f3 > MAX_FEE) revert ParamOutOfRange(0);
+        if (n.f0 < MIN_FEE) revert ParamOutOfRange(1);
+        if (n.f1 < n.f0 || n.f2 < n.f1 || n.f3 < n.f2) revert ParamConstraint();
+        if (n.l0 >= n.l1 || n.l1 >= n.l2) revert ParamConstraint();
+        if (n.feeRecipient == address(0)) revert ZeroAddress();
+        FeeStorage storage $ = _f();
+        ($.l0, $.l1, $.l2) = (n.l0, n.l1, n.l2);
+        ($.f0, $.f1, $.f2, $.f3) = (n.f0, n.f1, n.f2, n.f3);
+        $.feeRecipient = n.feeRecipient;
+        emit NativeFeeConfigUpdated(n.feeRecipient, msg.sender);
+    }
+
+    /// @notice Admin wallet kill switch: all tiers to 0, effective at once.
+    function disableNativeFee() external onlyAdmin {
+        FeeStorage storage $ = _f();
+        ($.f0, $.f1, $.f2, $.f3) = (0, 0, 0, 0);
+        emit NativeFeeConfigUpdated($.feeRecipient, msg.sender);
+    }
+
+    /// @dev Called last in bridgeOut: msg.value must equal the tier fee exactly and is forwarded to the
+    ///      recipient at once, so no native coin is ever stuck in or owned by the bridge.
+    function _collectNativeFee(uint256 amount) private {
+        uint256 fee = quoteNativeFee(amount);
+        if (msg.value != fee) revert WrongNativeFee();
+        if (fee == 0) return;
+        address to = _f().feeRecipient;
+        (bool ok,) = to.call{value: fee}("");
+        if (!ok) revert NativeFeeTransferFailed();
+        emit NativeFeeCollected(msg.sender, to, fee);
     }
 
     // ------------------------------------------------------------------ refunds of rejected orders

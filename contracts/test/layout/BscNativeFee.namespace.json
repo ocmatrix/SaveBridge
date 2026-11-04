@@ -1,0 +1,16 @@
+{
+ "namespace": "wantos.bridge.v2.BscNativeFee",
+ "base": "0xda0cb208263a332850054218d87c370a3978ccc2c5835848c161d1a30a2e7c00",
+ "fields": {
+  "feeRecipient": {
+   "slot": 0,
+   "offset": 0,
+   "bytes": 20
+  },
+  "multiplier": {
+   "slot": 1,
+   "offset": 0,
+   "bytes": 32
+  }
+ }
+}
