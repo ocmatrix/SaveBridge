@@ -87,3 +87,17 @@ cast send $TL "schedule(address,uint256,bytes,bytes32,bytes32,uint256)" $PROXY 0
 - [ ] 收款地址两链都无合约代码
 - [ ] 方案已选（A 或 B），盐与内容与第 4 节一致，签名前逐条核对（手册 §5.2）
 - [ ] ss02 付款程序在运行，提交钥匙 gas 够（第 1 节）
+
+## 6. 已构建好的发布产物与回退锚点（未发布）
+
+| 项 | 位置 / 值 |
+|---|---|
+| 用户页产物 | `/Volumes/Projects/tmp-feeabi-20261104/web-prod`，`check-dist --real` 通过，目录哈希前 16 位 `9c22a8f1f401d183`；配置与线上页面一致（桥 `0x41e9…1E44`、WANTOS RPC `https://rpc.wantos.io`、起始块 3465059 / 131289654） |
+| 用户页项目 | Pages 项目 `safebridge`（`savebridge.wanto.pro`）；回退锚点 `d53baf5f-03db-402a-b08e-9fee1a57c56e`（main `45cc15b`） |
+| 管理页产物 | `/Volumes/Projects/tmp-feeabi-20261104/admin-prod`，目录哈希前 16 位 `763ecaac99ac24d7` |
+| 管理页项目 | Pages 项目 `safebridge-admin`（`admin.wanto.pro`）；回退锚点 `1a7eb11c-c34f-4b78-860f-a1ffe4c9931e`（main `5045e02`）；必须从 `apps/admin-web` 目录发布 |
+| ss02 付款程序 | 运行中；`poll.maxBlockRange = 50`；`startBlock` 为新桥部署区块；提交钥匙 BSC 0.08 BNB、WANTOS 3 WANT |
+| 管理钱包 gas（付 `schedule`/`cancel`/`disableNativeFee`） | BSC 0.0206 BNB、WANTOS 9.99 WANT |
+| 字节码比对脚本 | `node scripts/compare-impl.mjs <RPC> <实现地址> out/<合约>.sol/<合约>.json` |
+
+发布前这些「当前最新部署」都要重新读一次，别的会话也可能在部署。

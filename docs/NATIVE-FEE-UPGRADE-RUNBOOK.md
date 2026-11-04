@@ -26,11 +26,13 @@
 
 两套提案内容我都准备好了（`NATIVE-FEE-DEPLOY-PREP-20261104.md`），放行时你选一个。
 
+**方案 A 只有在「手续费生效时，新版 App 已经上线并覆盖了用户」时才成立**；否则那 48 小时到期时，现版 App 的入金和出金就会失败，只能用 `disableNativeFee()` 紧急关闭。**网页**不受影响的前提是：新版网页已先发布（它兼容旧合约，所以可以在升级之前发布）；没发布新版网页的话，网页也会失败。方案 A 的 `DELAY` 就是 172800（你定的 48 小时）；§5.2 里写的「172800～604800」是其他情形的允许范围。
+
 ---
 
 ## 0. 一页纸总览
 
-**方案（D1，已定）：** 每条链提议**一个批量提案**，里面按顺序放两个动作：①升级桥合约到带手续费的新实现；②写入手续费配置（收款地址、费率/档位）。只等**一个倒计时**（最短 48 小时，由提议时的 `delay` 决定，建议不超过 7 天）。批量提案**原子执行**：两个动作要么都成功，要么都不生效。**到期后由 ss02 付款程序里的自动执行服务执行（见核心事实 2），所以倒计时结束的那一刻就是手续费生效的那一刻。**
+**方案（决定 1，已定）：** 每条链提议**一个批量提案**，里面按顺序放两个动作：①升级桥合约到带手续费的新实现；②写入手续费配置（收款地址、费率/档位）。只等**一个倒计时**（最短 48 小时，由提议时的 `delay` 决定，建议不超过 7 天）。批量提案**原子执行**：两个动作要么都成功，要么都不生效。**到期后由 ss02 付款程序里的自动执行服务执行（见核心事实 2），所以倒计时结束的那一刻就是手续费生效的那一刻。**
 
 | 阶段 | 做什么 | 链上写入 | 授权 | 需要等 |
 |---|---|---|---|---|
@@ -61,7 +63,7 @@
 
 | # | 门禁 | 怎么核对 |
 |---|---|---|
-| H1 | **部署源码只能来自本分支 `fee-web-20261104` 的冻结内容**，绝不使用旧分支 `native-fee-20261103`（它的 BSC 手续费逻辑是旧版，会按 `tx.gasprice` 重算、要求 `msg.value ≥ fee` 并退款） | ① `contracts/src` 目录哈希等于 §13 记录的值：`find contracts/src -name '*.sol' \| sort \| xargs shasum -a 256 \| shasum -a 256`；② 当前提交包含 §13 记录的冻结提交，且 `git diff <冻结提交> HEAD -- contracts packages` 为空（之后只有文档变化也算冻结）；③ `git status --short` 为空；④ 源码里没有**代码**使用 `tx.gasprice`（注释里提到不算）：`grep -n "tx.gasprice" contracts/src/BscVaultV2.sol \| grep -vE ':[[:space:]]*//'` 必须没有输出；⑤ 用来部署的是**含 lib 子模块的完整检出**（外接盘 `/Volumes/Projects/SaveBridge-deploy`，子模块 SHA 与记录一致） |
+| H1 | **部署源码只能来自本分支 `fee-web-20261104` 的冻结内容**，绝不使用旧分支 `native-fee-20261103`（它的 BSC 手续费逻辑是旧版，会按 `tx.gasprice` 重算、要求 `msg.value ≥ fee` 并退款） | ① `contracts/src` 目录哈希等于 §13 记录的值：`find contracts/src -name '*.sol' \| sort \| xargs shasum -a 256 \| shasum -a 256`；② 当前提交包含 §13 记录的冻结提交，且 `git diff <冻结提交> HEAD -- contracts packages` 为空（之后只有文档变化也算冻结）；③ `git status --short` 为空；④ 源码里没有**代码**使用 `tx.gasprice`（注释里提到不算）：`grep -n "tx.gasprice" contracts/src/BscVaultV2.sol \| grep -vE ':[[:space:]]*//'` 必须没有输出；⑤ 用来部署的是**含 lib 子模块的完整检出**（外接盘 `/Volumes/Projects/SaveBridge-deploy`；子模块内容从 `SaveBridge/lib` 复制，已核对三个 SHA 与提交里记录的一致：`forge-std` `f3dae6e6…`、`openzeppelin-contracts` `69c8def5…`、`openzeppelin-contracts-upgradeable` `fa525310…`；该检出里子模块不是 git 仓库，真正的保证是 P1-3 的字节码比对） |
 | H2 | **BSC 手续费改动已经过重新审查，且无未关闭的严重/高/中问题** | 之前的独立审查针对的是旧版 BSC 逻辑，不适用于现版。重新审查的结论与日期写进 §13；没有结论不进入 G1（负责人书面接受风险的除外） |
 | H3 | **全部合约测试通过**，包含 `NativeFee.t.sol` 和存储布局核对 | P0-2：`forge test` 全绿（上次：292 项）；`SizeGate` 通过 |
 | H5 | **本地升级演练通过**：用线上现行代码（`origin/main` 编译）搭代理，走真正的「升级加配置」批量提案，检查状态不丢、手续费生效、关闭开关可用 | 已做（2026-11-04）：BSC 2 项、WANTOS 1 项全部通过（演练文件在外接盘临时测试目录，不在仓库里）。每次合约源码有改动都要重跑。**BSC 分叉演练降为可选**（负责人要求本地测试即可） |
@@ -164,7 +166,7 @@ anvil --fork-url https://bsc-rpc.publicnode.com --no-storage-caching --port 8546
 
 ### P1-1 确认部署者
 1. 部署者是 `0x5AEB9689655Baf4D29002952C101A0b4407ABC8e`（开发用地址，公开信息）。
-2. 余额与 nonce（2026-11-04 读取）：BSC 0.0016 BNB、nonce 3；WANTOS 1.92 WANT、nonce 7。实现合约约 22 KB，部署大约 500 万 gas（我的估算、未实测）：BSC 现价 0.05 gwei 约 0.00025 BNB，WANTOS 现价 33.75 gwei 约 0.17 WANT，**两条链的余额都够**。部署当天再读一次，不够就找负责人转入。
+2. 余额与 nonce（2026-11-04 读取）：BSC 0.0016 BNB、nonce 3；WANTOS 1.92 WANT、nonce 7。实现合约约 22.5～23 KB（BscVaultV2 23,548 B、WantosBridgeV2 23,037 B），部署大约 500 万 gas（我的估算、未实测）：BSC 现价 0.05 gwei 约 0.00025 BNB，WANTOS 现价 33.75 gwei 约 0.17 WANT，**两条链的余额都够**。部署当天再读一次，不够就找负责人转入。
 3. **部署前再读一次 nonce**：预测的新实现地址是按 nonce 算的（BSC `0xdfeE8c9b…4A59`、WANTOS `0xcBa30ff0…30B7`），nonce 变了就要重算提案内容。
 ```bash
 cast nonce 0x5AEB9689655Baf4D29002952C101A0b4407ABC8e --rpc-url <BSC RPC>      # 期望 3
@@ -184,7 +186,7 @@ forge create contracts/src/WantosBridgeV2.sol:WantosBridgeV2 \
 ```
 部署者在两条链上的 nonce 不同，所以**两条链上的新实现地址不同**；部署前先用 `cast compute-address` 按当时的 nonce 算出预期地址，部署后核对实际地址与预期一致，不一致就停下查原因。
 
-**WANTOS 部署失败的处理：** 新实现约 22.8 KB（BSC 侧约 23.6 KB），都低于 EVM 默认上限 24,576 字节；但 WANTOS 链自己的合约大小上限和区块 gas 上限我没有实测。如果 WANTOS 部署因「code size」或 gas 失败，**立即停下**：此时线上没有任何变化，把错误原文发给我再决定（例如拆分合约），不要硬改参数重试。
+**WANTOS 部署失败的处理：** 新实现23,037 B（WANTOS 侧）（BSC 侧约 23.6 KB），都低于 EVM 默认上限 24,576 字节；但 WANTOS 链自己的合约大小上限和区块 gas 上限我没有实测。如果 WANTOS 部署因「code size」或 gas 失败，**立即停下**：此时线上没有任何变化，把错误原文发给我再决定（例如拆分合约），不要硬改参数重试。
 
 ### P1-3 部署后核对（必须全部通过）
 ```bash
@@ -192,9 +194,10 @@ NEW=<该链上的新实现地址>   # 两条链各自不同（部署者 nonce �
 cast code $NEW --rpc-url <RPC> | awk '{print (length($0)-2)/2}'   # 1. 有代码，字节数与 P0-3 一致
 cast call $NEW "proxiableUUID()(bytes32)" --rpc-url <RPC>          # 2. 合法 UUPS 实现，期望 0x360894a1...2bbc
 cast call $NEW "paused()(bool)" --rpc-url <RPC>                    # 3. 不应回滚
-# 4. 字节码与本地编译比对：只允许 4 处差异（3 处各 20 字节 immutable、末尾 32 字节元数据）
+# 4. 字节码与本地编译比对（用仓库里的脚本，零依赖；允许的差异：3 处各 20 字节 immutable 地址，加上可能出现的 1 处 32 字节元数据哈希）：
+node scripts/compare-impl.mjs <RPC> $NEW out/<合约>.sol/<合约>.json   # BscVaultV2 或 WantosBridgeV2；成功输出 OK，否则退出码 1
 ```
-比对方法同 §1（逐字节比较链上 `eth_getCode` 与 `forge inspect ... deployedBytecode`）。**通过标准：** 长度相同，差异只在上述位置，且两链结果一致。
+比对方法：用 `scripts/compare-impl.mjs`（已验证：对现行线上实现的基线编译在两条链上都输出 OK；拿新版编译去比线上旧实现会失败；故意改一个字节也会失败）。本地编译的元数据哈希与路径有关，所以那 32 字节可能相同也可能不同，两种都可以接受。**通过标准：** 脚本对两条链都输出 OK，且本地编译用的是冻结提交的完整检出。
 
 ### P1-4 开源验证与收尾
 1. 在 BscScan 与 `scan.wantos.io` 验证两个新实现的源码（`forge verify-contract`，API key 由负责人自己提供）。
@@ -228,7 +231,7 @@ NEW=<新实现地址>
 RCPT=0xADCDe89431978C79ef66956Cfed67ac925426957
 ZERO32=0x0000000000000000000000000000000000000000000000000000000000000000
 SALT=$(cast keccak "native-fee-batch-20261104")       # 固定盐，两链相同、可复核；重新提议时换盐（例如 -r2）
-DELAY=<秒数>   # = 计划生效时间 − 提议时间；172800（48h）≤ DELAY ≤ 604800（7 天）。两条链用同一个生效时刻
+DELAY=172800   # 方案 A 按负责人决定取 48 小时；其他情形：172800 ≤ DELAY ≤ 604800（7 天）。两条链分两笔交易提议，到期时刻相差几分钟（签名间隔），不是同一秒
 
 D1=$(cast calldata "upgradeToAndCall(address,bytes)" $NEW 0x)
 # BSC：
@@ -249,6 +252,23 @@ cast call $TL "hashOperationBatch(address[],uint256[],bytes[],bytes32,bytes32)(b
 3. 解码后参数与 §8 表逐项一致；**收款地址一个字符都不差**（错了，手续费会转给错误的人）。
 4. 两个目标地址都是桥代理 `0x41e9…1E44`，不是别的合约。
 
+**提议后还要核对一项（管理页只显示新实现地址，不会替你比对）：** 管理页时间锁页面里 `upgradeToAndCall` 的地址必须等于 `NATIVE-FEE-DEPLOY-PREP-20261104.md` 第 2 节（部署后以实际地址为准）的那一个。
+
+### 5.2-B 方案 B（只升级）的提议内容
+- **第一步（今晚）：** 每条链一笔单个操作，内容只有 `upgradeToAndCall(该链新实现, 0x)`。`D1` 两条链不同，要**分别生成**。盐用 `$SALT_U=0xe87fabbd940f68be4bb99b2800d3dbf7af80138a1085ef3771bb66d7ea8f24dd`（`cast keccak "native-fee-upgrade-only-20261104"`）。
+```bash
+D1=$(cast calldata "upgradeToAndCall(address,bytes)" $NEW 0x)      # $NEW 取当前这条链的新实现
+cast send $TL "schedule(address,uint256,bytes,bytes32,bytes32,uint256)" $PROXY 0 $D1 $ZERO32 $SALT_U 172800 --rpc-url <该链 RPC> <签名参数>
+cast call $TL "hashOperation(address,uint256,bytes,bytes32,bytes32)(bytes32)" $PROXY 0 $D1 $ZERO32 $SALT_U --rpc-url <该链 RPC>   # 与 PREP 文档第 4 节的预期编号核对
+```
+- **第二步（App 新版覆盖之后）：** 手续费配置作为**单独的一笔**提议（BSC 用 `setNativeFeeConfig`，WANTOS 用 `setNativeFeeTiers`，参数见 §8）。**§7 的放行条件和「到期就自动生效」的警告对这一笔同样适用**，所以提议时的 `DELAY` 要等 App 覆盖达标的时间再定（至少 172800）。必须在第一步已经**执行成功、新实现已生效**之后才能提议这一步。
+```bash
+SALT_F=$(cast keccak "native-fee-config-20261104")      # 重新提议时换盐
+D2_BSC=$(cast calldata "setNativeFeeConfig(address,uint256)" $RCPT 50)
+cast send $TL "schedule(address,uint256,bytes,bytes32,bytes32,uint256)" $PROXY 0 $D2_BSC $ZERO32 $SALT_F <DELAY> --rpc-url <BSC RPC> <签名参数>
+# WANTOS：D2_WANTOS 见 §5.2，同样的 schedule，换成 WANTOS RPC
+```
+
 ### 5.3 提交（先 BSC，再 WANTOS）
 ```bash
 cast send $TL "scheduleBatch(address[],uint256[],bytes[],bytes32,bytes32,uint256)" \
@@ -263,6 +283,8 @@ cast call $TL "getTimestamp(bytes32)(uint256)"   $ID --rpc-url <RPC>   # 生效�
 ```
 把两条链的提案编号、交易哈希、最早可执行时间写进 §13「执行记录」。
 
+**半途失败的处理：** 两笔提议是分开签名的。如果 BSC 那笔已经上链、WANTOS 那笔失败：**立刻取消 BSC 的提案**（`cast send $TL "cancel(bytes32)" <BSC 提案编号>`），再重新两条链都提议（换盐，例如 `-r2`）；或者马上重试 WANTOS 那笔，但把它的 `DELAY` 减去两笔之间的间隔，让两边到期时刻尽量接近。无论哪种，到期时刻两条链只能相差几分钟，期间只有一个方向收费是预期的。
+
 ### 5.4 排队期间
 - 线上仍是旧合约，**所有功能不受影响**；白名单、转账、放款照常。
 - 监控对时间锁提案和升级的反应：复审读代码得知，监控遇到不认识的事件会忽略，升级执行时会发 `UPGRADE_EXECUTED` 告警，这是预期，不代表出事；我没有在现场验证告警通道。
@@ -275,23 +297,47 @@ cast call $TL "getTimestamp(bytes32)(uint256)"   $ID --rpc-url <RPC>   # 生效�
 
 这一阶段没有链上写入，目的是在按下「执行」之前，把前端和 App 全部备好。**必须在 §7 的放行条件全部满足之后才进入 P4。**
 
-### 6.1 发布新版用户页（Cloudflare Pages 项目 `safebridge`，域名 `savebridge.wanto.pro`）
+### 6.1 发布新版用户页（Cloudflare **Pages** 项目 `safebridge`，域名 `savebridge.wanto.pro`）
 旧合约上新版页面也能用（报价被回滚按无手续费处理），所以**可以在升级之前发布**。
-1. 发布前先 `wrangler pages deployment list --project-name safebridge`，记下当前生产部署编号作为**回退锚点**（别的会话也可能在部署，先看再做）。
-2. 从用户页分支（`fee-web-20261104`）构建；构建配置沿用线上现有的公开配置（桥地址、RPC、起始块），**不要把任何密钥写进构建**。
-3. 本地先 `vitest run test/unit test/component` 全绿，再构建、预览。
-4. 发布：`cd /tmp && npx -y wrangler@4 pages deploy <dist 绝对路径> --project-name safebridge --branch main`（必须离开 pnpm 工作区目录执行；项目已存在，不要加会创建项目的参数）。
-5. 核对：线上首页和脚本哈希与本地构建一致；用手机钱包（TP）实际打开一遍；此时合约还是旧版，页面**不应出现**手续费那一行，转账流程与现在一样；**发一笔最小额转账确认没有被新版页面弄坏**。
-6. **回退：** 在 Cloudflare Pages 里把生产部署回滚到锚点编号。
+- **项目类型已在 2026-11-04 现场核实：** `wrangler pages project list` 里是 Pages 项目 `safebridge`（域名 `safebridge-80z.pages.dev`、`safebridge.wanto.pro`、`savebridge.wanto.pro`），当时最新生产部署是 `d53baf5f-03db-402a-b08e-9fee1a57c56e`（main `45cc15b`）。**仓库里 `apps/bridge-web/wrangler.toml` 写的是 Worker `savebridge-bridge` 和域名 `bridge.wanto.pro`，已经过时，不要照它部署。**
+- **构建配置（公开值）：不要用仓库里的 `.env.production.local`——`SaveBridge-ui` 里那份指向旧桥 `0xe2fD…4AD5`，是错的。** 正确的值是从线上页面的脚本里直接提取的（所以和线上一致，只有手续费代码不同）：
 
-### 6.2 管理页用新 ABI 重新构建发布
-- Pages 项目 `safebridge-admin`（`admin.wanto.pro`）。发布前先 `pages deployment list` 记回退锚点。
-- 这是为了让时间锁页面认得批量里的新函数；**不要借机改别的功能**。
+| 变量 | 值 |
+|---|---|
+| `VITE_WANTOS_BRIDGE` / `VITE_BSC_BRIDGE` | `0x41e9900BF09553C46b6b3F267626FDa2b4711E44`（两个必须相同） |
+| `VITE_WANTOS_USDT` | `0xc74F2e7fBdA2af9D1fc26b85E341229063Dc0873` |
+| `VITE_BSC_USDT` | `0x55d398326f99059fF775485246999027B3197955` |
+| `VITE_WANTOS_CHAIN_ID` / `VITE_BSC_CHAIN_ID` | `13555` / `56` |
+| `VITE_WANTOS_RPC_URL` | `https://rpc.wantos.io`（线上现在用的是这个，不是 rpc3） |
+| `VITE_BSC_RPC_URL` | `https://bsc-rpc.publicnode.com` |
+| `VITE_WANTOS_FROM_BLOCK` / `VITE_BSC_FROM_BLOCK` | `3465059` / `131289654` |
+| `VITE_WANTOS_EXPLORER_URL` / `VITE_BSC_EXPLORER_URL` | `https://scan.wantos.io` / `https://bscscan.com` |
+| 其余 | `VITE_WANTOS_CHAIN_NAME=WANTOS`、`VITE_BSC_CHAIN_NAME=BNB Smart Chain`、`VITE_WANTOS_NATIVE_SYMBOL=WANT`、`VITE_BSC_NATIVE_SYMBOL=BNB`、`VITE_NETWORK=mainnet`、`VITE_APP_NAME` 不设（默认 SafeBridge） |
+
+- **已构建好的产物（未发布）：** `/Volumes/Projects/tmp-feeabi-20261104/web-prod`，`check-dist --real` 通过，目录哈希前 16 位 `9c22a8f1f401d183`。重新构建命令：`cd apps/bridge-web && npx vite build --mode production --outDir <外接盘目录> && node scripts/check-dist.mjs --real --dist=<相对路径>`。
+1. 发布前先 `wrangler pages deployment list --project-name safebridge`，记下当前生产部署编号作为**回退锚点**（别的会话也可能在部署，先看再做）。
+2. `vitest run test/unit test/component` 全绿，再构建、预览。
+3. 发布：`cd /tmp && npx -y wrangler@4 pages deploy <dist 绝对路径> --project-name safebridge --branch main`（必须离开 pnpm 工作区目录执行；项目已存在，不要加会创建项目的参数）。
+4. 核对：线上首页和脚本哈希与本地构建一致；用手机钱包（TP）实际打开一遍；此时合约还是旧版，页面**不应出现**手续费那一行，转账流程与现在一样；**发一笔最小额转账确认没有被新版页面弄坏**。
+5. **回退：** 在 Cloudflare Pages 里把生产部署回滚到锚点编号。
+
+### 6.2 管理页用新 ABI 重新构建发布（Pages 项目 `safebridge-admin`，`admin.wanto.pro`）
+**注意：这个项目带 Pages Function（`POST /api/whitelist`，白名单一次签名代提交）和 `wrangler.toml` 的变量，必须从 `apps/admin-web` 目录发布；像用户页那样只发一个 `dist` 会把白名单提交功能弄丢。** 步骤：
+1. `wrangler pages deployment list --project-name safebridge-admin`，记下当前生产部署作为回退锚点（2026-11-04 读到的最新是 `1a7eb11c-c34f-4b78-860f-a1ffe4c9931e`，main `5045e02`）。
+2. 公开配置文件 `apps/admin-web/.env.production.local`（来源：`SaveBridge-integ/apps/admin-web/.env.production.local`，只含公开值，git 忽略）；构建：`cd apps/admin-web && npx vite build --mode production`。测试 `vitest run` 全绿（146 项）。已构建好的产物（未发布）：`/Volumes/Projects/tmp-feeabi-20261104/admin-prod`，目录哈希前 16 位 `763ecaac99ac24d7`，新函数的中文标签已在构建里。
+3. 发布：在 `apps/admin-web` 目录下 `wrangler pages deploy dist --project-name safebridge-admin --branch main`（用一个装在工作区之外的 wrangler，例如 `npx -y wrangler@4`）。**不要动 `SUBMITTER_KEY`、`BSC_RPC_KEYED` 这两个 secret**，发布不会改它们。
+4. 核对：`POST https://admin.wanto.pro/api/whitelist`（带 `origin: https://admin.wanto.pro` 和一个故意无效的签名）应返回 400（「签名无法解析」），**不是 404**；打开时间锁页面能解出批量里的函数名。
+5. 回退：回滚到第 1 步记下的部署编号。
+这一步是为了让时间锁页面认得新函数；**不要借机改别的功能**。
 
 ### 6.3 监控
 - 监控代码认识两个新事件（`NativeFeeCollected`、`NativeFeeConfigUpdated`）后，按现有方式部署到 rpc3；**部署前先看现场、记回退版本**。复审确认监控会忽略不认识的事件，所以这一项是**建议在生效前完成，不是硬性放行条件**；不做的话，生效后监控不会统计手续费收入。这一项是独立任务，不在本文展开。
 
 ### 6.5 付款程序里的自动执行服务（必须在提议前确认）
+**2026-11-04 现场只读核实的结果：** ss02 的付款程序在运行（`systemctl is-active` 为 active）；配置里 `poll.maxBlockRange = 50`（WANTOS 的 `getLogs` 上限是 100 块，所以够）、`startBlock` 分别是 WANTOS 3465059、BSC 131289654（等于新桥的部署区块，能看到新提案）；运行的版本 `cf87711a8e68` 含 `timelockExecutor.ts`；提交钥匙余额 BSC 0.08 BNB、WANTOS 3 WANT（执行约需 0.01 WANT）。
+**执行当天会收到的 Telegram 消息（读代码得出）：** 提议后到期前 24 小时、6 小时各一条 `TIMELOCK_REMINDER`（监控和付款程序各发一份，所以会有重复）；到期时 `TIMELOCK_EXECUTED`（**广播之后就发，不代表已上链**，要用 `isOperationDone` 核对）和监控的 `UPGRADE_EXECUTED`（每条链一条）；若执行被拦（例如桥暂停）只发**一次** `TIMELOCK_EXEC_BLOCKED`，之后每 60 秒静默重试；`TIMELOCK_EXECUTOR_ERROR` 表示扫描出错。**不会**有对账告警、暂停或自动暂停。监控**不会**对 `NativeFeeCollected`/`NativeFeeConfigUpdated` 发任何提示（是盲区），手续费生效后用 `cast logs` 或区块浏览器核对。
+**执行后看服务日志：** `journalctl -u savebridge-relayer --since '-15min' | grep -i timelock`。
+**以下是 2026-11-04 之前读到的结论，保留作背景：**
 - 它决定提案**什么时候真的生效**（核心事实 2）。提议前确认：① ss02 付款程序在运行（`systemctl is-active savebridge-relayer`）；② 它跑的版本里有 `timelockExecutor.ts`（我已确认当前版本 `cf87711a8e68` 有）；③ **提交热钥匙（submitter）在 BSC 和 WANTOS 上有足够 gas 付两笔 `executeBatch`**（升级加配置，比普通交易贵；WANTOS 上的实际 gas 我没测过，按两笔升级交易估并留足余量）；④ Telegram 提醒通道通。
 - 如果想**完全手动控制**生效时间，只有停掉这个服务（会连带停掉付款）这一条路，不建议。用 `delay` 控制生效时间即可。
 
@@ -449,7 +495,7 @@ cast send $PROXY "disableNativeFee()" --rpc-url https://rpc3.wantos.io --ledger 
 | 项 | 值 |
 |---|---|
 | 冻结源码提交号 / 目录哈希（分支 `fee-web-20261104`） | 合约与代码冻结于 `5d9b084`，文档更新至 `05c8241`；`contracts/src` 目录哈希 `83622d3723de875156aad7fc5651988089c7260cc239ae704424678c1bf3118a`（2026-11-04 在完整检出 `/Volumes/Projects/SaveBridge-deploy` 重新计算，`forge test` 292 项通过） |
-| 编译指纹（运行时字节码） | BscVaultV2 23,548 B，keccak `0x93dbbf3a819e0df67584846230a62ff27c3ebe19767f369d51efb9b4546399a4`；WantosBridgeV2 23,037 B，keccak `0x430b75a2dbdff961314e7b74d5cbc4f7f2a56ac3bc5a181da9fe56cd37c13385`（部署后链上字节码与它的差异只允许 3 处各 20 字节 immutable 地址 + 末尾 32 字节元数据） |
+| 编译指纹（运行时字节码） | BscVaultV2 23,548 B，keccak `0x93dbbf3a819e0df67584846230a62ff27c3ebe19767f369d51efb9b4546399a4`；WantosBridgeV2 23,037 B，keccak `0x430b75a2dbdff961314e7b74d5cbc4f7f2a56ac3bc5a181da9fe56cd37c13385`（部署后链上字节码与它的差异只允许 3 处各 20 字节 immutable 地址，以及可能出现的 1 处 32 字节元数据哈希（用 `scripts/compare-impl.mjs` 核对）） |
 | 重新审查（BSC 手续费改动）：审查人 / 日期 / 结论 | 2026-11-04，**AI 独立代码审查（只读，不是人工或外部审计）**：无严重/高/中；3 个低、2 个信息项，处理见 §14.1。是否还要人工/外部审计由负责人决定 |
 | 部署者地址（开发用地址 `0x5AEB…7ABC`）/ 部署前 nonce / 余额 | |
 | 新实现地址（两链） | |
@@ -569,3 +615,30 @@ cast send $PROXY "disableNativeFee()" --rpc-url https://rpc3.wantos.io --ledger 
 - 回归测试：`packages/relayer/test/reserveResume.test.ts`（本地 anvil + 真合约）3 项：出金小额、出金大额排队、入金；全部通过。故意让付款程序不再评估 `WAITING` 订单，3 项都会变红。
 
 **限制：** 一笔订单要付的金额加上已排队未放款的金额必须不超过金库余额才会被放行；补充金额不够覆盖时，订单继续等待。金库补充要由负责人转入，付款程序不会也不应该自动补钱。
+
+---
+
+## 14.4 第三轮复审（部署前最后一轮，三个独立 AI 智能体，2026-11-04）
+
+分三路，各自只拿到代码和任务：①合约和部署细节；②把手册当成执行人逐步走一遍；③付款程序、监控、管理页和这次升级的互相影响。**仍然是 AI 审查，不是人工或外部审计**（负责人确认这样即可）。三路都**没有严重或高风险的合约问题**；第②路发现手册里有 1 个高风险的执行问题和若干缺口，已全部处理：
+
+| # | 严重度 | 发现 | 处理 |
+|---|---|---|---|
+| C1 | **高（执行）** | 管理页按「只发一个 dist」的方式发布会弄丢白名单提交功能（`functions/` 和 `wrangler.toml` 变量） | **已改 §6.2**：必须从 `apps/admin-web` 目录发布，写了回退锚点、发布后用 `POST /api/whitelist` 验证（应为 400 而不是 404），不要动两个 secret |
+| C2 | 中 | 用户页的项目类型和域名与仓库里的 `wrangler.toml` 矛盾 | **已现场核实并写入 §6.1**：是 Pages 项目 `safebridge`，仓库里的 Worker 配置过时；记下了回退锚点 |
+| C3 | 中 | 手册没有给出用户页的构建配置，仓库里留着的配置文件指向旧桥 | **已写入 §6.1**：从线上页面脚本提取的真实配置全表；明确不要用仓库里的旧文件；产物已构建、检查通过 |
+| C4 | 中 | 方案 B 只在准备文档里有，手册正文只有方案 A | **已补 §5.2-B**，含两步命令；第二步沿用 §7 放行条件和到点自动生效的警告 |
+| C5 | 中 | 方案 A 的 48 小时与 §7 放行条件在 App 没上线时互相矛盾 | **已写进 §0.1**：方案 A 只在 App 已覆盖时成立，否则走方案 B；方案 A 的 `DELAY` 是 172800 |
+| C6 | 中 | Flutter 文档只描述打包方案 | 已补方案 B 的说法 |
+| C7 | 中 | 「两链同一时刻生效」做不到，缺半途失败的处理 | **已补 §5.3**：到期相差几分钟；一条成功一条失败时立刻取消或缩短重试 |
+| C8 | 中 | 对自动执行服务的监控不够 | **已补 §6.5**：现场确认了 `maxBlockRange=50`（WANTOS 上限 100，够）、起始块、版本、钥匙余额；列出会收到的 Telegram 消息和排查命令；说明广播后就会发 `TIMELOCK_EXECUTED`，不代表已上链 |
+| C9 | 中 | 监控对 `NativeFeeCollected`/`NativeFeeConfigUpdated` 是盲区，不告警 | 已写进 §6.5，手续费生效后用 `cast logs` 或浏览器核对；监控改造仍是「建议，非硬性」 |
+| C10 | 低 | 字节码比对没有现成命令；元数据哈希可能相同可能不同 | **已加脚本** `scripts/compare-impl.mjs`（零依赖），验证过：基线在两条链都 OK，新版比旧线上失败，改一个字节也失败 |
+| C11 | 低 | 子模块版本没有记录；文档里字节数过时；决定编号 D1 与变量 `$D1` 重名 | 已记录三个 SHA；数字已更正；决定编号改为「决定 1」 |
+| C12 | 低 | 管理页只显示新实现地址，不会替你比对 | 已加签名后核对一步（§5.2） |
+| C13 | 低 | WANTOS 手续费关闭时要求 `msg.value == 0`（BSC 是退回），关闭瞬间已带手续费的在途交易会失败 | 只失败不丢钱，已知；Flutter 文档已要求发送前重新报价 |
+| C14 | 低 | 档位可以拆单（25 笔 199 USDT 付 62.5 WANT，比一笔 5000 USDT 的 120 WANT 少） | **接受**：每日和每地址额度限制了规模；这是档位设计固有的 |
+| C15 | 低 | 付款程序的定时器没有防重入 | 最坏情况是一笔多余的、会回滚的发送，接受 |
+| C16 | 信息 | 手续费配置和暂停：暂停期间批量会整批回滚，解除暂停后一分钟内自动生效 | 已在核心事实 6 写明 |
+
+**三路都确认的事实：** 全部合约测试 292 项通过；预测地址、四个提案编号、选择器、元组顺序、基线表都与链上一致；新实现的部署 gas 估算成功（BSC 约 519 万、WANTOS 约 506 万，成本约 0.00026 BNB 和 0.17 WANT，部署者余额够）；WANTOS 链接受 23 KB 的合约；没有发现不可回退的步骤（提案可取消，升级可再走 48 小时退回，手续费可立即关闭）。
