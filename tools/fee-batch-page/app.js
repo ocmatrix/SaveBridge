@@ -55,8 +55,11 @@ async function ensureChain(job) {
 }
 
 async function exists(job) {
-  const r = await eth().request({ method: "eth_call", params: [{ to: TIMELOCK, data: SEL.isOperation + job.id.slice(2) }, "latest"] });
-  return /1$/.test(String(r));
+  // a convenience check only: if the wallet cannot do the read call, go on (the contract itself refuses a duplicate)
+  try {
+    const r = await eth().request({ method: "eth_call", params: [{ to: TIMELOCK, data: SEL.isOperation + job.id.slice(2) }, "latest"] });
+    return /1$/.test(String(r));
+  } catch (e) { return false; }
 }
 
 async function send(key) {
