@@ -25,21 +25,23 @@ fee = clamp( tx.gasprice × FEE_GAS × multiplier , MIN_FEE , MAX_FEE )     （m
 | 参数 | 值 | 位置 | 修改方式 |
 |---|---|---|---|
 | `FEE_GAS` | 200,000（一次 approve + deposit 的 gas） | 代码常量 | 升级 |
-| `MIN_FEE` | 0.0001 BNB | 代码常量 | 升级 |
+| `MIN_FEE` | **0.0005 BNB**（= 现价费用；gas 价为 0 也不能少付，只会随 gas 价往上浮） | 代码常量 | 升级 |
 | `MAX_FEE` | 0.002 BNB（现价费用的 4 倍） | 代码常量 | 升级 |
 | `MAX_MULTIPLIER` | 100 | 代码常量 | 升级 |
 | `multiplier` | **上线值 50** | 链上参数 | 仅时间锁（48h）；管理钱包可立即置 0 |
 | `feeRecipient` | 负责人离线钱包 `0xADCDe89431978C79ef66956Cfed67ac925426957` | 链上参数 | 仅时间锁（48h） |
 
 - 现价（BSC gas 0.05 gwei）：0.05 gwei × 200,000 × 50 = **0.0005 BNB**（约 0.3 美元，BNB 按 600 美元估算）。
+- 下限等于现价费用：BSC gas 价最低 0.05 gwei，所以正常用户不受影响；`tx.gasprice` 为 0 的打包渠道也只能付下限，不能打折。
 - 上限只防 gas 价异常或用户乱设高 gas 价；正常波动不会碰到。
+- 下限 = 倍数 50 时的现价费用，所以倍数低于 50 时下限生效，等于不降价；要降价需先改下限常量（升级）。
 
 付款与退回：
 
 1. `msg.value < fee` → 整笔回滚（`WrongNativeFee`）。
 2. 费用转给 `feeRecipient`；转账失败 → 整笔回滚（`NativeFeeTransferFailed`）。
 3. `msg.value − fee` 当场退回 `msg.sender`；退回失败 → 整笔回滚。
-4. 合约不留任何 BNB。
+4. 正常流程下合约不留 BNB（强行转入如 selfdestruct 可能留下零头，无害，也无提取函数；不要把「合约余额恒为 0」当链上不变量）。
 
 ### 2.2 WANTOS 方向（出金）
 
@@ -112,14 +114,15 @@ fee = clamp( tx.gasprice × FEE_GAS × multiplier , MIN_FEE , MAX_FEE )     （m
 - 订阅 `NativeFeeCollected`，累计收入；对账 `Deposited`/`BridgeOut` 笔数与该事件笔数一致（已启用收费后）。
 - 订阅 `NativeFeeConfigUpdated`；任何变更（尤其 `disableNativeFee`）立即告警。
 - 定时读取 `nativeFeeConfig()`/`feeRecipient()`，核对仍是批准的收款地址。
-- 合约余额（BNB、WANT）应恒为 0；非零告警。
+- 合约余额（BNB、WANT）正常应为 0；非零只作提示（可能是被强行转入的零头），不当作不变量告警。
 
 ## 7. 上线步骤与验收
 
 1. 并入重新部署（`REDEPLOY-PLAN-20261103.md`）：合并 `native-fee-20261103` 与 `redeploy-20261103`，重算哈希、预测地址、`vectors.json`；若桥已上线则改走 48h UUPS 升级并重新审计。
 2. 部署演练（WANTON 或副本）：确认 WANTOS 链合约大小上限、收费、退款、总开关。
 3. 时间锁（48h）写入：BSC `setNativeFeeConfig(0xADCD…6957, 50)`；WANTOS `setNativeFeeTiers`（§2.2 上线值）。
-4. 验收：各档各发一笔测试交易，核对收款地址到账、合约余额为 0、事件齐全、关闭再开启生效。
+4. 上线前核对两项（独立审查提示）：① WANTOS-USDT 没有转账扣费（档位按到账额计，扣费币会让报价与实际档位错位而回滚）；② WANTOS 最低档 `f0`（1.2 WANT 起）远小于 `w2bMinAmount`（否则最小单的手续费超过本金；上线值 2.5 WANT ≈ 1.25 美元 < 10 USDT）。
+5. 验收：各档各发一笔测试交易，核对收款地址到账、合约余额为 0、事件齐全、关闭再开启生效。
 
 每步链上写入都需要负责人在对话里明确授权，授权不外推。
 
