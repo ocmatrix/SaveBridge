@@ -61,7 +61,7 @@
 
 | # | 门禁 | 怎么核对 |
 |---|---|---|
-| H1 | **部署源码只能来自本分支 `fee-web-20261104` 的冻结提交**，绝不使用旧分支 `native-fee-20261103`（它的 BSC 手续费逻辑是旧版，会按 `tx.gasprice` 重算、要求 `msg.value ≥ fee` 并退款） | ① `git rev-parse HEAD` 等于 §13 记录的冻结提交；② `git branch --show-current` 是 `fee-web-20261104`；③ 工作区干净（`git status --short` 为空）；④ 源码里没有**代码**使用 `tx.gasprice`（注释里提到不算）：`grep -n "tx.gasprice" contracts/src/BscVaultV2.sol | grep -vE ':[[:space:]]*//'` 必须没有输出；⑤ 目录哈希（P0-3）与记录一致 |
+| H1 | **部署源码只能来自本分支 `fee-web-20261104` 的冻结内容**，绝不使用旧分支 `native-fee-20261103`（它的 BSC 手续费逻辑是旧版，会按 `tx.gasprice` 重算、要求 `msg.value ≥ fee` 并退款） | ① `contracts/src` 目录哈希等于 §13 记录的值：`find contracts/src -name '*.sol' \| sort \| xargs shasum -a 256 \| shasum -a 256`；② 当前提交包含 §13 记录的冻结提交，且 `git diff <冻结提交> HEAD -- contracts packages` 为空（之后只有文档变化也算冻结）；③ `git status --short` 为空；④ 源码里没有**代码**使用 `tx.gasprice`（注释里提到不算）：`grep -n "tx.gasprice" contracts/src/BscVaultV2.sol \| grep -vE ':[[:space:]]*//'` 必须没有输出；⑤ 用来部署的是**含 lib 子模块的完整检出**（外接盘 `/Volumes/Projects/SaveBridge-deploy`，子模块 SHA 与记录一致） |
 | H2 | **BSC 手续费改动已经过重新审查，且无未关闭的严重/高/中问题** | 之前的独立审查针对的是旧版 BSC 逻辑，不适用于现版。重新审查的结论与日期写进 §13；没有结论不进入 G1（负责人书面接受风险的除外） |
 | H3 | **全部合约测试通过**，包含 `NativeFee.t.sol` 和存储布局核对 | P0-2：`forge test` 全绿（上次：292 项）；`SizeGate` 通过 |
 | H5 | **本地升级演练通过**：用线上现行代码（`origin/main` 编译）搭代理，走真正的「升级加配置」批量提案，检查状态不丢、手续费生效、关闭开关可用 | 已做（2026-11-04）：BSC 2 项、WANTOS 1 项全部通过（演练文件在外接盘临时测试目录，不在仓库里）。每次合约源码有改动都要重跑。**BSC 分叉演练降为可选**（负责人要求本地测试即可） |
@@ -448,7 +448,8 @@ cast send $PROXY "disableNativeFee()" --rpc-url https://rpc3.wantos.io --ledger 
 
 | 项 | 值 |
 |---|---|
-| 冻结源码提交号 / 目录哈希（分支 `fee-web-20261104`） | |
+| 冻结源码提交号 / 目录哈希（分支 `fee-web-20261104`） | 合约与代码冻结于 `5d9b084`，文档更新至 `05c8241`；`contracts/src` 目录哈希 `83622d3723de875156aad7fc5651988089c7260cc239ae704424678c1bf3118a`（2026-11-04 在完整检出 `/Volumes/Projects/SaveBridge-deploy` 重新计算，`forge test` 292 项通过） |
+| 编译指纹（运行时字节码） | BscVaultV2 23,548 B，keccak `0x93dbbf3a819e0df67584846230a62ff27c3ebe19767f369d51efb9b4546399a4`；WantosBridgeV2 23,037 B，keccak `0x430b75a2dbdff961314e7b74d5cbc4f7f2a56ac3bc5a181da9fe56cd37c13385`（部署后链上字节码与它的差异只允许 3 处各 20 字节 immutable 地址 + 末尾 32 字节元数据） |
 | 重新审查（BSC 手续费改动）：审查人 / 日期 / 结论 | 2026-11-04，**AI 独立代码审查（只读，不是人工或外部审计）**：无严重/高/中；3 个低、2 个信息项，处理见 §14.1。是否还要人工/外部审计由负责人决定 |
 | 部署者地址（开发用地址 `0x5AEB…7ABC`）/ 部署前 nonce / 余额 | |
 | 新实现地址（两链） | |

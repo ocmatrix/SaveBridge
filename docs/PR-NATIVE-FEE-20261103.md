@@ -47,7 +47,7 @@
 | 合约 | 运行时 | 余量 |
 |---|---|---|
 | BscVaultV2 | 23,548 | 1,028 |
-| WantosBridgeV2 | 22,722 | 1,854 |
+| WantosBridgeV2 | 23,037 | 1,539 |
 
 `SizeGateTest` 门槛 900 B（硬上限 24,576 不变）。
 
