@@ -502,8 +502,8 @@ cast send $PROXY "disableNativeFee()" --rpc-url https://rpc3.wantos.io --ledger 
 | 编译指纹（运行时字节码） | BscVaultV2 23,548 B，keccak `0x93dbbf3a819e0df67584846230a62ff27c3ebe19767f369d51efb9b4546399a4`；WantosBridgeV2 23,037 B，keccak `0x430b75a2dbdff961314e7b74d5cbc4f7f2a56ac3bc5a181da9fe56cd37c13385`（部署后链上字节码与它的差异只允许 3 处各 20 字节 immutable 地址，以及可能出现的 1 处 32 字节元数据哈希（用 `scripts/compare-impl.mjs` 核对）） |
 | 重新审查（BSC 手续费改动）：审查人 / 日期 / 结论 | 2026-11-04，**AI 独立代码审查（只读，不是人工或外部审计）**：无严重/高/中；3 个低、2 个信息项，处理见 §14.1。是否还要人工/外部审计由负责人决定 |
 | 部署者地址（开发用地址 `0x5AEB…7ABC`）/ 部署前 nonce / 余额 | |
-| 新实现地址（两链） | |
-| 部署交易哈希（BSC / WANTOS） | |
+| 新实现地址 | **BSC：`0xdfeE8c9bc21d2a7bf9f0c8d55115135aF5634A59`（已部署）**；WANTOS：待部署（预测 `0xcBa30ff023f576ffa915bA322b34D6A835F330B7`） |
+| 部署交易哈希（BSC / WANTOS） | BSC：`0x923d200d64b3d8f14a1f5c228854c2b52cd087a3e982d4acc8967c0fb3632bfb`，区块 131651638，状态成功，gas 5,172,010，部署者 nonce 3→4；核对：`scripts/compare-impl.mjs` 输出 OK（除 3 处 immutable 外逐字节一致，元数据哈希也相同），`proxiableUUID` 正确，对实现直接调用 `initialize` 被拒（`InvalidInitialization`），线上代理实现槽未变。终端 forge 打印了 `contract was not deployed` 属误报（见 P1-2 说明）。WANTOS：待填 |
 | 批量提案编号（BSC / WANTOS） | |
 | 提议交易哈希（BSC / WANTOS） | |
 | 最早可执行时间 / 有效期截止 | |
