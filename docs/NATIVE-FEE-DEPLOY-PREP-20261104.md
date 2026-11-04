@@ -43,6 +43,8 @@ forge create contracts/src/WantosBridgeV2.sol:WantosBridgeV2 \
 
 ## 4. 提案内容（G2）
 
+**负责人 2026-11-04 已选方案 A**（下面方案 B 保留作为到期前放行条件不满足时的退路）。
+
 公共变量：
 ```bash
 PROXY=0x41e9900BF09553C46b6b3F267626FDa2b4711E44
