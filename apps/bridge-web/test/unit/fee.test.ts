@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Address, PublicClient, WalletClient } from "viem";
+import { ContractFunctionExecutionError, ContractFunctionRevertedError, type Address, type PublicClient, type WalletClient } from "viem";
+import { bscVaultV2Abi } from "@bridge/abi";
 import { bridgeOutFlow, depositFlow, PreflightError, sendGuarded, type TxContext } from "../../src/lib/flows";
 import { quoteBridgeOutFee, quoteDepositFee } from "../../src/lib/fee";
 import { assertAllowedCall, TargetNotAllowedError } from "../../src/lib/guard";
@@ -18,7 +19,8 @@ function fakeClient(reads: Reads, extra: Record<string, unknown> = {}) {
   const client = {
     readContract: vi.fn(async ({ functionName }: { functionName: string }) => {
       if (!(functionName in reads)) throw new Error(`unexpected read ${functionName}`);
-      return reads[functionName];
+      const v = reads[functionName];
+      return typeof v === "function" ? (v as () => unknown)() : v;
     }),
     getCode: vi.fn(async () => "0x"),
     getBalance: vi.fn(async () => 0n),
@@ -67,7 +69,13 @@ describe("quoteDepositFee (BSC): quoted at the current gas price, attached exact
 });
 
 describe("old contract without quoteNativeFee (the page is published before the upgrade runs)", () => {
-  const revertErr = () => Object.assign(new Error("reverted"), { name: "ContractFunctionExecutionError", cause: Object.assign(new Error("execution reverted"), { name: "ContractFunctionRevertedError" }) });
+  // the shape viem really throws for a call that reverts without data (an old bridge has no quoteNativeFee)
+  const revertErr = () =>
+    new ContractFunctionExecutionError(new ContractFunctionRevertedError({ abi: bscVaultV2Abi, functionName: "quoteNativeFee" }), {
+      abi: bscVaultV2Abi,
+      functionName: "quoteNativeFee",
+      args: [1n],
+    });
   const netErr = () => Object.assign(new Error("fetch failed"), { name: "HttpRequestError" });
   it("a reverting quote means no fee (WANTOS)", async () => {
     const { w } = setup({});
@@ -161,13 +169,28 @@ describe("depositFlow attaches the quoted BSC fee exactly", () => {
     await expect(depositFlow(s.make(56), 100n, USER, vi.fn())).rejects.toBeInstanceOf(PreflightError);
     expect(s.write).not.toHaveBeenCalled();
   });
-  it("quotes again after the approval (the gas price may have moved)", async () => {
-    const s = setup({ bsc: { quoteNativeFee: fee, allowance: 0n }, bscExtra: { getBalance: vi.fn(async () => 10n ** 18n) } });
-    s.write.mockImplementationOnce(async () => "0xabc" as never); // the approve goes through...
+  // approve goes through, the deposit stops at the wallet; quotes come from a list, one per read
+  function withQuotes(quotes: bigint[], balance: bigint) {
+    let n = 0;
+    const s = setup({ bsc: { quoteNativeFee: () => quotes[Math.min(n++, quotes.length - 1)]!, allowance: 0n }, bscExtra: { getBalance: vi.fn(async () => balance) } });
+    s.write.mockImplementationOnce(async () => "0xabc" as never);
     (s.b.raw as Record<string, unknown>).waitForTransactionReceipt = vi.fn(async () => ({ status: "success", logs: [] }));
-    await expect(depositFlow(s.make(56), 100n, USER, vi.fn())).rejects.toBe(STOP); // ...the deposit stops at the wallet
-    const quotes = s.b.raw.readContract.mock.calls.filter((c) => (c[0] as { functionName: string }).functionName === "quoteNativeFee");
-    expect(quotes.length).toBeGreaterThanOrEqual(2);
+    return s;
+  }
+  it("sends the fee quoted AFTER the approval (the gas price may have moved a little)", async () => {
+    const s = withQuotes([500_000_000_000_000n, 550_000_000_000_000n], 10n ** 18n); // +10%: inside the tolerance
+    await expect(depositFlow(s.make(56), 100n, USER, vi.fn())).rejects.toBe(STOP);
+    expect((s.write.mock.calls[1]![0] as { value?: bigint }).value).toBe(550_000_000_000_000n);
+  });
+  it("refuses to send when the fee jumped more than 25% since the user saw it: nothing is sent, nothing is charged", async () => {
+    const s = withQuotes([500_000_000_000_000n, 800_000_000_000_000n], 10n ** 18n);
+    await expect(depositFlow(s.make(56), 100n, USER, vi.fn())).rejects.toMatchObject({ name: "PreflightError", errorName: "FeeChanged" });
+    expect(s.write).toHaveBeenCalledTimes(1); // only the approve
+  });
+  it("re-checks the balance against the fresh fee", async () => {
+    const s = withQuotes([500_000_000_000_000n, 600_000_000_000_000n], 550_000_000_000_000n); // enough for the first, not the second
+    await expect(depositFlow(s.make(56), 100n, USER, vi.fn())).rejects.toMatchObject({ name: "PreflightError", errorName: "InsufficientNativeForFee" });
+    expect(s.write).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -177,6 +200,12 @@ describe("fee errors reach the user in plain words", () => {
     expect(key).toBeDefined();
     expect(zh[key!].length).toBeGreaterThan(0);
     expect(en[key!].length).toBeGreaterThan(0);
+  });
+  it("a fee that jumped maps to its own message in zh and en", () => {
+    const tr = translateError(new PreflightError("FeeChanged"), { decimals: 18 });
+    expect(tr.key).toBe("err.feeChanged");
+    expect(zh[tr.key].length).toBeGreaterThan(0);
+    expect(en[tr.key].length).toBeGreaterThan(0);
   });
   it("the preflight 'not enough native coin' error maps to a message", () => {
     const tr = translateError(new PreflightError("InsufficientNativeForFee"), { decimals: 18 });

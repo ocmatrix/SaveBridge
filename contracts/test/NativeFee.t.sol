@@ -6,6 +6,7 @@ import {BscFixture} from "./utils/Fixtures.sol";
 import {WantosFixture} from "./utils/WantosFixture.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {BridgeBase} from "../src/BridgeBase.sol";
+import {BridgeTimelock} from "../src/BridgeTimelock.sol";
 import {BscVaultV2} from "../src/BscVaultV2.sol";
 import {WantosBridgeV2} from "../src/WantosBridgeV2.sol";
 
@@ -56,6 +57,25 @@ contract ReenteringDepositor {
     receive() external payable {
         attempted = true;
         try BscVaultV2(payable(msg.sender)).deposit{value: msg.value}(1, address(this)) {}
+        catch (bytes memory r) {
+            caught = r;
+        }
+    }
+}
+
+/// a WANTOS fee recipient that tries to re-enter bridgeOut() from its receive hook and swallows the failure
+contract ReenteringBridgeRecipient {
+    WantosBridgeV2 public bridge;
+    bytes public caught;
+    bool public attempted;
+
+    constructor(WantosBridgeV2 b) {
+        bridge = b;
+    }
+
+    receive() external payable {
+        attempted = true;
+        try bridge.bridgeOut{value: msg.value}(1) {}
         catch (bytes memory r) {
             caught = r;
         }
@@ -364,6 +384,118 @@ contract NativeFeeBscTest is BscFixture {
         assertEq(vault.quoteNativeFee(0.1 gwei - 1), vault.MAX_FEE() - 2e7);
     }
 
+    // ---- the real rollout path: ONE timelock batch [upgradeToAndCall, setNativeFeeConfig] (review, 2026-11-04) ----
+
+    bytes32 constant IMPL_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+
+    function _impl() internal view returns (address) {
+        return address(uint160(uint256(vm.load(address(vault), IMPL_SLOT))));
+    }
+
+    function _batch(address newImpl, uint256 delay)
+        internal
+        returns (address[] memory t, uint256[] memory v, bytes[] memory p, bytes32 salt)
+    {
+        t = new address[](2);
+        v = new uint256[](2);
+        p = new bytes[](2);
+        t[0] = address(vault);
+        t[1] = address(vault);
+        p[0] = abi.encodeCall(vault.upgradeToAndCall, (newImpl, ""));
+        p[1] = abi.encodeCall(BscVaultV2.setNativeFeeConfig, (recipient, 50));
+        salt = bytes32(uint256(0xBA7C4));
+        vm.prank(tl.adminWallet());
+        tl.scheduleBatch(t, v, p, bytes32(0), salt, delay);
+    }
+
+    function test_batch_upgradeThenConfig_bothApplied() public {
+        address newImpl = address(new BscVaultV2());
+        (address[] memory t, uint256[] memory v, bytes[] memory p, bytes32 salt) = _batch(newImpl, 48 hours);
+        vm.warp(block.timestamp + 48 hours);
+        tl.executeBatch(t, v, p, bytes32(0), salt);
+        assertEq(_impl(), newImpl);
+        (address r, uint256 m) = vault.nativeFeeConfig();
+        assertEq(r, recipient);
+        assertEq(m, 50);
+        assertEq(vault.quoteNativeFee(0.05 gwei), 0.0005 ether);
+    }
+
+    function test_batch_delayLongerThanMinimumIsAccepted_executableOnlyThen() public {
+        address newImpl = address(new BscVaultV2());
+        (address[] memory t, uint256[] memory v, bytes[] memory p, bytes32 salt) = _batch(newImpl, 6 days);
+        vm.warp(block.timestamp + 48 hours); // the minimum has passed, the chosen go-live has not
+        vm.expectRevert(); // TimelockUnexpectedOperationState: not ready yet
+        tl.executeBatch(t, v, p, bytes32(0), salt);
+        assertTrue(_impl() != newImpl);
+        vm.warp(block.timestamp + 4 days);
+        tl.executeBatch(t, v, p, bytes32(0), salt);
+        assertEq(_impl(), newImpl);
+    }
+
+    function test_batch_whilePaused_wholeBatchReverts_upgradeNotApplied() public {
+        address old = _impl();
+        address newImpl = address(new BscVaultV2());
+        (address[] memory t, uint256[] memory v, bytes[] memory p, bytes32 salt) = _batch(newImpl, 48 hours);
+        vm.prank(pauser);
+        vault.pause();
+        vm.warp(block.timestamp + 48 hours);
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector); // the config step refuses, the upgrade rolls back with it
+        tl.executeBatch(t, v, p, bytes32(0), salt);
+        assertEq(_impl(), old);
+        vm.prank(admin);
+        vault.unpause();
+        tl.executeBatch(t, v, p, bytes32(0), salt); // after the unpause it goes through (the relayer retries every minute)
+        assertEq(_impl(), newImpl);
+    }
+
+    function test_batch_duringWhitelistRecovery_reverts() public {
+        address old = _impl();
+        (address[] memory t, uint256[] memory v, bytes[] memory p, bytes32 salt) = _batch(address(new BscVaultV2()), 48 hours);
+        vm.prank(admin);
+        vault.startWhitelistRecovery(makeAddr("wl2"));
+        vm.warp(block.timestamp + 48 hours);
+        vm.expectRevert(BridgeTimelock.RecoveryInProgress.selector);
+        tl.executeBatch(t, v, p, bytes32(0), salt);
+        assertEq(_impl(), old);
+    }
+
+    function test_batch_afterExpiry_reverts() public {
+        address old = _impl();
+        (address[] memory t, uint256[] memory v, bytes[] memory p, bytes32 salt) = _batch(address(new BscVaultV2()), 48 hours);
+        bytes32 id = tl.hashOperationBatch(t, v, p, bytes32(0), salt);
+        vm.warp(block.timestamp + 48 hours + 14 days + 1);
+        vm.expectRevert(abi.encodeWithSelector(BridgeTimelock.OperationExpired.selector, id));
+        tl.executeBatch(t, v, p, bytes32(0), salt);
+        assertEq(_impl(), old);
+    }
+
+    function test_batch_cancelledByWhitelistWalletCannotExecute() public {
+        address old = _impl();
+        (address[] memory t, uint256[] memory v, bytes[] memory p, bytes32 salt) = _batch(address(new BscVaultV2()), 48 hours);
+        bytes32 id = tl.hashOperationBatch(t, v, p, bytes32(0), salt);
+        vm.prank(vault.whitelistManager());
+        tl.cancel(id);
+        vm.warp(block.timestamp + 48 hours);
+        vm.expectRevert();
+        tl.executeBatch(t, v, p, bytes32(0), salt);
+        assertEq(_impl(), old);
+    }
+
+    function test_batch_staleAfterAdminRecovery() public {
+        address old = _impl();
+        (address[] memory t, uint256[] memory v, bytes[] memory p, bytes32 salt) = _batch(address(new BscVaultV2()), 48 hours);
+        bytes32 id = tl.hashOperationBatch(t, v, p, bytes32(0), salt);
+        address newAdmin = makeAddr("newAdmin");
+        vm.prank(vault.whitelistManager());
+        tl.startAdminRecovery(newAdmin);
+        vm.warp(block.timestamp + 14 days);
+        vm.prank(newAdmin);
+        tl.acceptAdmin(); // epoch + 1
+        vm.expectRevert(abi.encodeWithSelector(BridgeTimelock.OperationStaleEpoch.selector, id));
+        tl.executeBatch(t, v, p, bytes32(0), salt);
+        assertEq(_impl(), old);
+    }
+
     function test_storageMatchesLayoutSnapshot() public {
         string memory j = vm.readFile("contracts/test/layout/BscNativeFee.namespace.json");
         uint256 base = vm.parseJsonUint(j, ".base");
@@ -413,11 +545,11 @@ contract NativeFeeWantosTest is WantosFixture {
         _viaTimelock(address(bridge), abi.encodeCall(WantosBridgeV2.setNativeFeeTiers, (_cfg(_fees(), recipient))));
     }
 
-    function _rejects(WantosBridgeV2.FeeStorage memory c) internal {
+    function _rejects(WantosBridgeV2.FeeStorage memory c, bytes memory expected) internal {
         bytes memory data = abi.encodeCall(WantosBridgeV2.setNativeFeeTiers, (c));
         bytes32 salt = _propose(address(bridge), data);
         vm.warp(block.timestamp + 48 hours);
-        vm.expectRevert();
+        vm.expectRevert(expected); // the exact validator that must fire, not just "something reverted"
         _execute(address(bridge), data, salt);
         assertEq(bridge.quoteNativeFee(10 * U), 0);
     }
@@ -479,15 +611,21 @@ contract NativeFeeWantosTest is WantosFixture {
     }
 
     function test_floorCapOrderingAndRecipient() public {
-        _rejects(_cfg([uint256(1.2 ether - 1), 12 ether, 50 ether, 120 ether], recipient)); // below floor
-        _rejects(_cfg([uint256(2.5 ether), 12 ether, 50 ether, 250 ether + 1], recipient)); // above cap
-        _rejects(_cfg([uint256(0), 0, 0, 0], recipient)); // all zero: use the kill switch
-        _rejects(_cfg([uint256(5 ether), 2.5 ether, 50 ether, 120 ether], recipient)); // decreasing
-        _rejects(_cfg([uint256(2.5 ether), 12 ether, 50 ether, 40 ether], recipient)); // decreasing
+        bytes memory belowFloor = abi.encodeWithSelector(BridgeBase.ParamOutOfRange.selector, 1);
+        bytes memory aboveCap = abi.encodeWithSelector(BridgeBase.ParamOutOfRange.selector, 0);
+        bytes memory constraint = abi.encodeWithSelector(BridgeBase.ParamConstraint.selector);
+        _rejects(_cfg([uint256(1.2 ether - 1), 12 ether, 50 ether, 120 ether], recipient), belowFloor);
+        _rejects(_cfg([uint256(2.5 ether), 12 ether, 50 ether, 250 ether + 1], recipient), aboveCap);
+        _rejects(_cfg([uint256(0), 0, 0, 0], recipient), belowFloor); // all zero: use the kill switch
+        _rejects(_cfg([uint256(5 ether), 2.5 ether, 50 ether, 120 ether], recipient), constraint); // decreasing
+        _rejects(_cfg([uint256(2.5 ether), 12 ether, 50 ether, 40 ether], recipient), constraint); // decreasing
         WantosBridgeV2.FeeStorage memory c = _cfg(_fees(), recipient);
         c.l2 = c.l1;
-        _rejects(c); // limits not ascending
-        _rejects(_cfg(_fees(), address(0)));
+        _rejects(c, constraint); // limits not ascending
+        c = _cfg(_fees(), recipient);
+        c.l0 = c.l1;
+        _rejects(c, constraint); // limits not strictly ascending (l0 == l1)
+        _rejects(_cfg(_fees(), address(0)), abi.encodeWithSelector(BridgeBase.ZeroAddress.selector));
         // exactly the floor is fine
         _viaTimelock(
             address(bridge),
@@ -510,11 +648,118 @@ contract NativeFeeWantosTest is WantosFixture {
         vm.prank(alice);
         bridge.bridgeOut(100 * U);
         vm.prank(admin);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BridgeBase.NotTimelock.selector, admin));
         bridge.setNativeFeeTiers(_cfg(_fees(), recipient));
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(BridgeBase.NotAdmin.selector, alice));
         bridge.disableNativeFee();
+    }
+
+    // ---- review follow-ups (two independent reviews, 2026-11-04) ----
+
+    function test_tiersGetterReturnsTheWholeTable() public {
+        _set();
+        WantosBridgeV2.FeeStorage memory t = bridge.nativeFeeTiers();
+        assertEq(t.feeRecipient, recipient);
+        assertEq(t.l0, 200 * U);
+        assertEq(t.l1, 1000 * U);
+        assertEq(t.l2, 5000 * U);
+        assertEq(t.f0, 2.5 ether);
+        assertEq(t.f1, 12 ether);
+        assertEq(t.f2, 50 ether);
+        assertEq(t.f3, 120 ether);
+        vm.prank(admin);
+        bridge.disableNativeFee();
+        t = bridge.nativeFeeTiers();
+        assertEq(t.f0 + t.f1 + t.f2 + t.f3, 0); // off
+        assertEq(t.feeRecipient, recipient);
+        assertEq(t.l1, 1000 * U); // limits are kept
+    }
+
+    function test_disableThenReenableRestoresTheTable() public {
+        _set();
+        vm.prank(admin);
+        bridge.disableNativeFee();
+        assertEq(bridge.quoteNativeFee(300 * U), 0);
+        _set(); // a new timelock round
+        assertEq(bridge.quoteNativeFee(300 * U), 12 ether);
+        assertEq(bridge.quoteNativeFee(6000 * U), 120 ether);
+    }
+
+    function test_firstTierBoundaryZeroMakesTierZeroUnreachable() public {
+        WantosBridgeV2.FeeStorage memory c = _cfg(_fees(), recipient);
+        c.l0 = 0;
+        _viaTimelock(address(bridge), abi.encodeCall(WantosBridgeV2.setNativeFeeTiers, (c)));
+        assertEq(bridge.quoteNativeFee(0), 12 ether); // amount < 0 never holds: tier 0 is dead, nothing breaks
+        assertEq(bridge.quoteNativeFee(1), 12 ether);
+    }
+
+    function test_recipientCannotReenterBridgeOut() public {
+        ReenteringBridgeRecipient rr = new ReenteringBridgeRecipient(bridge);
+        _viaTimelock(address(bridge), abi.encodeCall(WantosBridgeV2.setNativeFeeTiers, (_cfg(_fees(), address(rr)))));
+        vm.prank(alice);
+        bridge.bridgeOut{value: 12 ether}(300 * U);
+        assertTrue(rr.attempted());
+        assertEq(bytes4(rr.caught()), bytes4(keccak256("ReentrancyGuardReentrantCall()")));
+        assertEq(bridge.orderNonce(), 1);
+        assertEq(address(rr).balance, 12 ether);
+    }
+
+    // ---- the real rollout path on WANTOS: ONE timelock batch [upgradeToAndCall, setNativeFeeTiers] ----
+
+    bytes32 constant IMPL_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+
+    function _impl() internal view returns (address) {
+        return address(uint160(uint256(vm.load(address(bridge), IMPL_SLOT))));
+    }
+
+    function _batch(address newImpl)
+        internal
+        returns (address[] memory t, uint256[] memory v, bytes[] memory p, bytes32 salt)
+    {
+        t = new address[](2);
+        v = new uint256[](2);
+        p = new bytes[](2);
+        t[0] = address(bridge);
+        t[1] = address(bridge);
+        p[0] = abi.encodeCall(bridge.upgradeToAndCall, (newImpl, ""));
+        p[1] = abi.encodeCall(WantosBridgeV2.setNativeFeeTiers, (_cfg(_fees(), recipient)));
+        salt = bytes32(uint256(0xBA7C5));
+        vm.prank(tl.adminWallet());
+        tl.scheduleBatch(t, v, p, bytes32(0), salt, 48 hours);
+    }
+
+    function test_batch_upgradeThenTiers_bothApplied() public {
+        address newImpl = address(new WantosBridgeV2());
+        (address[] memory t, uint256[] memory v, bytes[] memory p, bytes32 salt) = _batch(newImpl);
+        vm.warp(block.timestamp + 48 hours);
+        tl.executeBatch(t, v, p, bytes32(0), salt);
+        assertEq(_impl(), newImpl);
+        assertEq(bridge.quoteNativeFee(300 * U), 12 ether);
+        assertEq(bridge.nativeFeeTiers().feeRecipient, recipient);
+    }
+
+    function test_batch_whilePaused_wholeBatchReverts_upgradeNotApplied() public {
+        address old = _impl();
+        address newImpl = address(new WantosBridgeV2());
+        (address[] memory t, uint256[] memory v, bytes[] memory p, bytes32 salt) = _batch(newImpl);
+        vm.prank(pauser);
+        bridge.pause();
+        vm.warp(block.timestamp + 48 hours);
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+        tl.executeBatch(t, v, p, bytes32(0), salt);
+        assertEq(_impl(), old);
+        assertEq(bridge.quoteNativeFee(300 * U), 0);
+    }
+
+    function test_batch_afterExpiry_reverts() public {
+        address old = _impl();
+        (address[] memory t, uint256[] memory v, bytes[] memory p, bytes32 salt) = _batch(address(new WantosBridgeV2()));
+        bytes32 id = tl.hashOperationBatch(t, v, p, bytes32(0), salt);
+        vm.warp(block.timestamp + 48 hours + 14 days + 1);
+        vm.expectRevert(abi.encodeWithSelector(BridgeTimelock.OperationExpired.selector, id));
+        tl.executeBatch(t, v, p, bytes32(0), salt);
+        assertEq(_impl(), old);
     }
 
     function test_storageMatchesLayoutSnapshot() public {

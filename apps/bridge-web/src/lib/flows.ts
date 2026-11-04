@@ -149,6 +149,9 @@ async function balanceCheck(ctx: TxContext, chainId: number, token: Address, amo
   if (bal < amount) throw new PreflightError("ERC20InsufficientBalance", [owner, bal, amount]);
 }
 
+/** A fresh BSC fee may be at most this percent of the one the user saw (the gas price drifts a little during an approval). */
+const FEE_JUMP_LIMIT_PCT = 125n;
+
 /** The wallet must hold the native fee (the network gas is checked by the wallet itself). */
 async function nativeCheck(pc: PublicClient, owner: Address, needed: bigint) {
   if (needed === 0n) return;
@@ -224,11 +227,15 @@ export async function depositFlow(ctx: TxContext, amount: bigint, recipient: Add
   if (amount < params.minDeposit) throw new PreflightError("AmountBelowMinimum", [amount, params.minDeposit]);
   if (amount > params.maxDepositPerTx) throw new PreflightError("AmountAboveLimit", [amount, params.maxDepositPerTx]);
   await balanceCheck(ctx, c.id, c.usdt, amount);
-  await nativeCheck(pc, account(ctx).address, await quoteDepositFee(pc, ctx.cfg));
+  const seenFee = await quoteDepositFee(pc, ctx.cfg); // what the user was shown when they pressed the button
+  await nativeCheck(pc, account(ctx).address, seenFee);
 
   const approveTxHash = await ensureAllowance(ctx, c.id, amount, onStep);
   // quoted again right before sending: the gas price may have moved during the approval
   const fee = await quoteDepositFee(pc, ctx.cfg);
+  // the fee follows the gas price: never charge much more than the user agreed to, ask them to look again instead
+  if (fee * 100n > seenFee * FEE_JUMP_LIMIT_PCT) throw new PreflightError("FeeChanged", [seenFee, fee]);
+  await nativeCheck(pc, account(ctx).address, fee);
   onStep("send");
   const txHash = await sendGuarded(ctx, c.id, { ...B, abi: bscVaultV2Abi as Abi, functionName: "deposit", args: [amount, recipient], value: fee });
   onStep("confirming", txHash);

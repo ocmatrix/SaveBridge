@@ -19,7 +19,7 @@
 **两部分各管各的：** ①用户照常付给网络的**真实 gas**（合约不参与）；②**附加手续费**：由前端按「预估 gas 的高端 × 倍数」算出一个金额，作为 `value` 附带，合约只检查它在 [MIN_FEE, MAX_FEE] 内，然后**全额**转给收款地址。合约**不读 `tx.gasprice`**，所以钱包怎么定价 gas，都不会让附加费「不够」而回滚。
 
 ```
-前端：fee = quoteNativeFee( 预估 gas 价的高端 )
+前端：fee = quoteNativeFee( 节点当前 gas 价 )
       = clamp( gasPrice × FEE_GAS × multiplier , MIN_FEE , MAX_FEE )     （multiplier = 0 时为 0）
 合约：multiplier ≠ 0：要求 MIN_FEE ≤ msg.value ≤ MAX_FEE，全额转给 feeRecipient
       multiplier = 0：任何 msg.value 原路退回，手续费为 0
@@ -68,7 +68,7 @@
 | 函数 | 权限 | 说明 |
 |---|---|---|
 | `deposit(uint256 amount, address wantosRecipient) payable` | 任何人 | 原有入口，现为 `payable` |
-| `quoteNativeFee(uint256 gasPrice) view → uint256` | 任何人 | 按给定 gas 价（wei）报价，公式见 §2.1；前端传「预估 gas 价的高端」，附带恰好这个数 |
+| `quoteNativeFee(uint256 gasPrice) view → uint256` | 任何人 | 按给定 gas 价（wei）报价，公式见 §2.1；前端传节点当前 gas 价（若库能给出预估区间则取高端），附带恰好这个数 |
 | `MIN_FEE()`、`MAX_FEE()` view | 任何人 | 合约强制的最低、最高手续费（常量） |
 | `nativeFeeConfig() view → (address recipient, uint256 multiplier)` | 任何人 | 核对收款地址与倍数 |
 | `setNativeFeeConfig(address recipient, uint256 multiplier)` | 仅时间锁；非暂停；A 类 | `multiplier ≤ 100`（否则 `ParamOutOfRange(0)`）；`multiplier ≠ 0` 时收款地址非零（`ZeroAddress`） |
@@ -83,7 +83,9 @@
 |---|---|---|
 | `bridgeOut(uint256 amount) payable` | 白名单 EOA | 原有入口，现为 `payable` |
 | `quoteNativeFee(uint256 amount) view → uint256` | 任何人 | 按存入金额报价 |
+| `nativeFeeTiers() view → FeeStorage` | 任何人 | 一次返回收款地址、三个金额分界和四档费用（监控与管理页核对用） |
 | `feeRecipient() view → address` | 任何人 | 核对收款地址 |
+| `nativeFeeTiers() view → FeeStorage` | 任何人 | 一次返回收款地址、三个金额分界和四档费用（监控与管理页核对用；2026-11-04 复审后新增） |
 | `setNativeFeeTiers(FeeStorage n)` | 仅时间锁；非暂停；A 类 | `n = (feeRecipient, l0, l1, l2, f0, f1, f2, f3)`；越界 `ParamOutOfRange(0/1)`，顺序错 `ParamConstraint`，零地址 `ZeroAddress` |
 | `disableNativeFee()` | 仅管理钱包 | 四档清零，立即生效 |
 
@@ -132,7 +134,7 @@
 
 ## 8. 测试验收（已满足）
 
-`forge test` 260 项通过；`BridgeBase`、`BscVaultV2`、`WantosBridgeV2` 覆盖率 100%；存储布局快照（`layout/BscNativeFee.namespace.json`、`layout/NativeFee.namespace.json`）已核对；改坏验证：忽略 gas 价、去掉不足检查、去掉退款、去掉上限夹取、去掉最低档下限、去掉档位不降检查、改错档位边界、去掉转账，相应用例均变红。
+`forge test` 292 项通过；`BridgeBase`、`BscVaultV2`、`WantosBridgeV2` 覆盖率 100%；存储布局快照（`layout/BscNativeFee.namespace.json`、`layout/NativeFee.namespace.json`）已核对；改坏验证：忽略 gas 价、去掉不足检查、去掉退款、去掉上限夹取、去掉最低档下限、去掉档位不降检查、改错档位边界、去掉转账，相应用例均变红。
 
 ## 9. 刻意不做的
 

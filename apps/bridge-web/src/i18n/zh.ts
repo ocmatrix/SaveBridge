@@ -109,6 +109,7 @@ export const zh = {
   "err.insufficientAllowance": "授权额度不足，请重新授权",
   "err.insufficientGas": "手续费（Gas）余额不足",
   "err.insufficientNativeForFee": "余额不足以支付跨链手续费，请先充值",
+  "err.feeChanged": "跨链手续费有变化，请刷新页面确认新的金额后再提交",
   "err.wrongNativeFee": "跨链手续费已变化，请刷新页面后重试",
   "err.nativeFeeTransfer": "手续费转账失败，请稍后再试或联系客服",
   "err.notPermitted": "该操作仅限管理方，当前地址无权执行",

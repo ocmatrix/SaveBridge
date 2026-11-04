@@ -111,6 +111,7 @@ export const en: Dict = {
   "err.insufficientAllowance": "Approval too low. Please approve again.",
   "err.insufficientGas": "Not enough native balance for gas",
   "err.insufficientNativeForFee": "Not enough balance to pay the bridge fee. Please top up",
+  "err.feeChanged": "The bridge fee changed. Please refresh and confirm the new amount before submitting",
   "err.wrongNativeFee": "The bridge fee changed. Please refresh and try again",
   "err.nativeFeeTransfer": "Fee transfer failed. Please try again later or contact support",
   "err.notPermitted": "This action is reserved for the bridge operators.",

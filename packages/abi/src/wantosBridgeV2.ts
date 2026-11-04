@@ -797,6 +797,61 @@ export const wantosBridgeV2Abi = [
   },
   {
     "type": "function",
+    "name": "nativeFeeTiers",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct WantosBridgeV2.FeeStorage",
+        "components": [
+          {
+            "name": "feeRecipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "l0",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "l1",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "l2",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "f0",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "f1",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "f2",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "f3",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "orderEventKey",
     "inputs": [
       {

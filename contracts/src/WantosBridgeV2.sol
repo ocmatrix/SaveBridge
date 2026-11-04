@@ -187,6 +187,12 @@ contract WantosBridgeV2 is BridgeBase {
         return _f().feeRecipient;
     }
 
+    /// @notice The whole tier table (recipient, the three amount limits, the four fees) for the watcher and the
+    ///         admin UI to verify; all fees 0 means the fee is off.
+    function nativeFeeTiers() external view returns (FeeStorage memory) {
+        return _f();
+    }
+
     /// @notice Timelock only (A-class, not while paused): set tiers and recipient.
     function setNativeFeeTiers(FeeStorage calldata n) external onlyTimelockA whenNotPaused {
         if (n.f3 > MAX_FEE) revert ParamOutOfRange(0);

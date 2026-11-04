@@ -1,6 +1,6 @@
 # SaveBridge 跨链手续费升级：App 前端（Flutter）改动文档
 
-> 给 App 前端开发用，照着做即可。依据：合约分支 `native-fee-20261103`（`contracts/src/BscVaultV2.sol`、`contracts/src/WantosBridgeV2.sol`）和规范 `docs/SPEC-NATIVE-FEE-v1.md`。
+> 给 App 前端开发用，照着做即可。依据：合约分支 `fee-web-20261104`（`contracts/src/BscVaultV2.sol`、`contracts/src/WantosBridgeV2.sol`）和规范 `docs/SPEC-NATIVE-FEE-v1.md`。
 > 状态：合约和测试已定稿，**尚未部署**。合约地址、ABI 以部署后为准，本文不写地址。
 > 配套背景：原有接口见《SaveBridge前端接口文档.md》，本文只写「手续费升级带来的变化」，没写的都不用改。
 
@@ -75,6 +75,8 @@ nativeFeeConfig() view returns (address recipient, uint256 multiplier)   选择�
 
 ### 3.3 其他新增只读接口（可选，用于核对）
 
+（WANTOS 侧另有 `nativeFeeTiers()`：一次返回收款地址、三个金额分界和四档费用，给监控和管理页核对用，App 不需要。）
+
 | 合约 | 函数 | 用途 |
 |---|---|---|
 | BSC | `nativeFeeConfig()` | 返回收款地址和倍数，倍数为 0 表示手续费关闭 |
@@ -105,7 +107,9 @@ App 不必调用它们；做「手续费收款地址展示」或自检时才需�
 2. 取节点当前 `gasPrice = eth_gasPrice`；读 `quoteNativeFee(gasPrice)` → 得 `fee`。
 3. 余额检查：BNB 余额 ≥ `fee` + 本笔 gas 费（approve + deposit 各一笔）。
 4. `approve`（如需）。
-5. `approve` 完成后**重新取 gas 价并重新报价**，发 `deposit(amount, recipient)`，`value = fee`。**不要设置 `gasPrice` 或 `gas`**，交给钱包。
+5. `approve` 完成后**重新取 gas 价并重新报价**，得到新的 `fee`：
+   - 新 `fee` 比第 2 步多出 **25% 以上**：**不要发送**，提示用户「手续费有变化，请刷新确认新的金额」（网页版已这样做）。
+   - 否则重新检查 BNB 余额 ≥ 新 `fee`，发 `deposit(amount, recipient)`，`value = 新 fee`。**不要设置 `gasPrice` 或 `gas`**，交给钱包。
 
 估 gas：`eth_estimateGas` 必须**带上 `value`**，否则估算会因 `WrongNativeFee` 失败。
 
@@ -118,7 +122,7 @@ App 不必调用它们；做「手续费收款地址展示」或自检时才需�
 
 处理要点：
 - 遇到 `WrongNativeFee`：重新报价再发一次，不要自动重复发送多次。
-- BSC 侧最常见原因：报价用的 gas 价和交易实际 gas 价不一致，或手续费刚被调整。
+- BSC 侧：合约不读交易的 gas 价，所以钱包定价不会引发这个错误；最常见原因是**没带 `value`、带的不在 [0.0005, 0.002] BNB 内（例如旧版 App 不带）**，或手续费刚被调整。
 - 其他已有错误（暂停、不在白名单、额度）沿用原来的处理。
 
 ## 6. 界面文案（建议）
@@ -160,6 +164,8 @@ App 不必调用它们；做「手续费收款地址展示」或自检时才需�
 | BSC 侧，不带 `value`，或低于 0.0005、高于 0.002 BNB | 回滚 `WrongNativeFee` |
 | BSC 侧，发起人是智能合约钱包 / EIP-7702 地址 | 成功（没有退款，不会因收不了退款失败） |
 | BSC 侧，手续费刚被关闭，而你带了 `value` | 成功，`value` 原路退回 |
+| BSC 侧，授权期间 gas 价上涨，新报价比用户看到的高出 25% 以上 | 不发送，提示重新确认 |
+| BSC 侧，授权后新报价高于余额 | 不发送，提示余额不足 |
 | 余额只够本金、不够手续费 | 界面提示余额不足，不发交易 |
 | 合约还是旧版（`quoteNativeFee` 回滚） | 按无手续费处理，转账照常成功，界面没有手续费行 |
 | RPC 超时或网络错误 | 提示重试，不发交易，不当作无手续费 |
@@ -169,4 +175,4 @@ App 不必调用它们；做「手续费收款地址展示」或自检时才需�
 
 1. **合约地址和 ABI**：部署后给 App 团队新的 ABI（`packages/abi` 重新生成）；如果是新桥重新部署，地址也会变。
 2. **WANT / BNB 价格变动**：WANTOS 档位是固定 WANT 数，价格大变时由时间锁调整；App 一律读链上报价，不要写死。
-3. **钱包库**：本文按通用 EVM 钱包库描述，没有针对具体的 Flutter 库（如 web3dart、walletconnect）写代码，需要开发人员按所用库设置 `value` 和 `gasPrice`。
+3. **钱包库**：本文按通用 EVM 钱包库描述，没有针对具体的 Flutter 库（如 web3dart、walletconnect）写代码，需要开发人员按所用库设置 `value`（**不要设置 `gasPrice`**，见 §3.2）。
