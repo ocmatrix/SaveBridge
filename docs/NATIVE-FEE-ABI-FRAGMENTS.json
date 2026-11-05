@@ -1,0 +1,277 @@
+{
+ "_说明": "由合约编译产物自动抽取，不是手写。桥合约地址两条链相同。BSC 的 quoteNativeFee 参数是 gas 价（wei），WANTOS 的 quoteNativeFee 参数是转出金额（USDT 最小单位）。",
+ "addresses": {
+  "bridgeBothChains": "0x41e9900BF09553C46b6b3F267626FDa2b4711E44",
+  "bscUSDT": "0x55d398326f99059fF775485246999027B3197955",
+  "wantosUSDT": "0xc74F2e7fBdA2af9D1fc26b85E341229063Dc0873",
+  "bscChainId": 56,
+  "wantosChainId": 13555
+ },
+ "bsc_bridge_abi": [
+  {
+   "type": "function",
+   "name": "MAX_FEE",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "",
+     "type": "uint256",
+     "internalType": "uint256"
+    }
+   ],
+   "stateMutability": "view"
+  },
+  {
+   "type": "function",
+   "name": "MIN_FEE",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "",
+     "type": "uint256",
+     "internalType": "uint256"
+    }
+   ],
+   "stateMutability": "view"
+  },
+  {
+   "type": "function",
+   "name": "deposit",
+   "inputs": [
+    {
+     "name": "amount",
+     "type": "uint256",
+     "internalType": "uint256"
+    },
+    {
+     "name": "wantosRecipient",
+     "type": "address",
+     "internalType": "address"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "nonce",
+     "type": "uint256",
+     "internalType": "uint256"
+    }
+   ],
+   "stateMutability": "payable"
+  },
+  {
+   "type": "function",
+   "name": "nativeFeeConfig",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "recipient",
+     "type": "address",
+     "internalType": "address"
+    },
+    {
+     "name": "multiplier",
+     "type": "uint256",
+     "internalType": "uint256"
+    }
+   ],
+   "stateMutability": "view"
+  },
+  {
+   "type": "function",
+   "name": "quoteNativeFee",
+   "inputs": [
+    {
+     "name": "gasPrice",
+     "type": "uint256",
+     "internalType": "uint256"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "fee",
+     "type": "uint256",
+     "internalType": "uint256"
+    }
+   ],
+   "stateMutability": "view"
+  },
+  {
+   "type": "event",
+   "name": "NativeFeeCollected",
+   "inputs": [
+    {
+     "name": "payer",
+     "type": "address",
+     "indexed": true,
+     "internalType": "address"
+    },
+    {
+     "name": "recipient",
+     "type": "address",
+     "indexed": true,
+     "internalType": "address"
+    },
+    {
+     "name": "fee",
+     "type": "uint256",
+     "indexed": false,
+     "internalType": "uint256"
+    }
+   ],
+   "anonymous": false
+  },
+  {
+   "type": "error",
+   "name": "NativeFeeTransferFailed",
+   "inputs": []
+  },
+  {
+   "type": "error",
+   "name": "WrongNativeFee",
+   "inputs": []
+  }
+ ],
+ "wantos_bridge_abi": [
+  {
+   "type": "function",
+   "name": "bridgeOut",
+   "inputs": [
+    {
+     "name": "amount",
+     "type": "uint256",
+     "internalType": "uint256"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "orderId",
+     "type": "uint256",
+     "internalType": "uint256"
+    }
+   ],
+   "stateMutability": "payable"
+  },
+  {
+   "type": "function",
+   "name": "feeRecipient",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "",
+     "type": "address",
+     "internalType": "address"
+    }
+   ],
+   "stateMutability": "view"
+  },
+  {
+   "type": "function",
+   "name": "nativeFeeTiers",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "",
+     "type": "tuple",
+     "internalType": "struct WantosBridgeV2.FeeStorage",
+     "components": [
+      {
+       "name": "feeRecipient",
+       "type": "address",
+       "internalType": "address"
+      },
+      {
+       "name": "l0",
+       "type": "uint256",
+       "internalType": "uint256"
+      },
+      {
+       "name": "l1",
+       "type": "uint256",
+       "internalType": "uint256"
+      },
+      {
+       "name": "l2",
+       "type": "uint256",
+       "internalType": "uint256"
+      },
+      {
+       "name": "f0",
+       "type": "uint256",
+       "internalType": "uint256"
+      },
+      {
+       "name": "f1",
+       "type": "uint256",
+       "internalType": "uint256"
+      },
+      {
+       "name": "f2",
+       "type": "uint256",
+       "internalType": "uint256"
+      },
+      {
+       "name": "f3",
+       "type": "uint256",
+       "internalType": "uint256"
+      }
+     ]
+    }
+   ],
+   "stateMutability": "view"
+  },
+  {
+   "type": "function",
+   "name": "quoteNativeFee",
+   "inputs": [
+    {
+     "name": "amount",
+     "type": "uint256",
+     "internalType": "uint256"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "",
+     "type": "uint256",
+     "internalType": "uint256"
+    }
+   ],
+   "stateMutability": "view"
+  },
+  {
+   "type": "event",
+   "name": "NativeFeeCollected",
+   "inputs": [
+    {
+     "name": "payer",
+     "type": "address",
+     "indexed": true,
+     "internalType": "address"
+    },
+    {
+     "name": "recipient",
+     "type": "address",
+     "indexed": true,
+     "internalType": "address"
+    },
+    {
+     "name": "fee",
+     "type": "uint256",
+     "indexed": false,
+     "internalType": "uint256"
+    }
+   ],
+   "anonymous": false
+  },
+  {
+   "type": "error",
+   "name": "NativeFeeTransferFailed",
+   "inputs": []
+  },
+  {
+   "type": "error",
+   "name": "WrongNativeFee",
+   "inputs": []
+  }
+ ]
+}
