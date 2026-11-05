@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>紧急关闭手续费（一次性）</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <h1>紧急关闭手续费</h1>
+  <p class="warn"><b>只有手续费已经生效、并且出了问题（收错、异常高、用户大面积失败）时才用。</b>每条链各发一笔 <code>disableNativeFee()</code>，在钱包里确认后<b>立即生效</b>：报价回到 0，不带手续费的转账恢复正常。重新开启要再走一轮 48 小时时间锁。手续费还没生效（升级还没执行）时，这个调用会失败，不要发。</p>
+
+  <section id="wallet">
+    <h2>1. 连接管理钱包</h2>
+    <p>必须用管理钱包 <code>0x860f…5669</code>，页面会检查。请在钱包 App 自带的浏览器里打开本页。</p>
+    <button id="connect">连接钱包</button>
+    <p id="account" class="status"></p>
+  </section>
+
+  <section class="card">
+    <h2>2. BSC：关闭手续费</h2>
+    <dl><dt>网络</dt><dd>BNB Smart Chain（链 56）</dd><dt>合约（桥）</dt><dd><code>0x41e9900BF09553C46b6b3F267626FDa2b4711E44</code></dd><dt>调用</dt><dd><code>disableNativeFee()</code>（选择器 0x313a3da3），金额 0</dd></dl>
+    <button id="send-bsc" class="send" disabled>发送 BSC 关闭</button>
+    <p id="out-bsc" class="status"></p>
+  </section>
+
+  <section class="card">
+    <h2>3. WANTOS：关闭手续费</h2>
+    <dl><dt>网络</dt><dd>WANTOS（链 13555）</dd><dt>合约（桥）</dt><dd><code>0x41e9900BF09553C46b6b3F267626FDa2b4711E44</code></dd><dt>调用</dt><dd><code>disableNativeFee()</code>（选择器 0x313a3da3），金额 0</dd></dl>
+    <button id="send-wantos" class="send" disabled>发送 WANTOS 关闭</button>
+    <p id="out-wantos" class="status"></p>
+  </section>
+  <p class="small">发出后把交易哈希发给 Claude 核对。</p>
+</main>
+<script src="disable.js"></script>
+</body>
+</html>
