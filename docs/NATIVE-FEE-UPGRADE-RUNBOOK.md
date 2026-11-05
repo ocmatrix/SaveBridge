@@ -449,7 +449,9 @@ cast send $TL "executeBatch(address[],uint256[],bytes[],bytes32,bytes32)" \
 | 用户页新版有问题 | Cloudflare Pages 回滚到 §6.1 记下的锚点部署 | 分钟级 |
 | 链上数据对不上 | 停在当前阶段，不继续下一步，原样报告 | — |
 
-**紧急关闭手续费的现成命令**（只有管理钱包能调；管理页没有这个按钮；两条链各一笔，WANTOS 上会把四档都清零）：
+**紧急关闭手续费（管理钱包是手机钱包，用页面，不用命令行）：打开 https://savebridge-feebatch.pages.dev/disable（已于 2026-11-05 发布并核对，源码 `tools/fee-batch-page/disable.html`），在钱包内置浏览器里连接管理钱包，BSC、WANTOS 各发一笔 `disableNativeFee()`，立即生效。它只关手续费，不是回滚合约：合约仍是新版本，重新开启要再等一轮 48 小时；新合约本身出问题要暂停桥或走 48 小时的回滚提案。下面的 `--ledger` 命令只是等价写法供核对：**
+
+**（等价命令）**（只有管理钱包能调；管理页没有这个按钮；两条链各一笔，WANTOS 上会把四档都清零）：
 ```bash
 cast send $PROXY "disableNativeFee()" --rpc-url <BSC RPC>    --ledger     # BSC
 cast send $PROXY "disableNativeFee()" --rpc-url https://rpc3.wantos.io --ledger   # WANTOS
