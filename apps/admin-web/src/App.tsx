@@ -11,9 +11,11 @@ import { ParamsPage } from "./pages/ParamsPage";
 import { HandoverPage } from "./pages/HandoverPage";
 import { ReviewPage } from "./pages/ReviewPage";
 import { ReservesPage } from "./pages/ReservesPage";
+import { LookupPage } from "./pages/LookupPage";
 
 export const ROUTES: { path: string; title: string; page: () => ReactNode }[] = [
   { path: "/", title: "白名单", page: () => <WhitelistPage /> },
+  { path: "/lookup", title: "白名单查询", page: () => <LookupPage /> },
   { path: "/emergency", title: "紧急", page: () => <EmergencyPage /> },
   { path: "/timelock", title: "时间锁", page: () => <TimelockPage /> },
   { path: "/params", title: "参数", page: () => <ParamsPage /> },

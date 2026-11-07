@@ -57,15 +57,50 @@ export async function prepareJob(chains: Chains, addresses: string[], allowed: b
 
 export const isComplete = (j: BatchJob) => (["bsc", "wantos"] as Side[]).every((s) => j.runs[s].status === "done" || j.runs[s].status === "skipped");
 
-export async function readWhitelisted(ctx: ChainCtx, addrs: readonly string[]): Promise<boolean[]> {
+export async function readWhitelisted(
+  ctx: ChainCtx,
+  addrs: readonly string[],
+  o: { onProgress?: (done: number) => void; /** checked before every request batch; true stops the read */ shouldStop?: () => boolean } = {},
+): Promise<boolean[]> {
   const out: boolean[] = [];
   const step = 50;
   for (let i = 0; i < addrs.length; i += step) {
+    if (o.shouldStop?.()) throw new Error("已取消核对");
     const part = await Promise.all(
       addrs.slice(i, i + step).map((a) => ctx.client.readContract({ address: ctx.cfg.bridge, abi: ctx.bridgeAbi, functionName: "whitelisted", args: [a] }) as Promise<boolean>),
     );
     out.push(...part);
+    o.onProgress?.(out.length);
   }
+  return out;
+}
+
+export interface PrecheckSplit {
+  /** still to be written (input order) */
+  keep: string[];
+  /** already in the target state on BOTH chains: left out so nobody pays gas to write them again */
+  excluded: string[];
+  /** in the target state on exactly one chain: kept (both chains use one list / one signature), with the chain that already has it */
+  partial: { address: string; sides: Side[] }[];
+}
+
+/**
+ * Pre-check split (添加前先核对). `states[side][i]` = whitelisted(addrs[i]) on that chain. Target state = `allowed`
+ * (add → true, remove → false). Excluded only when BOTH chains are already there; an address that is there on one chain
+ * only stays in the list, because the list (and its signature) is shared by both chains.
+ */
+export function splitByChainState(addrs: readonly string[], states: Record<Side, readonly boolean[]>, allowed: boolean): PrecheckSplit {
+  if (states.bsc.length !== addrs.length || states.wantos.length !== addrs.length) throw new Error("核对结果与地址数量不一致");
+  const out: PrecheckSplit = { keep: [], excluded: [], partial: [] };
+  addrs.forEach((address, i) => {
+    const sides = (["bsc", "wantos"] as Side[]).filter((s) => states[s][i] === allowed);
+    if (sides.length === 2) {
+      out.excluded.push(address);
+      return;
+    }
+    out.keep.push(address);
+    if (sides.length === 1) out.partial.push({ address, sides });
+  });
   return out;
 }
 
