@@ -16,9 +16,11 @@ import {
   readWhitelisted,
   runJob,
   runJobShared,
+  splitByChainState,
   whitelistHistory,
   writeOrder,
   type BatchJob,
+  type PrecheckSplit,
   type WhitelistHistory,
 } from "../lib/whitelist";
 import { ActionButton, Addr, me, Section, ts, useApp } from "../ui";
@@ -41,6 +43,12 @@ export function WhitelistPage() {
   const [allowed, setAllowed] = useState(true);
   const parsed = useMemo(() => parseAddressList(text), [text]);
   const [unchecked, setUnchecked] = useState<Set<string>>(new Set());
+  // 先核对: what the chains already have for the CURRENT list and mode (null = not checked; any change to list or mode voids it)
+  const [pre, setPre] = useState<PrecheckSplit | null>(null);
+  const [preProg, setPreProg] = useState<Record<Side, number> | null>(null);
+  const [preRunning, setPreRunning] = useState(false);
+  const preGen = useRef(0);
+  const cancelPre = useRef(false);
   const [page, setPage] = useState(0);
   const [info, setInfo] = useState<Record<string, RowInfo>>({});
   const [apiNote, setApiNote] = useState<string | null>(null);
@@ -74,6 +82,11 @@ export function WhitelistPage() {
     resetJob();
     setBatchIdx(0);
   }, [parsed]);
+
+  useEffect(() => {
+    preGen.current++;
+    setPre(null);
+  }, [parsed, allowed]);
 
   // reference info for the visible page only (≤ 500 rows)
   useEffect(() => {
@@ -111,10 +124,12 @@ export function WhitelistPage() {
     };
   }, [pageAddrs, chains, api, both?.wantos.token]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const selected = useMemo(() => parsed.addresses.filter((a) => !unchecked.has(a)), [parsed, unchecked]);
+  const excludedSet = useMemo(() => new Set(pre?.excluded ?? []), [pre]);
+  const selected = useMemo(() => parsed.addresses.filter((a) => !unchecked.has(a) && !excludedSet.has(a)), [parsed, unchecked, excludedSet]);
   const batches = useMemo(() => chunk(selected), [selected]);
   const batch = batches[batchIdx] ?? [];
-  const removedByHand = parsed.addresses.length - selected.length;
+  const removedByHand = parsed.addresses.filter((a) => unchecked.has(a) && !excludedSet.has(a)).length;
+  const autoExcluded = pre ? pre.excluded.length : 0;
 
   const toggle = (a: string, on: boolean) => {
     setUnchecked((s) => {
@@ -135,6 +150,7 @@ export function WhitelistPage() {
         )
       : { ok: false, reason: "读取链上状态中…" };
   const bothGate: Gate = (() => {
+    if (parsed.addresses.length > 0 && parsed.errors.length === 0 && !pre) return { ok: false, reason: "请先核对（读取两条链，已在白名单的地址会自动排除）" };
     for (const s of SIDES) {
       const g = writeGate(s);
       if (!g.ok) return g;
@@ -142,6 +158,26 @@ export function WhitelistPage() {
     return batch.length === 0 ? { ok: false, reason: "没有要写入的地址" } : parsed.errors.length > 0 ? { ok: false, reason: "地址文件有错误" } : { ok: true };
   })();
 
+  const runPrecheck = async () => {
+    const g = ++preGen.current;
+    cancelPre.current = false;
+    const addrs = parsed.addresses;
+    const target = allowed;
+    setPre(null);
+    resetJob();
+    setPreRunning(true);
+    setPreProg({ bsc: 0, wantos: 0 });
+    try {
+      const stop = () => cancelPre.current || g !== preGen.current;
+      const read = (s: Side) => readWhitelisted(chains[s], addrs, { shouldStop: stop, onProgress: (n) => g === preGen.current && setPreProg((p) => (p ? { ...p, [s]: n } : p)) });
+      const [bsc, wantos] = await Promise.all([read("bsc"), read("wantos")]);
+      if (g !== preGen.current) throw new Error("名单或模式已改动，请重新核对");
+      setPre(splitByChainState(addrs, { bsc, wantos }, target));
+    } finally {
+      setPreRunning(false);
+      setPreProg(null);
+    }
+  };
   const prepare = async () => {
     const g = ++gen.current;
     // never leave the previous batch's hashes on screen if this fails
@@ -285,7 +321,77 @@ export function WhitelistPage() {
       </Section>
 
       {parsed.addresses.length > 0 && parsed.errors.length === 0 && (
-        <Section title="2. 逐行参考信息（只作提示）">
+        <Section title="2. 先核对（是否已在白名单）">
+          <p className="hint">
+            先读两条链，{allowed ? "两条链都已在白名单的地址会自动排除，不再重复提交（省 gas）" : "两条链都已不在白名单的地址会自动排除"}；只在一条链已有的会保留（两条链用同一份名单、一次签名）。未核对不能准备本批。
+          </p>
+          <ActionButton
+            label={pre ? "重新核对" : "先核对（读取两条链）"}
+            gate={locked ? { ok: false, reason: "签名写入进行中" } : { ok: true }}
+            run={runPrecheck}
+          />
+          {preRunning && (
+            <p data-testid="precheck-progress">
+              核对中：BSC {preProg?.bsc ?? 0}/{parsed.addresses.length} · WANTOS {preProg?.wantos ?? 0}/{parsed.addresses.length}
+              <button type="button" onClick={() => (cancelPre.current = true)}>
+                取消核对
+              </button>
+            </p>
+          )}
+          {pre && !preRunning && (
+            <div data-testid="precheck-done">
+              <table>
+                <tbody>
+                  <tr>
+                    <td>名单共</td>
+                    <td data-testid="pc-total">{parsed.addresses.length} 个</td>
+                  </tr>
+                  <tr>
+                    <td>{allowed ? "已在白名单（已排除）" : "已不在白名单（已排除）"}</td>
+                    <td data-testid="pc-excluded">{pre.excluded.length} 个</td>
+                  </tr>
+                  <tr>
+                    <td>{allowed ? "只在一条链已在（保留）" : "只在一条链已移除（保留）"}</td>
+                    <td data-testid="pc-partial">{pre.partial.length} 个</td>
+                  </tr>
+                  <tr>
+                    <td>将提交</td>
+                    <td data-testid="pc-submit">{pre.keep.length} 个</td>
+                  </tr>
+                </tbody>
+              </table>
+              {pre.keep.length === 0 && (
+                <p className="warn" role="alert" data-testid="pc-nothing">
+                  无需提交：名单里的地址在两条链上都已是目标状态。
+                </p>
+              )}
+              {pre.excluded.length > 0 && (
+                <details open={pre.excluded.length <= 20} data-testid="pc-excluded-list">
+                  <summary>已排除的地址（{pre.excluded.length} 个，两条链都{allowed ? "已在" : "已不在"}白名单）</summary>
+                  {pre.excluded.map((a) => (
+                    <div key={a}>
+                      <Addr a={a} />
+                    </div>
+                  ))}
+                </details>
+              )}
+              {pre.partial.length > 0 && (
+                <details open={pre.partial.length <= 20} data-testid="pc-partial-list">
+                  <summary>保留的地址（{pre.partial.length} 个，只在一条链{allowed ? "已在" : "已不在"}白名单）</summary>
+                  {pre.partial.map((x) => (
+                    <div key={x.address}>
+                      <Addr a={x.address} /> 只在 {x.sides.map((s) => SIDE_NAME[s]).join("、")} {allowed ? "已在" : "已不在"}名单
+                    </div>
+                  ))}
+                </details>
+              )}
+            </div>
+          )}
+        </Section>
+      )}
+
+      {parsed.addresses.length > 0 && parsed.errors.length === 0 && (
+        <Section title="3. 逐行参考信息（只作提示）">
           {apiNote && <p className="hint">{apiNote}</p>}
           <p className="hint">
             △ 不在网体内　○ 合约地址（只作提示；风控只靠白名单本身）
@@ -320,7 +426,14 @@ export function WhitelistPage() {
                 return (
                   <tr key={a} data-testid={`row-${a}`}>
                     <td>
-                      <input type="checkbox" disabled={locked} aria-label={`选择 ${a}`} checked={!unchecked.has(a)} onChange={(e) => toggle(a, e.target.checked)} />
+                      <input
+                        type="checkbox"
+                        disabled={locked || excludedSet.has(a)}
+                        title={excludedSet.has(a) ? "两条链都已是目标状态，已自动排除" : undefined}
+                        aria-label={`选择 ${a}`}
+                        checked={!unchecked.has(a) && !excludedSet.has(a)}
+                        onChange={(e) => toggle(a, e.target.checked)}
+                      />
                     </td>
                     <td>
                       <Addr a={a} />
@@ -339,7 +452,12 @@ export function WhitelistPage() {
       )}
 
       {selected.length > 0 && parsed.errors.length === 0 && (
-        <Section title="3. 核对并签名">
+        <Section title="4. 核对并签名">
+          {autoExcluded > 0 && (
+            <p className="warn" role="alert" data-testid="auto-excluded-note">
+              已排除 {autoExcluded} 个{allowed ? "已在白名单" : "已不在白名单"}的地址：它们不会进入本次写入。离线核对前，请先在原始文件里删掉它们（或核对下面导出的清单），否则 listHash 对不上是正常的。
+            </p>
+          )}
           {removedByHand > 0 && (
             <p className="warn" role="alert">
               你在页面上取消了 {removedByHand} 个地址：离线核对前，请先在原始文件里删掉它们（或核对下面导出的清单），否则 listHash 对不上是正常的。

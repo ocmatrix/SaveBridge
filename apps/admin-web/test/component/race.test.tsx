@@ -7,6 +7,7 @@ import type { Chains, Signer } from "../../src/lib/chain";
 import { parseAddressList } from "../../src/lib/normalize";
 import { readWhitelisted } from "../../src/lib/whitelist";
 import { localSigner, startWorld, type World } from "../support/world";
+import { precheck, whitelistOn } from "./precheck";
 
 /**
  * Round-2 A-1: the form must not change what gets prepared/signed while 「准备本批」 or 「签名并写入」 is in flight.
@@ -67,6 +68,7 @@ describe("A-1: preparing locks the form", () => {
     render(<App cfg={w.cfg} chains={g.chains} signer={wl} initialPath="/" />);
     const list = [keccak256(toBytes("r1a")).slice(0, 42)];
     paste(list.join("\n"));
+    await precheck();
     await waitFor(() => expect(prepareBtn()).toBeEnabled());
     g.arm();
     fireEvent.click(prepareBtn());
@@ -87,6 +89,7 @@ describe("A-1: preparing locks the form", () => {
     render(<App cfg={w.cfg} chains={g.chains} signer={localSigner(w, w.act.wl)} initialPath="/" />);
     paste(Array.from({ length: 501 }, (_, i) => keccak256(toBytes(`r2-${i}`)).slice(0, 42)).join("\n"));
     const sel = (await screen.findByLabelText("选择批次")) as HTMLSelectElement;
+    await precheck();
     await waitFor(() => expect(prepareBtn()).toBeEnabled());
     g.arm();
     fireEvent.click(prepareBtn());
@@ -103,6 +106,7 @@ describe("A-1: preparing locks the form", () => {
     const g = gatedChains();
     render(<App cfg={w.cfg} chains={g.chains} signer={localSigner(w, w.act.wl)} initialPath="/" />);
     paste(keccak256(toBytes("r3a")).slice(0, 42));
+    await precheck();
     await waitFor(() => expect(prepareBtn()).toBeEnabled());
     g.arm();
     fireEvent.click(prepareBtn());
@@ -122,7 +126,9 @@ describe("A-1: events that still reach disabled controls never produce a batch d
       const g = gatedChains();
       render(<App cfg={w.cfg} chains={g.chains} signer={localSigner(w, w.act.wl)} initialPath="/" />);
       const list = [keccak256(toBytes(`t2${kind}a`)).slice(0, 42), keccak256(toBytes(`t2${kind}b`)).slice(0, 42)];
+      await whitelistOn(w, list, ["bsc"]); // on one chain only: kept by the pre-check in both 添加 and 移除 mode
       paste(list.join("\n"));
+      await precheck();
       await waitFor(() => expect(prepareBtn()).toBeEnabled());
       g.arm();
       fireEvent.click(prepareBtn());
@@ -141,6 +147,7 @@ describe("A-1: events that still reach disabled controls never produce a batch d
         expect(screen.getByTestId("count")).toHaveTextContent(String(selected));
       }
       // the form is consistent again afterwards and can be prepared
+      await precheck();
       await waitFor(() => expect(prepareBtn()).toBeEnabled());
     });
   }
@@ -171,6 +178,7 @@ describe("A-1 (runJob path): the form is locked while signing/writing; a change 
     render(<App cfg={w.cfg} chains={w.chains} signer={g.s} initialPath="/" />);
     const list = [keccak256(toBytes("r4a")).slice(0, 42)];
     paste(list.join("\n"));
+    await precheck();
     await waitFor(() => expect(prepareBtn()).toBeEnabled());
     fireEvent.click(prepareBtn());
     await screen.findByTestId("listHash");

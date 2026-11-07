@@ -7,6 +7,7 @@ import { parseAddressList } from "../../src/lib/normalize";
 import { readWhitelisted } from "../../src/lib/whitelist";
 import { localSigner, startWorld, type World } from "../support/world";
 import { renderApp } from "./render";
+import { flakyWorld, precheck, whitelistOn } from "./precheck";
 import { render } from "@testing-library/react";
 import { App } from "../../src/App";
 import { invalidateNonce, readNonce } from "../../src/lib/whitelist";
@@ -118,6 +119,7 @@ describe("whitelist page", () => {
     expect(screen.queryByText(/你在页面上取消了/)).toBeNull();
 
     // prepare: hashes shown == tool over the same (selected) list
+    await precheck();
     await waitFor(() => expect(prepareBtn()).toBeEnabled());
     fireEvent.click(prepareBtn());
     const lh = await screen.findByTestId("listHash");
@@ -143,6 +145,7 @@ describe("whitelist page", () => {
     const list = [keccak256(toBytes("c9")).slice(0, 42)];
     renderApp(w, wl);
     paste(list.join("\n"));
+    await precheck();
     await waitFor(() => expect(prepareBtn()).toBeEnabled());
     fireEvent.click(prepareBtn());
     await screen.findByTestId("listHash");
@@ -166,6 +169,7 @@ describe("whitelist page", () => {
     const sorted = parseAddressList(list.join("\n")).addresses;
     renderApp(w, wl);
     paste(list.join("\n"));
+    await precheck();
     await waitFor(() => expect(prepareBtn()).toBeEnabled());
     fireEvent.click(prepareBtn());
     await screen.findByTestId("listHash");
@@ -180,6 +184,8 @@ describe("whitelist page", () => {
     expect(screen.queryByTestId("hashes")).toBeNull();
     expect(screen.queryByTestId("offline-cmd")).toBeNull();
     expect(screen.queryByRole("button", { name: /签名并写入|重试/ })).toBeNull(); // must prepare again
+    await precheck(); // switching the mode voided the pre-check too
+    await waitFor(() => expect(prepareBtn()).toBeEnabled());
     fireEvent.click(prepareBtn());
     await screen.findByTestId("listHash");
     expect(screen.getByTestId("offline-cmd")).toHaveTextContent("--action remove");
@@ -189,6 +195,8 @@ describe("whitelist page", () => {
     expect(screen.queryByTestId("hashes")).toBeNull();
     expect(screen.queryByRole("button", { name: /签名并写入|重试/ })).toBeNull();
     fireEvent.click(screen.getByLabelText("移除", { selector: "input" }));
+    await precheck();
+    await waitFor(() => expect(prepareBtn()).toBeEnabled());
     fireEvent.click(prepareBtn());
     await screen.findByTestId("listHash");
     expect(screen.getByTestId("offline-cmd")).toHaveTextContent("--action remove");
@@ -211,6 +219,7 @@ describe("whitelist page", () => {
     paste(rawFile);
     const sel = await screen.findByLabelText("选择批次");
     fireEvent.change(sel, { target: { value: "1" } });
+    await precheck();
     await waitFor(() => expect(prepareBtn()).toBeEnabled());
     fireEvent.click(prepareBtn());
     await screen.findByTestId("listHash", {}, { timeout: 20_000 });
@@ -242,6 +251,7 @@ describe("whitelist page", () => {
     const chains = { bsc: wrap(w.chains.bsc), wantos: wrap(w.chains.wantos) };
     render(<App cfg={w.cfg} chains={chains} signer={wl} initialPath="/" />);
     paste(keccak256(toBytes("b2c")).slice(0, 42));
+    await precheck();
     await waitFor(() => expect(prepareBtn()).toBeEnabled());
     fireEvent.click(prepareBtn());
     await screen.findByTestId("listHash");
@@ -265,6 +275,7 @@ describe("whitelist page", () => {
     const prepared = async () => {
       renderApp(w, localSigner(w, w.act.wl));
       paste(two.join("\n"));
+      await precheck();
       await waitFor(() => expect(prepareBtn()).toBeEnabled());
       fireEvent.click(prepareBtn());
       await screen.findByTestId("listHash");
@@ -310,12 +321,15 @@ describe("whitelist page", () => {
         names.push(this.download);
       });
       try {
+        const mine = [keccak256(toBytes("ex1")).slice(0, 42), keccak256(toBytes("ex2")).slice(0, 42)];
+        await whitelistOn(w, mine, ["bsc", "wantos"]); // remove mode leaves out addresses that are not on the whitelist
         renderApp(w, localSigner(w, w.act.wl));
-        paste(two.join("\n"));
+        paste(mine.join("\n"));
         const exp = await screen.findByRole("button", { name: /导出已准备批次的清单/ });
         expect(exp).toBeDisabled();
         expect(screen.getByText(/离线核对请用你自己的原始文件/)).toBeInTheDocument();
         fireEvent.click(screen.getByLabelText("移除", { selector: "input" }));
+        await precheck();
         await waitFor(() => expect(prepareBtn()).toBeEnabled());
         fireEvent.click(prepareBtn());
         await screen.findByTestId("listHash");
@@ -326,7 +340,7 @@ describe("whitelist page", () => {
           fr.onload = () => r(String(fr.result));
           fr.readAsText(blobs[0]!);
         });
-        expect(text).toBe(parseAddressList(two.join("\n")).addresses.map((a) => getAddress(a)).join("\n") + "\n");
+        expect(text).toBe(parseAddressList(mine.join("\n")).addresses.map((a) => getAddress(a)).join("\n") + "\n");
       } finally {
         click.mockRestore();
         u.createObjectURL = saved.c;
@@ -339,6 +353,7 @@ describe("whitelist page", () => {
     const wl = localSigner(w, w.act.wl);
     renderApp(w, wl);
     paste(keccak256(toBytes("dbl")).slice(0, 42));
+    await precheck();
     await waitFor(() => expect(prepareBtn()).toBeEnabled());
     fireEvent.click(prepareBtn());
     await screen.findByTestId("listHash");
@@ -377,6 +392,7 @@ describe("whitelist page: one-signature mode (submission service configured)", (
       const list = [keccak256(toBytes("os1")).slice(0, 42), keccak256(toBytes("os2")).slice(0, 42)];
       render(<App cfg={{ ...w.cfg, submitApi: "/api/whitelist" }} chains={w.chains} signer={wl} initialPath="/" />);
       paste(["address", ...list].join("\n"));
+      await precheck();
       await waitFor(() => expect(prepareBtn()).toBeEnabled());
       fireEvent.click(prepareBtn());
       await screen.findByTestId("listHash");
@@ -392,5 +408,103 @@ describe("whitelist page: one-signature mode (submission service configured)", (
       vi.unstubAllGlobals();
       cleanup();
     }
+  });
+});
+
+describe("先核对：添加/移除前先核实是否已在白名单，已在的自动排除", () => {
+  const mk = (s: string) => keccak256(toBytes(`pc-${s}`)).slice(0, 42);
+  const radio = (name: "添加" | "移除") => screen.getByLabelText(name, { selector: "input" }) as HTMLInputElement;
+
+  it("准备本批 stays disabled, with the reason, until the list has been checked", async () => {
+    renderApp(w, localSigner(w, w.act.wl));
+    paste([mk("n1"), mk("n2")].join("\n"));
+    await screen.findByRole("button", { name: /^先核对/ });
+    expect(prepareBtn()).toBeDisabled();
+    expect(screen.getAllByText(/请先核对/).length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("precheck-done")).toBeNull();
+  });
+
+  it("an address already on both chains is excluded and listed; only the rest is prepared", async () => {
+    const have = mk("a");
+    const fresh = mk("b");
+    await whitelistOn(w, [have], ["bsc", "wantos"]);
+    renderApp(w, localSigner(w, w.act.wl));
+    paste([have, fresh].join("\n"));
+    await precheck();
+    expect(screen.getByTestId("pc-total")).toHaveTextContent("2");
+    expect(screen.getByTestId("pc-excluded")).toHaveTextContent("1");
+    expect(screen.getByTestId("pc-submit")).toHaveTextContent("1");
+    expect(screen.getByTestId("pc-excluded-list")).toHaveTextContent(getAddress(have));
+    await waitFor(() => expect(prepareBtn()).toBeEnabled());
+    fireEvent.click(prepareBtn());
+    await screen.findByTestId("listHash");
+    expect(screen.getByTestId("count")).toHaveTextContent("1");
+    // the excluded address is no longer in the batch that will be signed
+    const prepared = await readWhitelisted(w.chains.bsc, [have, fresh]);
+    expect(prepared).toEqual([true, false]);
+    expect(screen.getByText(/已排除 1 个已在白名单的地址/)).toBeInTheDocument();
+  });
+
+  it("an address on one chain only is kept (the other chain still needs it) and shown as partial", async () => {
+    const half = mk("c");
+    await whitelistOn(w, [half], ["bsc"]);
+    renderApp(w, localSigner(w, w.act.wl));
+    paste(half);
+    await precheck();
+    expect(screen.getByTestId("pc-excluded")).toHaveTextContent("0");
+    expect(screen.getByTestId("pc-partial")).toHaveTextContent("1");
+    expect(screen.getByTestId("pc-submit")).toHaveTextContent("1");
+    expect(screen.getByTestId("pc-partial-list")).toHaveTextContent(getAddress(half));
+    expect(screen.getByTestId("pc-partial-list")).toHaveTextContent("BSC");
+    await waitFor(() => expect(prepareBtn()).toBeEnabled());
+  });
+
+  it("everything already whitelisted → nothing to submit, no prepare button", async () => {
+    const [x, y] = [mk("d1"), mk("d2")];
+    await whitelistOn(w, [x, y], ["bsc", "wantos"]);
+    renderApp(w, localSigner(w, w.act.wl));
+    paste([x, y].join("\n"));
+    await precheck();
+    expect(screen.getByTestId("pc-nothing")).toHaveTextContent("无需提交");
+    expect(screen.queryByRole("button", { name: /准备本批/ })).toBeNull();
+  });
+
+  it("changing the list or the add/remove mode voids the check", async () => {
+    renderApp(w, localSigner(w, w.act.wl));
+    paste(mk("e1"));
+    await precheck();
+    paste(mk("e2"));
+    await waitFor(() => expect(screen.queryByTestId("precheck-done")).toBeNull());
+    expect(prepareBtn()).toBeDisabled();
+    await precheck();
+    fireEvent.click(radio("移除"));
+    await waitFor(() => expect(screen.queryByTestId("precheck-done")).toBeNull());
+    expect(prepareBtn()).toBeDisabled();
+  });
+
+  it("remove mode: an address on neither chain is excluded, one still whitelisted is kept", async () => {
+    const [on, off] = [mk("r1"), mk("r2")];
+    await whitelistOn(w, [on], ["bsc", "wantos"]);
+    renderApp(w, localSigner(w, w.act.wl));
+    fireEvent.click(radio("移除"));
+    paste([on, off].join("\n"));
+    await precheck();
+    expect(screen.getByTestId("pc-excluded")).toHaveTextContent("1");
+    expect(screen.getByTestId("pc-excluded-list")).toHaveTextContent(getAddress(off));
+    expect(screen.getByTestId("pc-excluded-list")).not.toHaveTextContent(getAddress(on));
+    expect(screen.getByTestId("pc-submit")).toHaveTextContent("1");
+  });
+
+  it("a read failure does not let you through; the check can be retried", async () => {
+    const state = { fail: true };
+    renderApp(flakyWorld(w, "wantos", state), localSigner(w, w.act.wl));
+    paste(mk("f1"));
+    fireEvent.click(await screen.findByRole("button", { name: /^先核对/ }));
+    expect((await screen.findAllByText(/429/, {}, { timeout: 20_000 })).length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("precheck-done")).toBeNull();
+    expect(prepareBtn()).toBeDisabled();
+    state.fail = false;
+    await precheck();
+    await waitFor(() => expect(prepareBtn()).toBeEnabled());
   });
 });
