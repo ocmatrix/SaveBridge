@@ -46,7 +46,7 @@ describe("re-check outcomes (A2)", () => {
     const user = await connect();
     const w2b = panel("WANTOS → BSC");
     await within(w2b).findByText(new RegExp(hash), {}, T);
-    await screen.findByText(/今日剩余额度/, {}, T);
+    await screen.findByText(/余额：/, {}, T);
     await typeAmount(user, w2b, "100");
     const btn = submit(w2b);
     expect(btn).toBeDisabled();
@@ -64,7 +64,7 @@ describe("re-check outcomes (A2)", () => {
     renderApp(env.cfg, KEYS.alice.address);
     const user = await connect();
     const w2b = panel("WANTOS → BSC");
-    await screen.findByText(/今日剩余额度/, {}, T);
+    await screen.findByText(/余额：/, {}, T);
     await typeAmount(user, w2b, "100");
     await user.click(within(w2b).getByRole("button", { name: "重新检查" }));
     await within(w2b).findByText("还没有查到这笔交易的结果。如果长时间没有结果，请到区块浏览器核对该哈希；关闭此标签页会重置本页的防重复锁，重置前请务必先核对。", {}, T);
@@ -95,7 +95,7 @@ describe("B2W unconfirmed (A2, symmetric to W2B)", () => {
     // the wallet has returned the deposit hash; the receipt wait is still hanging
     await waiting;
     const status = await within(b2w).findByRole("status", {}, T);
-    await waitFor(() => expect(status.textContent).toMatch(/已提交（哈希 0x[0-9a-f]{64}）/), T);
+    await waitFor(() => expect(status.textContent).toMatch(/哈希0x[0-9a-f]{64}订单已提交，等待区块确认/), T);
     const hash = status.textContent!.match(/0x[0-9a-f]{64}/)![0];
     // it is the deposit transaction (to the BSC bridge), not the approve
     const tx = await env.bsc.anvil.pc.getTransaction({ hash: hash as Hex });

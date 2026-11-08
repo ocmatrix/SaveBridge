@@ -52,7 +52,7 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     const { queryClient } = renderApp(env.cfg, KEYS.alice.address);
     const user = await connect();
     const w2b = panel("WANTOS → BSC");
-    await screen.findByText(/今日剩余额度 2,000 USDT/, {}, T);
+    await screen.findByText(/余额：/, {}, T);
     await user.type(within(w2b).getByLabelText("金额（USDT）"), "123.5");
     const btn = submit(w2b);
     await waitFor(() => expect(btn).toBeEnabled(), T);
@@ -62,7 +62,10 @@ describe("user page (DESIGN §8.1, §13 PR-5 acceptance)", () => {
     const orders = await screen.findByRole("region", { name: "我的订单" }, T);
     await within(orders).findByText("WANTOS → BSC 订单 #1", {}, T);
     expect(within(orders).getByText("处理中")).toBeInTheDocument();
-    await screen.findByText(/今日剩余额度 1,876.5 USDT/, {}, T);
+    // the remaining daily quota is no longer printed as a line; it still limits the amount (2,000 − 123.5 = 1,876.5)
+    await user.type(within(w2b).getByLabelText("金额（USDT）"), "1900");
+    await within(w2b).findByText("超过今日剩余额度 1,876.5 USDT", {}, T);
+    await user.clear(within(w2b).getByLabelText("金额（USDT）"));
 
     await relayerRelease(env, 1n, KEYS.alice.address, 1235n * 10n ** 17n);
     await queryClient.invalidateQueries();

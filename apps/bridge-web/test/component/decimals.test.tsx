@@ -63,6 +63,6 @@ describe("USDT decimals differ between chains (A3 / M11b)", () => {
     expect(await screen.findByText("两条链 USDT 精度不一致，页面已停用，请联系客服", {}, T)).toBeInTheDocument();
     expect(btn).toBeDisabled();
     expect(screen.queryByRole("region", { name: "我的订单" })).toBeNull();
-    expect(screen.queryByText(/今日剩余额度/)).toBeNull();
+    expect(screen.queryByText(/余额：/)).toBeNull();
   });
 });
