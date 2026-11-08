@@ -41,7 +41,7 @@ describe("broadcast but unconfirmed (B1)", () => {
     const user = userEvent.setup();
     await waitConnected();
     const w2b = screen.getByRole("region", { name: "WANTOS → BSC" });
-    await screen.findByText(/今日剩余额度/, {}, T);
+    await screen.findByText(/余额：/, {}, T);
     await user.type(within(w2b).getByLabelText("金额（USDT）"), "100");
     const btn = submit(w2b);
     await waitFor(() => expect(btn).toBeEnabled(), T);

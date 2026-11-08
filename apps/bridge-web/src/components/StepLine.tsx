@@ -6,14 +6,17 @@ export function StepLine({ flow, amount }: { flow: Flow; amount: string }) {
   const { t } = useI18n();
   const { step, hash } = flow;
   if (!step) return null;
-  const text =
-    step === "approve"
-      ? t("step.approve", { amount })
-      : step === "send"
-        ? t("step.send")
-        : hash
-          ? t("step.submitted", { hash })
-          : t("step.confirming");
+  // broadcast, hash known: the hash on its own, then what it means (layout only; same condition as before)
+  if (step !== "approve" && step !== "send" && hash) {
+    return (
+      <p className="step" role="status">
+        <span className="step-label">{t("step.hashLabel")}</span>
+        <span className="step-hash">{hash}</span>
+        <span className="step-msg">{t("step.submitted")}</span>
+      </p>
+    );
+  }
+  const text = step === "approve" ? t("step.approve", { amount }) : step === "send" ? t("step.send") : t("step.confirming");
   return (
     <p className="step" role="status">
       {text}

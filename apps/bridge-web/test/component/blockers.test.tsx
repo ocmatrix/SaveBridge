@@ -51,7 +51,7 @@ async function readyW2B(amount = "100") {
   await whitelist(env, env.bsc, [KEYS.alice.address]);
   const r = renderApp(env.cfg, KEYS.alice.address);
   const user = await connect();
-  await screen.findByText(/今日剩余额度/, {}, T);
+  await screen.findByText(/余额：/, {}, T);
   const w2b = panel("WANTOS → BSC");
   await user.type(within(w2b).getByLabelText("金额（USDT）"), amount);
   const btn = submit(w2b);

@@ -30,7 +30,7 @@ const hashIn = (el: HTMLElement) => el.textContent!.match(/0x[0-9a-f]{64}/)![0] 
 async function alicePending(okWaits = 1) {
   const r = renderApp(env.cfg, [KEYS.alice.address, KEYS.bob.address], { clients: flaky(env.cfg, "wantos", okWaits) });
   const user = await connect();
-  await screen.findByText(/今日剩余额度/, {}, T);
+  await screen.findByText(/余额：/, {}, T);
   const w2b = panel("WANTOS → BSC");
   await typeAmount(user, w2b, "100");
   const btn = submit(w2b);
@@ -75,7 +75,7 @@ describe("unconfirmed lock scope (A1)", () => {
     const user = await connect();
     const w2b = panel("WANTOS → BSC");
     await within(w2b).findByText(new RegExp(hash), {}, T);
-    await screen.findByText(/今日剩余额度/, {}, T);
+    await screen.findByText(/余额：/, {}, T);
     await typeAmount(user, w2b, "100");
     expect(submit(w2b)).toBeDisabled();
   });

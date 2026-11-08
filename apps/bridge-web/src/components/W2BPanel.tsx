@@ -114,7 +114,6 @@ export function W2BPanel({ state, onOrder, wallet, onFlip }: { state: BridgeStat
         value={amountText}
         readOnly
       />
-      {state && <p className="info">{t("info.w2b", { amount: f(state.w2bRemaining), min: f(state.wantos.w2bMinAmount), max: f(state.wantos.w2bPerAddrDailyCap) })}</p>}
       {problem && <p className="error">{t(problem.key, problem.params)}</p>}
       {fee > 0n && <p className="info" data-testid="fee">{t("info.feeW2b", { fee: formatNative(fee), symbol: cfg.wantos.nativeSymbol })}</p>}
       {canSubmit && !flow.step && (
