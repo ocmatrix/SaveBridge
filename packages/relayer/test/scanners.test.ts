@@ -280,14 +280,14 @@ describe("BSC scanner (DESIGN §6.2: >=2 RPCs, finalized only)", () => {
     expect(alerts.byKind("RPC_MISMATCH").length).toBeGreaterThan(0);
   });
 
-  it("log sets disagreeing between RPCs -> waits with RPC_MISMATCH", async () => {
+  it("BSC scanner: a reader that omits a deposit log does not block ingestion", async () => {
     const { topics, data } = depositedLog(1n, USER, OTHER, 50n);
     chain.addEvent(BSC_VAULT, topics, data);
     chain.mine(80);
-    b.logsOverride = () => [];
-    expect((await mk().scanOnce()).status).toBe("waiting");
-    expect(await new OrderRepo(db).count()).toBe(0);
-    expect(alerts.byKind("RPC_MISMATCH").length).toBeGreaterThan(0);
+    a.logsOverride = () => []; // the FIRST reader misses it
+    expect((await mk().scanOnce()).status).toBe("ok");
+    expect(await new OrderRepo(db).count()).toBe(1);
+    expect(alerts.byKind("RPC_MISMATCH")).toHaveLength(0);
   });
 
   it("BSC reorg below the stored cursor -> BSC_REORG alert and halt", async () => {
@@ -326,5 +326,90 @@ describe("BSC scanner (DESIGN §6.2: >=2 RPCs, finalized only)", () => {
     chain.mine(80);
     await mk().scanOnce();
     expect(await new OrderRepo(db).count()).toBe(0);
+  });
+
+  // ---- any reader discovers, two confirm by receipt, any contradiction holds (spec v3 D1)
+  const mk3 = (c: FakeReader) =>
+    new BscScanner({ chainId: BSC_ID, vault: BSC_VAULT, readers: [a, b, c], db, alerts, safety, rescanBlocks: 100, maxBlockRange: 5000, startBlock: 0n });
+  const deposit = (nonce = 1n) => {
+    const { topics, data } = depositedLog(nonce, USER, OTHER, 50n);
+    return chain.addEvent(BSC_VAULT, topics, data);
+  };
+
+  it("BSC scanner: with three readers one being down, deposits are still ingested", async () => {
+    deposit();
+    chain.mine(80);
+    const c = chain.reader("bsc-c");
+    c.down = true;
+    const r = await mk3(c).scanOnce();
+    expect(r.status).toBe("ok");
+    expect(await new OrderRepo(db).count()).toBe(1);
+    expect(r.to).toBe(chain.head - 64n);
+    expect((await new CursorRepo(db).get(BSC_ID))!.block).toBe(chain.head - 64n);
+  });
+
+  it("BSC scanner: a log only one reader can confirm is held and the cursor stays before it", async () => {
+    const log = deposit();
+    chain.mine(80);
+    const c = chain.reader("bsc-c");
+    const fail = async () => {
+      throw new Error("receipt rpc down");
+    };
+    b.getTransactionReceipt = fail;
+    c.getTransactionReceipt = fail;
+    expect((await mk3(c).scanOnce()).status).toBe("waiting");
+    expect(await new OrderRepo(db).count()).toBe(0);
+    const cur = await new CursorRepo(db).get(BSC_ID);
+    if (cur) expect(cur.block).toBeLessThan(log.blockNumber);
+    expect(alerts.byKind("RPC_UNAVAILABLE").length).toBeGreaterThan(0);
+  });
+
+  it("BSC scanner: an empty or contradicting receipt, or an out-of-range log, holds the range", async () => {
+    const scenarios: [string, () => void, boolean][] = [
+      ["empty receipt", () => (b.receiptOverride = () => null), true],
+      ["receipt block hash differs", () => (b.receiptOverride = (_h, r) => (r ? { ...r, blockHash: ("0x" + "cd".repeat(32)) as `0x${string}` } : r)), true],
+      ["log beyond the range end", () => undefined, false],
+    ];
+    for (const [name, inject, finalizedDeposit] of scenarios) {
+      chain = new FakeChain(5);
+      a = chain.reader("bsc-a");
+      b = chain.reader("bsc-b");
+      const c = chain.reader("bsc-c");
+      db = await newMigratedDb();
+      alerts = new MemoryAlertSink();
+      safety = new SafetyState(alerts);
+      if (finalizedDeposit) {
+        deposit();
+        chain.mine(80);
+      } else {
+        chain.mine(80);
+        const late = deposit(); // real tx with a real receipt, but not finalized yet
+        a.logsOverride = (ls) => [...ls, { ...late }];
+      }
+      inject();
+      const r = await mk3(c).scanOnce();
+      expect(r.status, name).toBe("waiting");
+      expect(await new OrderRepo(db).count(), name).toBe(0);
+      expect(alerts.byKind("RPC_MISMATCH").length, name).toBeGreaterThan(0);
+    }
+  });
+
+  it("BSC scanner: with only one getLogs answer confirmed deposits are stored but the cursor is not advanced", async () => {
+    chain.mine(80);
+    const c = chain.reader("bsc-c");
+    const s = mk3(c);
+    expect((await s.scanOnce()).status).toBe("ok");
+    const before = (await new CursorRepo(db).get(BSC_ID))!;
+    deposit();
+    chain.mine(80);
+    const fail = async () => {
+      throw new Error("getLogs rpc down");
+    };
+    b.getLogs = fail;
+    c.getLogs = fail;
+    expect((await s.scanOnce()).status).toBe("waiting");
+    expect(await new OrderRepo(db).count()).toBe(1);
+    expect(await new CursorRepo(db).get(BSC_ID)).toEqual(before);
+    expect(alerts.byKind("RPC_UNAVAILABLE").length).toBeGreaterThan(0);
   });
 });
